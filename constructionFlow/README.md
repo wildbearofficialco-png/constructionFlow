@@ -1,56 +1,50 @@
-# Welcome to your Expo app 👋
+# ConstructionFlow
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A standalone construction-business simulation game, built with Expo + React Native + Expo Router.
+
+Start with a small crew and one truck, bid on jobs, buy and maintain heavy equipment, hire and
+manage operators, and grow into a construction empire — buying yards, expanding into new
+territories, and taking on bigger contracts as your reputation grows.
+
+This app was migrated from a mature implementation originally built inside the FleetFlow
+codebase, reusing FleetFlow's proven simulation architecture (economy, AI competitors, random
+events, staff/personality systems, weather, contract bidding, analytics, territories) adapted to
+a construction-company theme.
 
 ## Get started
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
 ```bash
-npm run reset-project
+npm install
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Scan the QR code with **Expo Go** (iOS/Android), or press `i` / `a` for a simulator/emulator,
+or `w` for web.
 
-### Other setup steps
+## Project structure
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- `src/app/` — Expo Router entry points. `index.tsx` renders the game inside an error boundary;
+  the actual UI/state is entirely owned by `ConstructionFlowScreen`.
+- `src/games/constructionflow/ConstructionFlowScreen.js` — the game itself: a single large,
+  self-contained screen component that owns all UI, navigation between in-game tabs (Home, Bids,
+  Sites, Crew, Vehicles, Finance, Empire), and the game loop.
+- `src/systems/` — shared simulation systems (economy, employee personalities, inventory,
+  random events, AI competitors, customer satisfaction, demand/pricing, weather, staff
+  performance, contract bidding, analytics, territories, equipment wear, financial ledger,
+  holdings, lending, regional economy, vehicle lifecycle). Not every system is wired into the
+  UI yet — see "Roadmap" below.
+- `src/data/` — supporting data tables (lending products, regional economy tuning) used by the
+  systems above.
+- `assets/construction/` — equipment and office artwork used by the game.
 
-## Learn more
+## Save data
 
-To learn more about developing your project with Expo, look at the following resources:
+The game autosaves to `AsyncStorage` under the key `constructionflow_v1_save`. No backend or
+account system is required to play.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Roadmap
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+See the FleetFlow parity checklist tracked in project notes for the next milestones: wiring in
+equipment wear/maintenance, financial ledger, lending/financing, and regional economy systems
+into the UI, and building out the automated test suite mirrored from FleetFlow's
+`__tests__/constructionFlow*.test.js` files.

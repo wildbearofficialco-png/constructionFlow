@@ -54,8 +54,10 @@ export function tickEconomy(game) {
   if (!game.economy) initEconomy(game);
   const eco = game.economy;
   const day = game.day || 0;
+
   eco.season = dayToSeason(day);
 
+  // Decay active event
   if (eco.activeEvent && eco.activeEventDaysLeft > 0) {
     eco.activeEventDaysLeft -= 1;
     if (eco.activeEventDaysLeft === 0) {
@@ -64,6 +66,7 @@ export function tickEconomy(game) {
     }
   }
 
+  // Possibly trigger a new economy event (3% daily chance, min 20 days between events)
   if (!eco.activeEvent && day - (eco.lastEventDay || 0) >= 20 && Math.random() < 0.03) {
     const totalWeight = ECONOMY_EVENTS.reduce((s, e) => s + e.weight, 0);
     let roll = Math.random() * totalWeight;
@@ -83,25 +86,33 @@ export function tickEconomy(game) {
   }
 
   const eff = eco.activeEvent?.effects || {};
+
+  // Inflation drift: ±0.002% daily, pulled toward baseline 3%
   const infTarget = 0.03 + (eff.inflationMod || 0);
   eco.inflationRate = clamp(eco.inflationRate + (infTarget - eco.inflationRate) * 0.04 + (Math.random() - 0.5) * 0.001, 0.0, 0.12);
   eco.totalInflation = clamp(eco.totalInflation * (1 + eco.inflationRate / 360), 1.0, 2.5);
 
+  // Fuel price index: random walk clamped 0.7–1.8, influenced by events
   const fuelTarget = 1.0 + (eff.fuelMod || 0);
   eco.fuelPriceIndex = clamp(eco.fuelPriceIndex + (fuelTarget - eco.fuelPriceIndex) * 0.03 + (Math.random() - 0.5) * 0.015, 0.70, 1.80);
 
+  // Ingredient prices
   const ingTarget = 1.0 + (eff.ingredientMod || 0);
   eco.ingredientPriceIndex = clamp(eco.ingredientPriceIndex + (ingTarget - eco.ingredientPriceIndex) * 0.025 + (Math.random() - 0.5) * 0.008, 0.75, 1.70);
 
+  // Inventory/supply prices
   const invTarget = 1.0 + (eff.inventoryMod || 0);
   eco.inventoryPriceIndex = clamp(eco.inventoryPriceIndex + (invTarget - eco.inventoryPriceIndex) * 0.02 + (Math.random() - 0.5) * 0.006, 0.80, 1.60);
 
+  // Wage pressure
   const wageTarget = 1.0 + (eff.wageMod || 0);
   eco.wagePressureIndex = clamp(eco.wagePressureIndex + (wageTarget - eco.wagePressureIndex) * 0.02 + (Math.random() - 0.5) * 0.004, 0.85, 1.40);
 
+  // Interest rate
   const irTarget = 0.065 + (eff.interestRateMod || 0);
   eco.interestRate = clamp(eco.interestRate + (irTarget - eco.interestRate) * 0.01, 0.02, 0.18);
 
+  // Demand index
   const demandTarget = 1.0 + (eff.demandMod || 0);
   eco.demandIndex = clamp(eco.demandIndex + (demandTarget - eco.demandIndex) * 0.05 + (Math.random() - 0.5) * 0.01, 0.60, 1.50);
 }

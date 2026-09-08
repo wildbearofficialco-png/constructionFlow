@@ -11,15 +11,15 @@ export const PERSONALITY_TRAITS = [
   { id: "perfectionist",label: "Perfectionist", stressMod: 1.2,  ambitionBase: 65, loyaltyMod: 0   },
   { id: "team_player",  label: "Team Player",   stressMod: 0.9,  ambitionBase: 45, loyaltyMod: 15  },
   { id: "independent",  label: "Independent",   stressMod: 1.05, ambitionBase: 60, loyaltyMod: -10 },
-  { id: "methodical",   label: "Methodical",   stressMod: 0.85, ambitionBase: 50, loyaltyMod: 5   },
+  { id: "methodical",   label: "Methodical",    stressMod: 0.85, ambitionBase: 50, loyaltyMod: 5   },
 ];
 
 export const TRAINING_PROGRAMS = [
   { id: "safety",      label: "Safety & Compliance", cost: 220, durationDays: 3, skillGain: 5, stressReduction: 8  },
-  { id: "efficiency",  label: "Efficiency Bootcamp", cost: 350, durationDays: 5, skillGain: 8, stressReduction: 0  },
-  { id: "leadership",  label: "Leadership Seminar",  cost: 480, durationDays: 4, skillGain: 4, stressReduction: 5, promotionBonus: true },
-  { id: "technical",   label: "Technical Skills",    cost: 300, durationDays: 4, skillGain: 10, stressReduction: 2 },
-  { id: "wellness",    label: "Wellness Program",    cost: 160, durationDays: 2, skillGain: 0, stressReduction: 22, happinessGain: 15 },
+  { id: "efficiency",  label: "Efficiency Bootcamp",  cost: 350, durationDays: 5, skillGain: 8, stressReduction: 0  },
+  { id: "leadership",  label: "Leadership Seminar",   cost: 480, durationDays: 4, skillGain: 4, stressReduction: 5, promotionBonus: true },
+  { id: "technical",   label: "Technical Skills",     cost: 300, durationDays: 4, skillGain: 10, stressReduction: 2 },
+  { id: "wellness",    label: "Wellness Program",     cost: 160, durationDays: 2, skillGain: 0, stressReduction: 22, happinessGain: 15 },
 ];
 
 export function initPersonality(worker) {
