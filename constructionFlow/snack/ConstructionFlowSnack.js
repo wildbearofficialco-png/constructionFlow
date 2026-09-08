@@ -232,6 +232,145 @@ export function getBidPrepCost(contract) {
   return clamp(Math.round((contract?.value || 0) * 0.004), 60, 4000);
 }
 
+// ─── Equipment Acquisition: Rent, Finance, or Buy ───────────────────────────────
+// Owning outright used to be the only way to put a machine on a job, which made the entire
+// mid-game a cash-savings exercise: a $290k tower crane simply could not appear until you had
+// $290k spare, so the contracts that need one were unreachable for reasons that had nothing
+// to do with skill. Renting and financing are how real contractors bridge that, and they turn
+// "can I afford this machine" into the more interesting "how should I pay for this machine".
+//
+//   Rent     — no capital, highest running cost. Right for one job, or a machine you need once.
+//   Finance  — some capital, a weekly payment, and the machine is yours at the end. Repossessed
+//              if you default, which is the risk that makes it a real decision.
+//   Buy      — all the capital up front, lowest running cost. Always cheapest if you can afford it.
+const RENTAL_DAY_RATE_MULT = 1.6;      // rented machines cost more per day than owned ones
+const RENTAL_CAPITAL_RATE = 0.002;     // ...plus a slice of list price per day
+const RENTAL_DELIVERY_RATE = 0.01;     // one-off float/delivery charge to get it on site
+const FINANCE_DOWN_PCT = 0.20;         // deposit required to finance
+const FINANCE_APR = 0.16;
+const FINANCE_WEEKS = 52;
+const FINANCE_REPO_MISSED_PAYMENTS = 3; // missed payments before the lender takes it back
+
+// Daily cost of a rented machine. Deliberately well above its owned dailyCost so that renting
+// is the expensive-but-accessible option and owning still wins over a long enough horizon.
+export function getRentalDailyRate(item) {
+  return Math.round((item?.dailyCost || 0) * RENTAL_DAY_RATE_MULT + (item?.price || 0) * RENTAL_CAPITAL_RATE);
+}
+
+export function getRentalDeliveryFee(item) {
+  return Math.max(150, Math.round((item?.price || 0) * RENTAL_DELIVERY_RATE));
+}
+
+// What a machine actually costs the company each day, whether owned or rented. One helper so
+// the payroll rollup, the runway projection and the UI can never disagree about the number.
+export function getEquipmentDailyCost(e) {
+  if (!e) return 0;
+  return e.isRental ? (e.rentalDailyRate || 0) : (e.dailyCost || 0);
+}
+
+export function getFinanceTerms(item, discountedPrice) {
+  const price = Number.isFinite(discountedPrice) ? discountedPrice : (item?.price || 0);
+  const down = Math.round(price * FINANCE_DOWN_PCT);
+  const principal = price - down;
+  // Simple-interest amortisation over the term, matching how g.loans already prices credit.
+  const total = Math.round(principal * (1 + FINANCE_APR * (FINANCE_WEEKS / 52)));
+  const weeklyPayment = Math.max(1, Math.round(total / FINANCE_WEEKS));
+  return { price, down, principal, total, weeklyPayment, weeks: FINANCE_WEEKS };
+}
+
+// Total weekly outflow committed to equipment finance — surfaced in Finance so the player can
+// see what their fleet is costing them before taking on another machine.
+export function getWeeklyEquipmentFinanceCost(g) {
+  return (g?.equipmentLoans || []).reduce((sum, l) => sum + (l.weeklyPayment || 0), 0);
+}
+
+// ─── Progress Payments & Retainage ──────────────────────────────────────────────
+// Construction is not paid on delivery — it is paid in draws as the work is certified, with
+// a slice held back until the job is signed off. Previously ConstructionFlow paid a 25%
+// deposit on mobilisation and the whole remaining 75% in one lump at completion, which meant
+// a long job had no cash coming in for weeks and then a windfall. Now each completed phase
+// bills its share, every payment has retainage withheld, and the retainage is released after
+// a hold period once the job is done. Cash flow — not profit — becomes the thing you manage.
+export const MOBILISATION_DEPOSIT_PCT = 0.12;   // was 0.25; the rest now arrives as you build
+export const RETAINAGE_PCT = 0.08;              // withheld from every draw, released after sign-off
+export const RETAINAGE_RELEASE_DAYS = 14;       // hold period after practical completion
+
+// Gross value of one phase's draw. Phases are billed evenly across the contract, which keeps
+// the schedule legible to the player (a 5-phase job pays a fifth at a time).
+export function getPhaseDrawValue(site) {
+  const phaseCount = (site?.phases || []).length;
+  if (!phaseCount) return 0;
+  return Math.round((site.totalValue || 0) / phaseCount);
+}
+
+// Pay `gross` against a site, withholding retainage. Returns the amounts so callers can log
+// them. Mutates both site and game — the single place a site's billing is advanced, so
+// billedToDate and retainageHeld can never disagree with the cash actually paid.
+function billSiteDraw(g, site, gross, label) {
+  const cappedGross = Math.max(0, Math.min(gross, (site.totalValue || 0) - (site.billedToDate || 0)));
+  if (cappedGross <= 0) return { gross: 0, retained: 0, net: 0 };
+  const retained = Math.round(cappedGross * RETAINAGE_PCT);
+  const net = cappedGross - retained;
+  site.billedToDate = (site.billedToDate || 0) + cappedGross;
+  site.retainageHeld = (site.retainageHeld || 0) + retained;
+  g.cash += net;
+  g.revenue += net;
+  g.weeklyStats.revenue += net;
+  if (label) {
+    addLog(g, `\uD83D\uDCB5 ${site.label}: ${label} — ${money(net)} received (${money(retained)} retainage held).`);
+  }
+  return { gross: cappedGross, retained, net };
+}
+
+// Total retainage currently withheld across live sites and completed-but-unreleased jobs.
+// Surfaced in Finance so the player can see money they have earned but cannot yet spend.
+export function getTotalRetainageHeld(g) {
+  const onSites = (g?.activeSites || []).reduce((sum, s) => sum + (s.retainageHeld || 0), 0);
+  const pending = (g?.pendingRetainage || []).reduce((sum, r) => sum + (r.amount || 0), 0);
+  return Math.round(onSites + pending);
+}
+
+// ─── Equipment Operating Hours ──────────────────────────────────────────────────
+// Hours on the clock, not miles on the odometer, are how construction equipment is actually
+// valued, serviced and traded. createEquipment() has carried a `mileage: 0` field since
+// launch that was written once and never read or incremented by anything — a leftover of the
+// port from FleetFlow, where vehicles genuinely drive. It is replaced by engine hours, which
+// drive three things a player can feel: when a machine is due for service, how fast it wears
+// once service is overdue, and what it is worth secondhand.
+const OPERATING_HOURS_PER_TICK = 1 / 6;      // ~8 operating hours per in-game day (48 ticks)
+const SERVICE_INTERVAL_HOURS = 250;          // a realistic-ish interval for plant equipment
+const SERVICE_OVERDUE_WEAR_MULT = 2.2;       // skipping service costs you condition, fast
+const SERVICE_OVERDUE_BREAKDOWN_MULT = 1.8;  // ...and makes breakdowns markedly likelier
+
+export function getHoursSinceService(e) {
+  return Math.max(0, (e?.engineHours || 0) - (e?.hoursAtLastService || 0));
+}
+
+export function isServiceDue(e) {
+  return getHoursSinceService(e) >= SERVICE_INTERVAL_HOURS;
+}
+
+// How far past due, as a multiple of the interval: 0 while in service window, 1.0 at one
+// full interval overdue. Used to scale wear and breakdown risk continuously rather than
+// flipping a switch, so letting a machine drift 20 hours past due is a small cost and
+// letting it drift 500 hours past due is a serious one.
+export function getServiceOverdueRatio(e) {
+  return Math.max(0, (getHoursSinceService(e) - SERVICE_INTERVAL_HOURS) / SERVICE_INTERVAL_HOURS);
+}
+
+// Secondhand value. Condition still dominates, but hours now matter independently: a
+// well-maintained machine with 4,000 hours on it is worth materially less than an identical
+// one with 200, which is what makes buying used (and running machines into the ground)
+// a real decision rather than a cosmetic one.
+export function getEquipmentResaleValue(e) {
+  if (!e) return 0;
+  const conditionFactor = Math.max(0, Math.min(1, (e.condition || 0) / 100));
+  // Hours depreciation tapers rather than falling off a cliff: -50% at ~5,000 hours.
+  const hoursFactor = 1 / (1 + (e.engineHours || 0) / 5000);
+  const serviceFactor = isServiceDue(e) ? 0.88 : 1.0;  // an overdue service is priced in
+  return Math.max(0, Math.round((e.price || 0) * 0.45 * conditionFactor * hoursFactor * serviceFactor));
+}
+
 // ─── Crew Traits ────────────────────────────────────────────────────────────────
 
 const CREW_TRAITS = [
@@ -291,6 +430,13 @@ const SPECIALTY_PHASE_BONUS = {
 };
 
 const INSPECTION_PHASES = new Set(["Inspection", "Final Inspection", "Commissioning"]);
+
+// Phases during which the crew is working in or on the ground, and can therefore discover
+// what the survey missed. Gates the unexpected-site-condition chaos events.
+const GROUND_PHASES = new Set([
+  "Survey", "Site Prep", "Demo", "Demolition", "Excavation", "Foundation",
+  "Base Layer", "Earthworks", "Grading", "Utilities", "Piling", "Structure",
+]);
 
 // ─── Career Levels ───────────────────────────────────────────────────────────────
 
@@ -762,9 +908,23 @@ export const MILESTONE_DEFS = [
     check: (g) => (g.completedJobs || 0) >= 1000,
     reward: (g) => { g.reputation = (g.reputation||0) + 20; addLog(g, "🏗️ 1,000 projects complete! Rep +20"); } },
   { id: "domination", key: "domination", label: "Market Domination", desc: "Outvalue every rival by 10×",  tier: 4,
-    check: (g) => (g.rivals||[]).length > 0 && (g.rivals||[]).every(r => r.status==="Bankrupt" || (g.companyValuation||0) > ((r.cash||0)+(r.rep||0)*50000)*10),
+    // Outliving your rivals is not the same as dominating them. Rivals go bankrupt on their
+    // own through enhancedRivalDailyLogic, and a bankrupt rival satisfies the per-rival test
+    // below — so a company that never took a single job used to collect the $500,000 bonus
+    // around day 49 simply by existing while the AI destroyed itself. The valuation floor is
+    // what makes this an achievement: you have to have actually built something first.
+    check: (g) => {
+      const rivals = g.rivals || [];
+      if (!rivals.length) return false;
+      if ((g.companyValuation || 0) < DOMINATION_MIN_VALUATION) return false;
+      return rivals.every((r) => r.status === "Bankrupt"
+        || (g.companyValuation || 0) > ((r.cash || 0) + (r.rep || 0) * 50000) * 10);
+    },
     reward: (g) => { g.cash += 500000; addLog(g, "👑 Market Domination achieved! $500k bonus!"); } },
 ];
+
+// Floor a company must clear before "Market Domination" can be claimed — see that milestone.
+export const DOMINATION_MIN_VALUATION = 5000000;
 
 // ─── Cities ──────────────────────────────────────────────────────────────────────
 
@@ -863,7 +1023,9 @@ const EMPIRE_GOALS = [
 ];
 
 function computeValuation(g) {
-  const equipValue = (g.equipment||[]).reduce((s,e) => s + e.price*(e.condition/100)*0.6, 0);
+  // Valued off the same resale model the Sell button uses, so the company's stated worth
+  // and what its fleet would actually fetch cannot drift apart.
+  const equipValue = (g.equipment||[]).reduce((s,e) => s + getEquipmentResaleValue(e) / 0.45 * 0.6, 0);
   const propValue  = (g.properties||[]).reduce((s,p) => {
     const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
     return s + (def ? def.cost * (def.resaleRate||0.8) : 0);
@@ -900,7 +1062,7 @@ function computeMarketShare(g) {
 }
 
 function computeHealthScore(g) {
-  const dailyBurn = (g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
+  const dailyBurn = (g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+getEquipmentDailyCost(e),0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
   const runway = dailyBurn>0?Math.floor((g.cash||0)/dailyBurn):999;
   const overdue = (g.activeSites||[]).filter(s=>s.status==="Active"&&(g.day>(s.deadlineDay||9999))).length;
   const burning = (g.crew||[]).filter(w=>(w.stamina ?? 50)<15).length;
@@ -919,7 +1081,7 @@ function computeHealthScore(g) {
 
 export function getPredictiveWarnings(g) {
   const warnings = [];
-  const dailyBurn=(g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
+  const dailyBurn=(g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+getEquipmentDailyCost(e),0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
   const runway=dailyBurn>0?Math.floor((g.cash||0)/dailyBurn):999;
   if (runway<5) warnings.push({ text:`Cash runway critical — only ${runway} day${runway!==1?"s":""} left`, severity:"high" });
   const overdue=(g.activeSites||[]).filter(s=>s.status==="Active"&&(g.day>(s.deadlineDay||9999)));
@@ -1259,6 +1421,77 @@ const CHAOS_EVENTS = [
       return { text: `${equip.name} recalled for safety. Pulled from site.`, type: "recall" };
     }
   },
+  // ── Unexpected site conditions ────────────────────────────────────────────────
+  // What is actually in the ground is the classic construction unknown, and it is the risk
+  // that most distinguishes this from a delivery game: you bid a job before you know what you
+  // will hit. Each is gated to the phases where it could plausibly be discovered — you do not
+  // strike a gas main while hanging drywall — via `groundPhase` below.
+  { id: "rock_strata", label: "Rock Strata Hit", prob: 0.030, tone: "orange", icon: "⛰️", groundPhase: true,
+    apply: (site, game) => {
+      const extraCost = Math.max(1500, Math.round((site.totalValue || 20000) * rand(3, 8) / 100));
+      const lostDays = rand(1, 3);
+      game.cash -= extraCost;
+      game.expenses += extraCost;
+      game.weeklyStats.unexpectedCosts = (game.weeklyStats.unexpectedCosts || 0) + extraCost;
+      site.phaseProgress = Math.max(0, site.phaseProgress - rand(10, 22));
+      site.deadlineDay += lostDays;
+      addLog(game, `⛰️ ${site.label}: Hit rock during excavation — ${money(extraCost)} in breaking and hauling, ${lostDays} day(s) lost.`);
+      return { text: `Rock strata hit. ${money(extraCost)} extra, ${lostDays} day(s) lost.`, type: "ground_rock" };
+    }
+  },
+  { id: "water_table", label: "High Water Table", prob: 0.024, tone: "cyan", icon: "💧", groundPhase: true,
+    apply: (site, game) => {
+      const extraCost = Math.max(1200, Math.round((site.totalValue || 20000) * rand(2, 6) / 100));
+      game.cash -= extraCost;
+      game.expenses += extraCost;
+      game.weeklyStats.unexpectedCosts = (game.weeklyStats.unexpectedCosts || 0) + extraCost;
+      site.phaseProgress = Math.max(0, site.phaseProgress - rand(8, 16));
+      addLog(game, `💧 ${site.label}: Water table higher than surveyed — ${money(extraCost)} on dewatering pumps.`);
+      return { text: `High water table. ${money(extraCost)} on dewatering.`, type: "ground_water" };
+    }
+  },
+  { id: "contaminated_soil", label: "Contaminated Soil", prob: 0.016, tone: "red", icon: "☣️", groundPhase: true,
+    apply: (site, game) => {
+      const extraCost = Math.max(3000, Math.round((site.totalValue || 20000) * rand(5, 12) / 100));
+      const pauseDays = rand(2, 5);
+      game.cash -= extraCost;
+      game.expenses += extraCost;
+      game.weeklyStats.unexpectedCosts = (game.weeklyStats.unexpectedCosts || 0) + extraCost;
+      site.status = "Paused";
+      site.pausedDays = (site.pausedDays || 0) + pauseDays;
+      site.deadlineDay += pauseDays;
+      addLog(game, `☣️ ${site.label}: Contaminated soil found — remediation ${money(extraCost)}, site closed ${pauseDays} day(s) pending clearance.`);
+      return { text: `Contaminated soil. ${money(extraCost)} remediation, paused ${pauseDays} day(s).`, type: "ground_contamination" };
+    }
+  },
+  { id: "utility_strike", label: "Underground Utility Strike", prob: 0.020, tone: "red", icon: "⚡", groundPhase: true,
+    apply: (site, game) => {
+      const extraCost = Math.max(2000, Math.round((site.totalValue || 20000) * rand(4, 9) / 100));
+      const pauseDays = rand(1, 3);
+      game.cash -= extraCost;
+      game.expenses += extraCost;
+      game.weeklyStats.unexpectedCosts = (game.weeklyStats.unexpectedCosts || 0) + extraCost;
+      site.status = "Paused";
+      site.pausedDays = (site.pausedDays || 0) + pauseDays;
+      site.deadlineDay += pauseDays;
+      // Hitting an unmarked service is a safety and compliance event, not just a cost.
+      game.complianceScore = Math.max(0, (game.complianceScore ?? 60) - rand(3, 7));
+      applyIncident(game, 1);
+      addLog(game, `⚡ ${site.label}: Struck an unmarked service line — ${money(extraCost)} in repairs, utility shut the site for ${pauseDays} day(s).`);
+      return { text: `Utility strike. ${money(extraCost)} repairs, ${pauseDays} day(s) closed.`, type: "ground_utility" };
+    }
+  },
+  { id: "archaeological_find", label: "Archaeological Find", prob: 0.008, tone: "yellow", icon: "🏺", groundPhase: true,
+    apply: (site, game) => {
+      const pauseDays = rand(4, 9);
+      site.status = "Paused";
+      site.pausedDays = (site.pausedDays || 0) + pauseDays;
+      site.deadlineDay += pauseDays;
+      addLog(game, `🏺 ${site.label}: Artefacts uncovered — heritage assessment ordered. Site halted ${pauseDays} day(s), deadline extended.`);
+      return { text: `Archaeological find. Halted ${pauseDays} day(s) for assessment.`, type: "ground_heritage" };
+    }
+  },
+
   { id: "community_award", label: "Community Award", prob: 0.012, tone: "cyan", icon: "🏆",
     apply: (site, game) => {
       game.reputation = Math.min(100, (game.reputation||0) + rand(3,6));
@@ -1352,6 +1585,86 @@ const CHAOS_EVENTS = [
 ];
 
 // ─── Decision Events ─────────────────────────────────────────────────────────────
+
+// Exported for tests only: the ground-condition events are data with side effects, and the
+// tests assert each one actually costs the player something rather than silently no-opping.
+export const CHAOS_EVENTS_FOR_TEST = CHAOS_EVENTS;
+
+// ─── Change Orders ──────────────────────────────────────────────────────────────
+// A client changing their mind mid-build is the most characteristic thing that happens on a
+// construction job, and it is a genuine decision rather than a dice roll: more money and a
+// longer deadline against tying your crew up and pushing everything behind it. Kept in its
+// own catalogue (not DECISION_EVENTS) because it needs a specific site as context and must
+// never be selected by the generic `pick(DECISION_EVENTS)` draw.
+//
+// Every option's apply() reads g.pendingDecision.context, matching how EMPLOYEE_EVENTS work:
+// only serializable fields are stored on the pending decision, and the handlers are looked up
+// by id at render time.
+const CHANGE_ORDER_EVENT = {
+  id: "change_order",
+  title: "📝 Change Order",
+  tone: "cyan",
+  options: [
+    {
+      label: "Accept the change",
+      sub: "More money, more time, crew stays committed",
+      apply: (g) => {
+        const ctx = g.pendingDecision?.context || {};
+        const site = (g.activeSites || []).find((s) => s.id === ctx.siteId);
+        if (!site) return;
+        site.totalValue = Math.round((site.totalValue || 0) + (ctx.valueAdd || 0));
+        site.deadlineDay = (site.deadlineDay || g.day) + (ctx.extraDays || 0);
+        site.durationDays = (site.durationDays || 0) + (ctx.extraDays || 0);
+        // The added scope is real work: it costs progress on the phase in hand.
+        site.phaseProgress = Math.max(0, (site.phaseProgress || 0) - (ctx.progressCost || 0));
+        site.changeOrders = [...(site.changeOrders || []), {
+          day: g.day, valueAdd: ctx.valueAdd || 0, extraDays: ctx.extraDays || 0,
+        }];
+        // Accommodating a client builds the relationship that wins the next job.
+        if (ctx.clientId) {
+          if (!g.clientRelationships) g.clientRelationships = {};
+          const rel = g.clientRelationships[ctx.clientId] || { loyalty: 0, jobsDone: 0, lastJobDay: null };
+          rel.loyalty = Math.min(100, (rel.loyalty ?? 0) + 4);
+          g.clientRelationships[ctx.clientId] = rel;
+        }
+        addLog(g, `📝 Change order accepted on ${site.label}: +${money(ctx.valueAdd || 0)}, +${ctx.extraDays || 0} days.`);
+        addImportantNotice(g, `Change order accepted — contract now ${money(site.totalValue)}.`, "green");
+      },
+    },
+    {
+      label: "Decline — build to the original scope",
+      sub: "Protect the schedule, disappoint the client",
+      apply: (g) => {
+        const ctx = g.pendingDecision?.context || {};
+        const site = (g.activeSites || []).find((s) => s.id === ctx.siteId);
+        g.reputation = Math.max(0, (g.reputation || 0) - 1);
+        if (ctx.clientId) {
+          if (!g.clientRelationships) g.clientRelationships = {};
+          const rel = g.clientRelationships[ctx.clientId] || { loyalty: 0, jobsDone: 0, lastJobDay: null };
+          rel.loyalty = Math.max(0, (rel.loyalty ?? 0) - 6);
+          g.clientRelationships[ctx.clientId] = rel;
+        }
+        addLog(g, `📝 Change order declined on ${site?.label || "site"} — building to original scope. Client unimpressed.`);
+        addImportantNotice(g, "Change order declined — schedule protected, client relationship dented.", "orange");
+      },
+    },
+  ],
+};
+
+// What a client might ask for mid-build, paired with the phases it plausibly follows.
+const CHANGE_ORDER_REQUESTS = [
+  { text: "wants the finishes upgraded throughout", valuePct: [0.08, 0.16], days: [2, 5] },
+  { text: "has asked for an extra room added to the plans", valuePct: [0.12, 0.24], days: [4, 9] },
+  { text: "wants the electrical spec brought up to commercial grade", valuePct: [0.06, 0.14], days: [2, 4] },
+  { text: "is asking for a larger slab than the drawings show", valuePct: [0.10, 0.20], days: [3, 7] },
+  { text: "wants additional site drainage after seeing the last storm", valuePct: [0.07, 0.15], days: [2, 6] },
+  { text: "has requested a revised layout for the service areas", valuePct: [0.05, 0.12], days: [1, 4] },
+  { text: "wants premium fixtures substituted throughout", valuePct: [0.06, 0.13], days: [1, 3] },
+];
+
+// Exported for tests only: the modal dispatches these by id at render time, so a test has to
+// reach the same handler objects the UI does rather than reimplementing their effects.
+export const CHANGE_ORDER_EVENT_FOR_TEST = CHANGE_ORDER_EVENT;
 
 const DECISION_EVENTS = [
   {
@@ -2041,7 +2354,7 @@ function createEquipment(item) {
     id: uid(), shopId: item.shopId, name: item.name, type: item.type,
     tier: item.tier, price: item.price, dailyCost: item.dailyCost,
     fuelCap: item.fuelCap, fuel: item.fuelCap, reliability: item.reliability,
-    capacity: item.capacity, condition: 100, mileage: 0,
+    capacity: item.capacity, condition: 100, engineHours: 0, hoursAtLastService: 0,
     status: "Idle", assignedSiteId: null, breakdowns: 0, upgrades: {},
   };
 }
@@ -3167,6 +3480,8 @@ export function freshState() {
     contractBidStyles: {},
     wageScaleVersion: WAGE_SCALE.VERSION,
     bidsWon: 0, bidsLost: 0,
+    pendingRetainage: [],
+    equipmentLoans: [],
     saveSchemaVersion: SAVE_SCHEMA_VERSION,
 
     logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and two crew. Start with the Fence job in Bids."],
@@ -3274,6 +3589,19 @@ export function migrateState(saved) {
   if (!g.contractBidStyles)            g.contractBidStyles = {};
   if (g.bidsWon  === undefined)        g.bidsWon = 0;
   if (g.bidsLost === undefined)        g.bidsLost = 0;
+  if (!Array.isArray(g.pendingRetainage)) g.pendingRetainage = [];
+  if (!Array.isArray(g.equipmentLoans))   g.equipmentLoans = [];
+  // Sites started before progress billing existed only recorded a 25% deposit. Seed
+  // billedToDate from it so the completion settlement pays the correct balance instead of
+  // paying the full contract value a second time.
+  for (const site of (g.activeSites || [])) {
+    if (site.billedToDate === undefined || !Number.isFinite(site.billedToDate)) {
+      site.billedToDate = Math.max(0, Math.round(site.depositPaid || 0));
+    }
+    if (site.retainageHeld === undefined || !Number.isFinite(site.retainageHeld)) {
+      site.retainageHeld = 0;
+    }
+  }
   g.saveSchemaVersion = SAVE_SCHEMA_VERSION;
   // Sprint 15 fields
   if (g.materials && g.materials.asphalt === undefined) g.materials.asphalt = 0;
@@ -3412,6 +3740,24 @@ export function migrateState(saved) {
     }
     return c;
   });
+  // ── Equipment operating hours ───────────────────────────────────────────────
+  // Saves predating the hours model have `mileage: 0` (a dead field that was never
+  // incremented) and no engineHours. Seeding hours from condition rather than zeroing them
+  // means a well-used machine in an existing save reads as well-used — starting everyone at
+  // 0 hours would hand every long-running save a fleet that looks brand new and is worth
+  // more secondhand than it should be.
+  for (const e of (g.equipment || [])) {
+    if (e.engineHours === undefined || !Number.isFinite(e.engineHours)) {
+      const wear = Math.max(0, 100 - (Number.isFinite(e.condition) ? e.condition : 100));
+      e.engineHours = Math.round(wear * 30);   // 100% worn out ~= 3,000 hours
+    }
+    if (e.hoursAtLastService === undefined || !Number.isFinite(e.hoursAtLastService)) {
+      // Assume last serviced within the current interval so nobody loads in already overdue.
+      e.hoursAtLastService = Math.max(0, e.engineHours - rand(0, SERVICE_INTERVAL_HOURS - 1));
+    }
+    delete e.mileage;
+  }
+
   // ── Wage-scale repair (see WAGE_SCALE) ──────────────────────────────────────
   // Saves written before the wage-scale fix hold crew hired at FleetFlow's per-HOUR
   // range (18-32) in a per-DAY field, alongside starting crew on the correct per-day
@@ -3631,6 +3977,13 @@ export function gameTick(prev) {
       site.phaseProgress = 0;
       site.currentPhaseIdx = completedPhaseIdx + 1;
 
+      // Progress payment for the phase just certified. Only intermediate phases draw here —
+      // the final phase's balance is settled in the completion branch below, so a job can
+      // never be billed twice for the same work.
+      if (site.currentPhaseIdx < site.phases.length) {
+        billSiteDraw(g, site, getPhaseDrawValue(site), `"${completedPhaseName}" certified`);
+      }
+
       // Inspection outcome — fires when an inspection phase completes
       if (INSPECTION_PHASES.has(completedPhaseName) && !g.pendingInspection) {
         const qualityMod = site.siteMode === "quality" ? 0.20 : site.siteMode === "budget" ? -0.18 : 0;
@@ -3680,11 +4033,27 @@ export function gameTick(prev) {
         // cap so the cap still bounds the final figure.
         penalty = Math.round(penalty * (1 - getOfficePerkValue(g, "penaltyReduction")));
         penalty = Math.min(penalty, Math.round(site.totalValue * 0.85));
-        // Deduct deposit already received; remainder is the payout
-        const earned = Math.max(0, site.totalValue - penalty - (site.depositPaid || 0));
+        // Final draw: whatever has not been billed yet, less retainage and the late penalty.
+        // Everything already paid out during the job is tracked in site.billedToDate, so this
+        // is a settlement of the balance rather than a second payment for the whole contract.
+        const grossRemaining = Math.max(0, (site.totalValue || 0) - (site.billedToDate || 0));
+        const finalRetainage = Math.round(grossRemaining * RETAINAGE_PCT);
+        site.billedToDate = (site.billedToDate || 0) + grossRemaining;
+        site.retainageHeld = (site.retainageHeld || 0) + finalRetainage;
+        const earned = Math.max(0, grossRemaining - finalRetainage - penalty);
         g.cash += earned;
         g.revenue += earned;
         g.weeklyStats.revenue += earned;
+
+        // Retainage is released after the hold period, once the client has signed off.
+        if ((site.retainageHeld || 0) > 0) {
+          if (!g.pendingRetainage) g.pendingRetainage = [];
+          g.pendingRetainage.push({
+            id: uid(), label: site.label, client: site.client,
+            amount: site.retainageHeld, releaseDay: g.day + RETAINAGE_RELEASE_DAYS,
+          });
+          addLog(g, `\uD83D\uDD12 ${money(site.retainageHeld)} retainage held on "${site.label}" — released day ${g.day + RETAINAGE_RELEASE_DAYS}.`);
+        }
         g.completedJobs = (g.completedJobs || 0) + 1;
         if (!g.cityJobsWon) g.cityJobsWon = {};
         const completedCityKey = site.cityId || "salem";
@@ -3922,9 +4291,22 @@ export function gameTick(prev) {
       const siteEquip = g.equipment.find(e => (site.assignedEquipmentIds || []).includes(e.id));
       const telematicsTier = siteEquip?.upgrades?.telematics || 0;
       const safetyTier = siteEquip?.upgrades?.safety || 0;
+      // Ground conditions are only discovered while you are actually in the ground.
+      const currentPhase = site.phases[site.currentPhaseIdx || 0] || "";
+      const inGround = GROUND_PHASES.has(currentPhase);
       const eligible = CHAOS_EVENTS.filter((e) => {
+        if (e.groundPhase && !inGround) return false;
         let prob = e.prob * chaosProbMult;
-        if (e.id === "breakdown") prob *= (1 - telematicsTier * 0.10);
+        if (e.id === "breakdown") {
+          prob *= (1 - telematicsTier * 0.10);
+          // Machines run past their service interval break down more. Uses the worst
+          // offender on site, so one neglected machine puts the whole job at risk.
+          const worstOverdue = (site.assignedEquipmentIds || []).reduce((worst, id) => {
+            const eq = g.equipment.find((x) => x.id === id);
+            return eq ? Math.max(worst, getServiceOverdueRatio(eq)) : worst;
+          }, 0);
+          prob *= 1 + Math.min(1, worstOverdue) * (SERVICE_OVERDUE_BREAKDOWN_MULT - 1);
+        }
         if (e.id === "safety" || e.id === "inspection") prob *= (1 - safetyTier * 0.09);
         return Math.random() < prob;
       });
@@ -3963,8 +4345,17 @@ export function gameTick(prev) {
     for (const id of site.assignedEquipmentIds) {
       const e = g.equipment.find((eq) => eq.id === id);
       if (!e) continue;
-      e.condition = Math.max(0, e.condition - (0.1 * MINS_PER_TICK / 60));
+      e.engineHours = (e.engineHours || 0) + OPERATING_HOURS_PER_TICK;
+      // Running past a service interval wears the machine noticeably faster. This is the
+      // whole point of tracking hours: maintenance becomes something you schedule ahead of
+      // a big job rather than something you react to after a breakdown.
+      const overdueWear = 1 + Math.min(1.2, getServiceOverdueRatio(e)) * (SERVICE_OVERDUE_WEAR_MULT - 1);
+      e.condition = Math.max(0, e.condition - (0.1 * MINS_PER_TICK / 60) * overdueWear);
       e.fuel = Math.max(0, e.fuel - (0.5 * MINS_PER_TICK / 60));
+      if (!e._serviceWarned && isServiceDue(e)) {
+        e._serviceWarned = true;
+        addLog(g, `\uD83D\uDD27 ${e.name} is due for service at ${Math.round(e.engineHours)} hours — schedule it in Vehicles before it starts costing you.`);
+      }
       if (e.condition < 20 && e.status === "Active") {
         e.status = "Maintenance";
         e.assignedSiteId = null;
@@ -4046,7 +4437,7 @@ export function gameTick(prev) {
     const dailyRent = office.dailyRent;
 
     // Equipment daily cost
-    const equipCost = g.equipment.reduce((s, e) => s + e.dailyCost, 0);
+    const equipCost = g.equipment.reduce((s, e) => s + getEquipmentDailyCost(e), 0);
 
     const totalOverhead = dailyPayroll + dailyRent + equipCost;
     g.cash -= totalOverhead;
@@ -4203,6 +4594,58 @@ export function gameTick(prev) {
       g.loans = g.loans.filter((l) => l.weeksLeft > 0);
     }
 
+    // ── Equipment finance ─────────────────────────────────────────────────────
+    // Deliberately kept in its own list rather than folded into g.loans: the working-capital
+    // loan path caps the player at 3 active loans, and financing machines must not consume
+    // that allowance. Repossession is what makes financing a real risk rather than free money.
+    if (g.day % 7 === 0 && (g.equipmentLoans || []).length) {
+      const repossessed = [];
+      for (const loan of g.equipmentLoans) {
+        if (loan.weeksLeft <= 0) continue;
+        if (g.cash >= loan.weeklyPayment) {
+          g.cash -= loan.weeklyPayment;
+          g.expenses += loan.weeklyPayment;
+          g.weeklyStats.expenses += loan.weeklyPayment;
+          loan.remainingBalance = Math.max(0, loan.remainingBalance - loan.weeklyPayment);
+          loan.weeksLeft -= 1;
+          loan.missedPayments = 0;
+          if (loan.weeksLeft <= 0) {
+            const owned = (g.equipment || []).find((e) => e.id === loan.equipId);
+            if (owned) delete owned.isFinanced;
+            addLog(g, `✅ ${loan.label} paid off — the machine is yours outright.`);
+          }
+        } else {
+          loan.missedPayments = (loan.missedPayments || 0) + 1;
+          g.creditScore = Math.max(300, g.creditScore - 18);
+          if (loan.missedPayments >= FINANCE_REPO_MISSED_PAYMENTS) {
+            repossessed.push(loan);
+          } else {
+            const left = FINANCE_REPO_MISSED_PAYMENTS - loan.missedPayments;
+            addLog(g, `⚠️ Missed finance payment on ${loan.label} — credit hit. ${left} more and it's repossessed.`);
+            addImportantNotice(g, `Missed payment on ${loan.label}. ${left} missed payment${left === 1 ? "" : "s"} from repossession.`, "orange");
+          }
+        }
+      }
+      for (const loan of repossessed) {
+        const eq = (g.equipment || []).find((e) => e.id === loan.equipId);
+        // Free it from any site first so no job is left holding a reference to a machine
+        // that no longer exists.
+        (g.activeSites || []).forEach((site) => {
+          site.assignedEquipmentIds = (site.assignedEquipmentIds || []).filter((id) => id !== loan.equipId);
+        });
+        g.equipment = (g.equipment || []).filter((e) => e.id !== loan.equipId);
+        g.creditScore = Math.max(300, g.creditScore - 25);
+        addLog(g, `🚨 ${loan.label} REPOSSESSED after ${FINANCE_REPO_MISSED_PAYMENTS} missed payments. Credit score badly damaged.`);
+        addImportantNotice(g, `${eq?.name || loan.label} was repossessed by the lender.`, "red");
+      }
+      if (repossessed.length) {
+        const repoIds = new Set(repossessed.map((l) => l.id));
+        g.equipmentLoans = g.equipmentLoans.filter((l) => !repoIds.has(l.id));
+        repairCrewAssignments(g);
+      }
+      g.equipmentLoans = g.equipmentLoans.filter((l) => l.weeksLeft > 0);
+    }
+
     // Equipment maintenance costs: condition < 50% → $10/day per equipment
     const maintenanceCost = (g.equipment||[]).reduce((s,e)=>{
       return s + (e.condition < 50 ? 10 : 0);
@@ -4253,6 +4696,22 @@ export function gameTick(prev) {
       const _needsNew = !_wc || ((g.day - (_wc.startDay||0)) >= 7 && (_wc.progress < 0 || _wc.claimedDay !== null));
       if (_needsNew) generateWeeklyChallenge(g);
       g.weeklyStats = { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 };
+    }
+
+    // ── Retainage release ─────────────────────────────────────────────────────
+    // Money already earned but withheld until the client signs off. Paid out here so the
+    // player sees it arrive as a distinct event a couple of weeks after handover.
+    if ((g.pendingRetainage || []).length > 0) {
+      const dueNow = g.pendingRetainage.filter((r) => (r.releaseDay || 0) <= g.day);
+      for (const r of dueNow) {
+        g.cash += r.amount;
+        g.revenue += r.amount;
+        g.weeklyStats.revenue += r.amount;
+        addLog(g, `\uD83D\uDD13 Retainage released: ${money(r.amount)} from "${r.label}" (${r.client}).`);
+      }
+      if (dueNow.length) {
+        g.pendingRetainage = g.pendingRetainage.filter((r) => (r.releaseDay || 0) > g.day);
+      }
     }
 
     // R16-1: Daily savings interest (0.12%/day ≈ 4.4% annual)
@@ -4451,7 +4910,7 @@ export function gameTick(prev) {
     // ── Equip cost modifier from market event ─────────────────────────────────
     const activeEvent = g.activeMarketEvent ? MARKET_EVENTS.find((e) => e.id === g.activeMarketEvent) : null;
     if (activeEvent && activeEvent.equipDailyCostMult !== 1.0) {
-      const surcharge = Math.round(g.equipment.reduce((s, e) => s + e.dailyCost, 0) * (activeEvent.equipDailyCostMult - 1));
+      const surcharge = Math.round(g.equipment.reduce((s, e) => s + getEquipmentDailyCost(e), 0) * (activeEvent.equipDailyCostMult - 1));
       if (surcharge > 0) { g.cash -= surcharge; g.expenses += surcharge; }
     }
 
@@ -4537,6 +4996,39 @@ export function gameTick(prev) {
         g.unlockedCities.push(t.cityId);
         const cityDef = CITIES.find(c=>c.id===t.cityId);
         addLog(g, `🏙️ ${cityDef?.name||t.cityId} is now available for expansion! Your company growth qualifies.`);
+      }
+    }
+
+    // ── Change orders ─────────────────────────────────────────────────────────
+    // Only on a job that is meaningfully underway (a client does not redesign on day one)
+    // and not already carrying two changes, so a long build cannot spiral indefinitely.
+    if (!g.pendingDecision) {
+      const eligibleSites = (g.activeSites || []).filter((site) => {
+        if (site.status !== "Active" || !(site.phases || []).length) return false;
+        const overall = (site.currentPhaseIdx || 0) / site.phases.length;
+        return overall >= 0.25 && overall <= 0.8 && (site.changeOrders || []).length < 2;
+      });
+      if (eligibleSites.length && Math.random() < 0.07) {
+        const site = pick(eligibleSites);
+        const req = pick(CHANGE_ORDER_REQUESTS);
+        const valuePct = req.valuePct[0] + Math.random() * (req.valuePct[1] - req.valuePct[0]);
+        const valueAdd = Math.round((site.totalValue || 0) * valuePct);
+        const extraDays = rand(req.days[0], req.days[1]);
+        const contract = (g.contracts || []).find((c) => c.id === site.contractId);
+        g.pendingDecision = {
+          id: CHANGE_ORDER_EVENT.id,
+          title: CHANGE_ORDER_EVENT.title,
+          tone: CHANGE_ORDER_EVENT.tone,
+          desc: `${site.client} ${req.text} on "${site.label}". They will pay ${money(valueAdd)} more and allow ${extraDays} extra day${extraDays === 1 ? "" : "s"}.`,
+          context: {
+            siteId: site.id,
+            clientId: contract?.clientId || null,
+            valueAdd,
+            extraDays,
+            progressCost: rand(5, 15),
+          },
+          options: CHANGE_ORDER_EVENT.options.map((o) => ({ label: o.label, sub: o.sub })),
+        };
       }
     }
 
@@ -4797,7 +5289,7 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
 
   // Estimate overhead per day at current crew/equipment levels
   const dailyWages = (g.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0);
-  const dailyEquip  = (g.equipment || []).reduce((s, e) => s + e.dailyCost, 0);
+  const dailyEquip  = (g.equipment || []).reduce((s, e) => s + getEquipmentDailyCost(e), 0);
   const dailyRent   = OFFICES[g.officeIndex || 0]?.dailyRent || 0;
   const overheadPerDay = Math.round(dailyWages + dailyEquip + dailyRent);
 
@@ -4896,15 +5388,13 @@ export function submitBidCore(g, contractId, crewIds, equipIds) {
     depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
   });
 
-  // R14-2: 25% deposit received on mobilise
-  const _deposit = Math.round(effectiveValue * 0.25);
-  g.cash += _deposit;
-  g.revenue += _deposit;
-  g.weeklyStats.revenue += _deposit;
+  // Mobilisation draw. Smaller than the old 25% lump because the balance now arrives as
+  // progress payments while the work is done, rather than all at the end.
   const _newSite = g.activeSites[g.activeSites.length - 1];
-  _newSite.depositPaid = _deposit;
+  const _mob = billSiteDraw(g, _newSite, Math.round(effectiveValue * MOBILISATION_DEPOSIT_PCT), null);
+  _newSite.depositPaid = _mob.net;
 
-  addLog(g, `🏗️ Bid WON: "${c.label}" for ${c.client} — ${money(effectiveValue)} on a ${style.label.toLowerCase()} bid (${Math.round(winChance * 100)}% odds). 💰 25% deposit: ${money(_deposit)}.`);
+  addLog(g, `🏗️ Bid WON: "${c.label}" for ${c.client} — ${money(effectiveValue)} on a ${style.label.toLowerCase()} bid (${Math.round(winChance * 100)}% odds). 💰 Mobilisation draw: ${money(_mob.net)}.`);
   return { ok: true, won: true, winChance, prepCost, yourBid, site: _newSite };
 }
 
@@ -5159,6 +5649,66 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     });
   }, [update]);
 
+  const handleRentEquipment = useCallback((item) => {
+    update((g) => {
+      const office = OFFICES[g.officeIndex];
+      const totalEquipCap = office.equipCap + getEquipCapBonus(g);
+      // A rented machine still has to be managed and stored, so it occupies a fleet slot.
+      // What renting buys you is capital, not capacity — upgrading the yard stays worthwhile.
+      if (g.equipment.length >= totalEquipCap) { Alert.alert("Vehicles Cap", "Upgrade your office to add more vehicles to your fleet."); return; }
+      const delivery = getRentalDeliveryFee(item);
+      if (g.cash < delivery) { Alert.alert("Insufficient Funds", `Delivery to site costs ${money(delivery)}.`); return; }
+      g.cash -= delivery;
+      g.expenses += delivery;
+      const equip = createEquipment(item);
+      equip.isRental = true;
+      equip.rentalDailyRate = getRentalDailyRate(item);
+      equip.rentedOnDay = g.day;
+      g.equipment.push(equip);
+      addLog(g, `🔑 Rented ${item.name} — ${money(equip.rentalDailyRate)}/day plus ${money(delivery)} delivery. Return it from Vehicles when the job is done.`);
+    });
+  }, [update]);
+
+  const handleReturnRental = useCallback((equipId) => {
+    update((g) => {
+      const e = (g.equipment || []).find((eq) => eq.id === equipId);
+      if (!e) return;
+      if (!e.isRental) { Alert.alert("Not Rented", "This machine is owned — sell it instead."); return; }
+      if (e.status === "Active") { Alert.alert("In Use", "Can't return equipment currently assigned to a site."); return; }
+      const days = Math.max(1, (g.day || 1) - (e.rentedOnDay || g.day));
+      g.equipment = g.equipment.filter((eq) => eq.id !== equipId);
+      addLog(g, `🔑 Returned ${e.name} after ${days} day${days === 1 ? "" : "s"} on hire. Daily cost ends today.`);
+    });
+  }, [update]);
+
+  const handleFinanceEquipment = useCallback((item) => {
+    update((g) => {
+      const discount = (g._equipDiscount || 0);
+      const price = Math.round(item.price * (1 - discount));
+      const terms = getFinanceTerms(item, price);
+      if (g.creditScore < 580) { Alert.alert("Credit Too Low", "Equipment finance needs a credit score of 580+. Build your record with smaller jobs first."); return; }
+      if (g.cash < terms.down) { Alert.alert("Insufficient Deposit", `Financing needs ${money(terms.down)} down (${Math.round(FINANCE_DOWN_PCT * 100)}%).`); return; }
+      const office = OFFICES[g.officeIndex];
+      const totalEquipCap = office.equipCap + getEquipCapBonus(g);
+      if (g.equipment.length >= totalEquipCap) { Alert.alert("Vehicles Cap", "Upgrade your office to add more vehicles to your fleet."); return; }
+
+      g.cash -= terms.down;
+      g.expenses += terms.down;
+      const equip = createEquipment(item);
+      equip.isFinanced = true;
+      g.equipment.push(equip);
+      if (!g.equipmentLoans) g.equipmentLoans = [];
+      g.equipmentLoans.push({
+        id: uid(), equipId: equip.id, label: item.name,
+        weeklyPayment: terms.weeklyPayment, weeksLeft: terms.weeks,
+        remainingBalance: terms.total, missedPayments: 0,
+      });
+      if (discount > 0) { delete g._equipDiscount; delete g._equipDiscountExpiry; }
+      trackEquipBuy(g);
+      addLog(g, `🏦 Financed ${item.name}: ${money(terms.down)} down, ${money(terms.weeklyPayment)}/week for ${terms.weeks} weeks. Miss ${FINANCE_REPO_MISSED_PAYMENTS} payments and it's repossessed.`);
+    });
+  }, [update]);
+
   const handleSpeedUp = useCallback(() => {
     const cur = gameRef.current;
     if (!cur) return;
@@ -5212,7 +5762,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const e = g.equipment.find((eq) => eq.id === equipId);
       if (!e) return;
       if (e.status === "Active") { Alert.alert("In Use", "Can't sell equipment currently assigned to a site."); return; }
-      const salePrice = Math.round(e.price * 0.45 * (e.condition / 100));
+      const salePrice = getEquipmentResaleValue(e);
       g.cash += salePrice;
       g.revenue += salePrice;
       g.equipment = g.equipment.filter((eq) => eq.id !== equipId);
@@ -5708,6 +6258,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const eq = g.equipment.find(e => e.id === equipId);
       const upg = EQUIPMENT_UPGRADES.find(u => u.id === upgradeId);
       if (!eq || !upg) return;
+      // You don't fit an engine overhaul to a machine you're hiring by the day.
+      if (eq.isRental) { Alert.alert("Hired Machine", "You can't modify a machine you're renting."); return; }
       const currentTier = (eq.upgrades || {})[upgradeId] || 0;
       const nextTier = upg.tiers[currentTier];
       if (!nextTier || g.cash < nextTier.cost) return;
@@ -5728,6 +6280,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.cash -= _baseCost;
       g.expenses += _baseCost;
       _eq.condition = isEmergency ? 100 : Math.min(100, (_eq.condition || 0) + 60);
+      // A workshop repair includes the service, so it resets the interval too.
+      _eq.hoursAtLastService = _eq.engineHours || 0;
+      _eq._serviceWarned = false;
       _eq.status = "Idle";
       if (g.pendingBreakdown?.equipId === equipId) g.pendingBreakdown = null;
       addLog(g, `🔧 ${_eq.name} repaired — condition ${Math.round(_eq.condition)}%`);
@@ -5945,8 +6500,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       (g.activeSites||[]).forEach(s => { s.assignedEquipmentIds = (s.assignedEquipmentIds||[]).filter(id => id !== equipId); });
       eq.status = "Maintenance";
       eq.assignedSiteId = null;
+      eq.hoursAtLastService = eq.engineHours || 0;
+      eq._serviceWarned = false;
       repairCrewAssignments(g);
-      addLog(g, `🔧 ${eq.name} pulled for scheduled maintenance.`);
+      addLog(g, `🔧 ${eq.name} pulled for scheduled maintenance at ${Math.round(eq.engineHours || 0)} hours — service clock reset.`);
     });
   }, [update]);
 
@@ -6247,7 +6804,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {/* Low cash warning */}
         {(() => {
           const dailyBurn = (game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0) +
-            (game.equipment||[]).reduce((s,e)=>s+e.dailyCost,0) +
+            (game.equipment||[]).reduce((s,e)=>s+getEquipmentDailyCost(e),0) +
             (OFFICES[game.officeIndex||0]?.dailyRent||0);
           const daysLeft = dailyBurn > 0 ? Math.floor(game.cash / dailyBurn) : 999;
           if (daysLeft < 5 && game.cash >= 0) return (
@@ -6523,7 +7080,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             },
             {
               num: "3 of 4", title: "Buy Missing Materials",
-              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
+              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+getEquipmentDailyCost(e),0))} equipment.`,
               cta: "Go to Sites →", action: () => setTab("Sites"),
             },
             {
@@ -6879,6 +7436,20 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       {game.day > site.deadlineDay ? "⚠ OVERDUE" : `Day ${site.deadlineDay} deadline`}
                     </Text>
                   </View>
+                  {/* Billing: how much of this job has actually been paid, and what is held back */}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={[styles.sub, subCol]}>
+                      {`Billed ${money(site.billedToDate || 0)} of ${money(site.totalValue || 0)}`}
+                    </Text>
+                    {(site.retainageHeld || 0) > 0 && (
+                      <Text style={[styles.sub, { color: T.yellow }]}>{`🔒 ${money(site.retainageHeld)} retained`}</Text>
+                    )}
+                  </View>
+                  {(site.changeOrders || []).length > 0 && (
+                    <Text style={[styles.sub, { color: T.cyan }]}>
+                      {`📝 ${site.changeOrders.length} change order${site.changeOrders.length === 1 ? "" : "s"} · +${money(site.changeOrders.reduce((sum, co) => sum + (co.valueAdd || 0), 0))}`}
+                    </Text>
+                  )}
                 </View>
               );
             })}
@@ -7789,8 +8360,32 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   )}
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.label, col]}>{equipImg ? "" : "🔧 "}{equip.name}</Text>
-                    <Text style={[styles.sub, subCol]}>Tier {equip.tier || 1} · {money(equip.dailyCost || 0)}/day · {equip.type}</Text>
+                    <Text style={[styles.sub, subCol]}>Tier {equip.tier || 1} · {money(getEquipmentDailyCost(equip))}/day · {equip.type}</Text>
                     <Text style={[styles.sub, { color: cc }]}>Condition: {cond}%</Text>
+                    {(() => {
+                      const hrs = Math.round(equip.engineHours || 0);
+                      const sinceService = Math.round(getHoursSinceService(equip));
+                      const due = isServiceDue(equip);
+                      return (
+                        <Text style={[styles.sub, { color: due ? T.orange : T.sub }]}>
+                          {`${hrs.toLocaleString()} hrs · ${due ? `service overdue by ${sinceService - SERVICE_INTERVAL_HOURS} hrs` : `service in ${SERVICE_INTERVAL_HOURS - sinceService} hrs`}`}
+                        </Text>
+                      );
+                    })()}
+                    {equip.isRental && (
+                      <Text style={[styles.sub, { color: T.cyan }]}>
+                        {`🔑 Rented — on hire ${Math.max(1, (game.day || 1) - (equip.rentedOnDay || game.day))} day(s)`}
+                      </Text>
+                    )}
+                    {equip.isFinanced && (() => {
+                      const loan = (game.equipmentLoans || []).find((l) => l.equipId === equip.id);
+                      if (!loan) return null;
+                      return (
+                        <Text style={[styles.sub, { color: T.purple }]}>
+                          {`🏦 Financed — ${money(loan.weeklyPayment)}/wk, ${loan.weeksLeft} wk left${loan.missedPayments ? ` · ${loan.missedPayments} missed` : ""}`}
+                        </Text>
+                      );
+                    })()}
                     {equip.status === "Maintenance" && <Text style={[styles.sub, { color: T.red }]}>⚠️ In maintenance — needs repair</Text>}
                     {assignedSite && <Text style={[styles.sub, { color: T.cyan }]}>Assigned to: {assignedSite.label}</Text>}
                     {!assignedSite && equip.status === "Idle" && <Text style={[styles.sub, { color: T.green }]}>Available</Text>}
@@ -7857,13 +8452,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       <Text style={[styles.smallBtnText, { color: T.yellow }]}>Maintenance</Text>
                     </TouchableOpacity>
                   )}
-                  {!equip.assignedSiteId && (
-                    <TouchableOpacity style={[styles.smallBtn, { backgroundColor: T.red + "22", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.red }]}
-                      onPress={() => handleSellEquipment(equip.id)}>
-                      <Text style={[styles.smallBtnText, { color: T.red }]}>Sell ({money(Math.round(cond/100 * (equip.price||5000) * 0.5))})</Text>
+                  {!equip.assignedSiteId && equip.isRental && (
+                    <TouchableOpacity style={[styles.smallBtn, { backgroundColor: T.cyan + "22", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.cyan }]}
+                      onPress={() => handleReturnRental(equip.id)}>
+                      <Text style={[styles.smallBtnText, { color: T.cyan }]}>Return Hire</Text>
                     </TouchableOpacity>
                   )}
-                  {!equip.assignedSiteId && (
+                  {!equip.assignedSiteId && !equip.isRental && (
+                    <TouchableOpacity style={[styles.smallBtn, { backgroundColor: T.red + "22", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.red }]}
+                      onPress={() => handleSellEquipment(equip.id)}>
+                      <Text style={[styles.smallBtnText, { color: T.red }]}>Sell ({money(getEquipmentResaleValue(equip))})</Text>
+                    </TouchableOpacity>
+                  )}
+                  {!equip.assignedSiteId && !equip.isRental && (
                     <TouchableOpacity style={[styles.smallBtn, { backgroundColor: T.panel2, flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.sub }]}
                       onPress={() => Alert.alert("Retire Equipment", `Remove ${equip.name} from fleet permanently? No cash recovered.`, [
                         { text: "Cancel", style: "cancel" },
@@ -7939,6 +8540,36 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }]}>~55% cond · higher risk</Text>
                   </TouchableOpacity>
                 </View>
+                {/* Rent / Finance — how a machine gets on site without the full purchase price */}
+                {(() => {
+                  const rentRate = getRentalDailyRate(item);
+                  const delivery = getRentalDeliveryFee(item);
+                  const terms = getFinanceTerms(item, newPrice);
+                  const canRent = game.cash >= delivery;
+                  const canFinance = game.cash >= terms.down && game.creditScore >= 580;
+                  return (
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.btn, { flex: 1, backgroundColor: canRent ? T.cyan + "33" : T.panel2, borderColor: T.cyan }]}
+                        onPress={() => handleRentEquipment(item)}
+                      >
+                        <Text style={[styles.btnText, { color: canRent ? T.cyan : T.red, fontSize: 12 }]}>🔑 Rent</Text>
+                        <Text style={[styles.sub, { color: canRent ? T.cyan : T.red, textAlign: "center" }]}>{money(rentRate)}/day</Text>
+                        <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }]}>{money(delivery)} delivery · no capital</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.btn, { flex: 1, backgroundColor: canFinance ? T.purple + "33" : T.panel2, borderColor: T.purple }]}
+                        onPress={() => handleFinanceEquipment(item)}
+                      >
+                        <Text style={[styles.btnText, { color: canFinance ? T.purple : T.red, fontSize: 12 }]}>🏦 Finance</Text>
+                        <Text style={[styles.sub, { color: canFinance ? T.purple : T.red, textAlign: "center" }]}>{money(terms.down)} down</Text>
+                        <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }]}>
+                          {game.creditScore < 580 ? "Needs 580+ credit" : `${money(terms.weeklyPayment)}/wk × ${terms.weeks}`}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })()}
                 </>
               )}
             </View>
@@ -8006,10 +8637,14 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           </View>
           {[
             { label: "Cash", val: money(game.cash), color: game.cash >= 0 ? T.green : T.red },
-            { label: "Equipment Fleet", val: money(Math.round((game.equipment||[]).reduce((s,e)=>s+e.price*(e.condition/100)*0.6,0))), color: T.orange },
+            { label: "Equipment Fleet", val: money(Math.round((game.equipment||[]).reduce((s,e)=>s+getEquipmentResaleValue(e)/0.45*0.6,0))), color: T.orange },
+            { label: "Retainage Held", val: money(getTotalRetainageHeld(game)), color: T.yellow },
             { label: "Properties", val: money(Math.round((game.properties||[]).reduce((s,p)=>{ const d=PROPERTY_TYPES.find(t=>t.id===p.typeId); return s+(d?d.cost*(d.resaleRate||0.8):0); },0))), color: T.purple },
             { label: "Office Network", val: money(Math.round((game.cityOffices||[]).reduce((s,o)=>{ const d=REGIONAL_OFFICE_TYPES.find(t=>t.id===o.typeId); return s+(d?d.cost*0.7:0); },0))), color: T.blue },
             { label: "Active Pipeline", val: money(Math.round((game.activeSites||[]).reduce((s,site)=>s+site.totalValue*0.4,0))), color: T.cyan },
+            ...((game.equipmentLoans || []).length
+              ? [{ label: "Equipment Finance", val: `${money(getWeeklyEquipmentFinanceCost(game))}/wk`, color: T.red }]
+              : []),
           ].map(row => (
             <View key={row.label} style={[styles.finRow, { borderBottomColor: T.border }]}>
               <Text style={[styles.sub, col]}>{row.label}</Text>
@@ -8474,8 +9109,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   else if (m.key === "domination") {
                     const activeRivals = (game.rivals||[]).filter(r=>r.status!=="Bankrupt");
                     const outvalued = activeRivals.filter(r=>(game.companyValuation||0)>((r.cash||0)+(r.rep||0)*50000)*10).length;
-                    progressPct = activeRivals.length > 0 ? Math.min(100,(outvalued/activeRivals.length)*100) : 100;
-                    progressLabel = `${outvalued}/${activeRivals.length} rivals outvalued 10×`;
+                    const val = game.companyValuation || 0;
+                    if (val < DOMINATION_MIN_VALUATION) {
+                      // Surface the valuation gate rather than showing 100% while it blocks.
+                      progressPct = Math.min(99, (val / DOMINATION_MIN_VALUATION) * 100);
+                      progressLabel = `${money(val)} / ${money(DOMINATION_MIN_VALUATION)} company value`;
+                    } else {
+                      progressPct = activeRivals.length > 0 ? Math.min(100,(outvalued/activeRivals.length)*100) : 100;
+                      progressLabel = `${outvalued}/${activeRivals.length} rivals outvalued 10×`;
+                    }
                   }
                 }
                 return (
@@ -8546,9 +9188,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const totalDebt = game.loans.reduce((s, l) => s + l.remainingBalance, 0);
     const dailyPayroll = [...game.crew, ...game.officeStaff].reduce((s, p) => s + (p.wagePerDay || 0), 0);
     const weeklyPayroll = dailyPayroll * 7;
-    const weeklyEquipCost = game.equipment.reduce((s, e) => s + e.dailyCost, 0) * 7;
+    const weeklyEquipCost = game.equipment.reduce((s, e) => s + getEquipmentDailyCost(e), 0) * 7;
     const weeklyRent = office.dailyRent * 7;
-    const dailyEquipCost = game.equipment.reduce((s, e) => s + e.dailyCost, 0);
+    const dailyEquipCost = game.equipment.reduce((s, e) => s + getEquipmentDailyCost(e), 0);
     const dailyLoanInterest = game.loans.reduce((s, l) => s + (l.weeklyPayment || 0) / 7, 0);
     const dailyIncome = (game.weeklyStats?.revenue || 0) / 7;
     const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - office.dailyRent - dailyLoanInterest;
@@ -8995,7 +9637,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   key={i}
                   style={[styles.btn, { marginBottom: 8, backgroundColor: i === 0 ? (T[game.pendingDecision.tone] || T.blue) : T.panel2, borderColor: i === 0 ? (T[game.pendingDecision.tone] || T.blue) : T.strongBorder, borderWidth: i === 0 ? 0 : 1.5 }]}
                   onPress={() => update(g => {
-                    const evtDef = DECISION_EVENTS.find(e => e.id === g.pendingDecision?.id) || EMPLOYEE_EVENTS.find(e => e.id === g.pendingDecision?.id);
+                    const evtDef = DECISION_EVENTS.find(e => e.id === g.pendingDecision?.id)
+                      || EMPLOYEE_EVENTS.find(e => e.id === g.pendingDecision?.id)
+                      || (g.pendingDecision?.id === CHANGE_ORDER_EVENT.id ? CHANGE_ORDER_EVENT : null);
                     if (evtDef?.options?.[i]?.apply) evtDef.options[i].apply(g);
                     g.pendingDecision = null;
                   })}
