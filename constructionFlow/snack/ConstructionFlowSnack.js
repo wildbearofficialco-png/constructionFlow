@@ -3,11 +3,9 @@
  * Regenerate with `node scripts/build-snack-single.js` from src/games/constructionflow/
  * ConstructionFlowScreen.js and src/systems/*.
  *
- * Paste this ENTIRE file over Snack's App.js. No other files needed — every gameplay
- * system (economy, employees, inventory, random events, AI competitors, customer
- * satisfaction, demand/pricing, weather, staff performance, contract bidding, analytics,
- * territories) is inlined below as an isolated module (IIFE), and all 50 equipment/office
- * images load from this repo's raw GitHub content instead of local requires.
+ * Paste this ENTIRE file over Snack's App.js. No other files needed — any gameplay system
+ * the screen imports is inlined below as an isolated module (IIFE), and all 50
+ * equipment/office images load from this repo's raw GitHub content instead of local requires.
  *
  * Dependencies used (all standard in Expo Go / Snack SDK 57):
  *   react, react-native, @react-native-async-storage/async-storage, @expo/vector-icons
@@ -22,2692 +20,36 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 
-// ─── Inlined gameplay systems (each isolated in its own module scope) ──────────
-
-const EmployeePersonalitiesSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Employee Personality System
-// Covers happiness, stress, loyalty, ambition, skill growth, burnout,
-// resignations, promotions, raises, training, attendance, productivity modifiers.
-// Works with any game's workers array on game state.
-
-const PERSONALITY_TRAITS = [
-  { id: "driven",        label: "Driven",        stressMod: 1.1,  ambitionBase: 75, loyaltyMod: -5  },
-  { id: "easygoing",    label: "Easy-Going",    stressMod: 0.8,  ambitionBase: 35, loyaltyMod: 12  },
-  { id: "perfectionist",label: "Perfectionist", stressMod: 1.2,  ambitionBase: 65, loyaltyMod: 0   },
-  { id: "team_player",  label: "Team Player",   stressMod: 0.9,  ambitionBase: 45, loyaltyMod: 15  },
-  { id: "independent",  label: "Independent",   stressMod: 1.05, ambitionBase: 60, loyaltyMod: -10 },
-  { id: "methodical",   label: "Methodical",    stressMod: 0.85, ambitionBase: 50, loyaltyMod: 5   },
-];
-
-const TRAINING_PROGRAMS = [
-  { id: "safety",      label: "Safety & Compliance", cost: 220, durationDays: 3, skillGain: 5, stressReduction: 8  },
-  { id: "efficiency",  label: "Efficiency Bootcamp",  cost: 350, durationDays: 5, skillGain: 8, stressReduction: 0  },
-  { id: "leadership",  label: "Leadership Seminar",   cost: 480, durationDays: 4, skillGain: 4, stressReduction: 5, promotionBonus: true },
-  { id: "technical",   label: "Technical Skills",     cost: 300, durationDays: 4, skillGain: 10, stressReduction: 2 },
-  { id: "wellness",    label: "Wellness Program",     cost: 160, durationDays: 2, skillGain: 0, stressReduction: 22, happinessGain: 15 },
-];
-
-function initPersonality(worker) {
-  if (worker.happiness !== undefined) return worker;
-  const trait = pick(PERSONALITY_TRAITS);
-  return {
-    ...worker,
-    happiness: clamp((worker.mood || 65), 0, 100),
-    stress: rand(8, 28),
-    burnout: false,
-    burnoutDays: 0,
-    ambition: clamp(trait.ambitionBase + rand(-10, 10), 10, 100),
-    personalityTraitId: trait.id,
-    skillGrowthAccum: 0,
-    trainingCompleteDay: null,
-    trainingProgramId: null,
-    attendanceStreak: 0,
-    absencesThisMonth: 0,
-    lastRaiseDay: 0,
-    promotionReady: false,
-    resignationRisk: 0,
-    productivityMod: 1.0,
-  };
-}
-
-function getProductivityModifier(worker) {
-  if (worker.burnout) return 0.50;
-  const happinessFactor = clamp((worker.happiness || 65) / 100, 0, 1);
-  const stressLevel = worker.stress || 0;
-  const stressPenalty = stressLevel > 50 ? (stressLevel - 50) * 0.006 : 0;
-  const loyaltyBonus = (worker.loyalty || 60) > 75 ? 0.05 : 0;
-  return clamp(0.65 + happinessFactor * 0.25 - stressPenalty + loyaltyBonus, 0.45, 1.40);
-}
-
-function findWorker(game, workerId) {
-  return (game.workers || game.crew || []).find((x) => x.id === workerId);
-}
-
-function recordAttendance(game, workerId, present) {
-  const w = findWorker(game, workerId);
-  if (!w) return;
-  if (present) {
-    w.attendanceStreak = (w.attendanceStreak || 0) + 1;
-    if ((w.attendanceStreak || 0) % 7 === 0) {
-      w.happiness = clamp((w.happiness || 65) + 3, 0, 100);
-      w.loyalty = clamp((w.loyalty || 60) + 2, 0, 100);
-    }
-  } else {
-    w.absencesThisMonth = (w.absencesThisMonth || 0) + 1;
-    w.attendanceStreak = 0;
-    w.stress = clamp((w.stress || 20) + 6, 0, 100);
-    w.happiness = clamp((w.happiness || 65) - 4, 0, 100);
-  }
-}
-
-function sendToTraining(game, workerId, programId) {
-  const w = findWorker(game, workerId);
-  const program = TRAINING_PROGRAMS.find((p) => p.id === programId);
-  if (!w || !program) return false;
-  if (w.trainingCompleteDay) return false;
-  if ((game.cash || 0) < program.cost) return false;
-  game.cash -= program.cost;
-  w.trainingCompleteDay = (game.day || 1) + program.durationDays;
-  w.trainingProgramId = program.id;
-  if (w.status === "Idle") w.status = "Training";
-  addLog(game, `${w.name} enrolled in ${program.label} — back in ${program.durationDays} days.`);
-  return true;
-}
-
-function requestRaise(game, workerId) {
-  const w = findWorker(game, workerId);
-  if (!w) return;
-  const daysSince = (game.day || 1) - (w.lastRaiseDay || 0);
-  if (daysSince < 14) return;
-
-  const raiseAmt = rand(1, 4);
-  const canAfford = (game.cash || 0) > 1500;
-  const workerEarned = (w.deliveries || 0) >= 5 || (w.loyalty || 60) >= 65;
-
-  if (canAfford && workerEarned) {
-    w.wagePerHour = (w.wagePerHour || 12) + raiseAmt;
-    w.lastRaiseDay = game.day || 1;
-    w.happiness = clamp((w.happiness || 65) + 14, 0, 100);
-    w.loyalty = clamp((w.loyalty || 60) + 10, 0, 100);
-    w.stress = clamp((w.stress || 20) - 12, 0, 100);
-    w.resignationRisk = clamp((w.resignationRisk || 0) - 30, 0, 100);
-    addLog(game, `${w.name} got a $${raiseAmt}/hr raise — loyalty surged.`);
-  } else {
-    w.happiness = clamp((w.happiness || 65) - 10, 0, 100);
-    w.resignationRisk = clamp((w.resignationRisk || 0) + 25, 0, 100);
-    addLog(game, `${w.name}'s raise request denied — resignation risk up.`);
-  }
-}
-
-function checkPromotion(game, workerId) {
-  const w = findWorker(game, workerId);
-  if (!w || !w.promotionReady) return false;
-  w.level = clamp((w.level || 1) + 1, 1, 5);
-  w.promotionReady = false;
-  w.ambition = clamp((w.ambition || 50) - 20, 10, 100);
-  w.happiness = clamp((w.happiness || 65) + 18, 0, 100);
-  w.loyalty = clamp((w.loyalty || 60) + 12, 0, 100);
-  w.resignationRisk = clamp((w.resignationRisk || 0) - 35, 0, 100);
-  addLog(game, `${w.name} promoted to Level ${w.level} — morale and loyalty boosted.`);
-  if (game.weeklyStats) game.weeklyStats.hires = (game.weeklyStats.hires || 0);
-  return true;
-}
-
-function tickEmployeePersonalities(game) {
-  const workers = Array.isArray(game.workers) ? game.workers
-    : Array.isArray(game.crew) ? game.crew
-    : null;
-  if (!workers) return;
-
-  workers.forEach((w) => {
-    if (w.happiness === undefined) {
-      const patch = initPersonality(w);
-      Object.assign(w, patch);
-    }
-
-    const fatigue = w.fatigue || 0;
-    const mood = w.mood || 65;
-    const trait = PERSONALITY_TRAITS.find((t) => t.id === w.personalityTraitId) || PERSONALITY_TRAITS[0];
-
-    let stressDelta = -1.5;
-    if (fatigue > 68) stressDelta += 3.5 * trait.stressMod;
-    if (fatigue > 85) stressDelta += 4.0 * trait.stressMod;
-    if (mood < 45) stressDelta += 2.5;
-    if (w.status === "En Route") stressDelta += 0.8;
-    if ((w.absencesThisMonth || 0) > 3) stressDelta += 1.5;
-    w.stress = clamp((w.stress || 0) + stressDelta, 0, 100);
-
-    if ((w.stress || 0) >= 86) {
-      w.burnoutDays = (w.burnoutDays || 0) + 1;
-      if ((w.burnoutDays || 0) >= 3 && !w.burnout) {
-        w.burnout = true;
-        addLog(game, `${w.name} burned out — productivity will suffer until they recover.`);
-      }
-    } else if ((w.stress || 0) < 55) {
-      w.burnoutDays = Math.max(0, (w.burnoutDays || 0) - 1);
-      if (w.burnout && (w.stress || 0) < 38) {
-        w.burnout = false;
-        addLog(game, `${w.name} recovered from burnout and is back to full capacity.`);
-      }
-    }
-
-    const stressPenalty = Math.max(0, (w.stress || 0) - 45) * 0.45;
-    w.happiness = clamp(mood * 0.55 + (w.loyalty || 60) * 0.3 - stressPenalty, 0, 100);
-
-    const baseRisk = w.burnout ? 28 : 0;
-    const lowHappinessRisk = (w.happiness || 65) < 38 ? (38 - (w.happiness || 65)) * 1.4 : 0;
-    const loyaltyShield = Math.max(0, (w.loyalty || 60) - 48) * 0.6;
-    const ambitionFrustration = (w.ambition || 40) > 72 && !w.promotionReady ? 8 : 0;
-    w.resignationRisk = clamp(baseRisk + lowHappinessRisk - loyaltyShield + ambitionFrustration, 0, 100);
-
-    const deliveryGrowth = Math.min(0.04, (w.deliveries || 0) * 0.0005);
-    w.skill = clamp((w.skill || 85) + deliveryGrowth, 0, 130);
-
-    if (w.trainingCompleteDay && (game.day || 0) >= w.trainingCompleteDay) {
-      const program = TRAINING_PROGRAMS.find((p) => p.id === w.trainingProgramId);
-      if (program) {
-        w.skill = clamp((w.skill || 85) + program.skillGain, 0, 130);
-        w.stress = clamp((w.stress || 20) - program.stressReduction, 0, 100);
-        w.happiness = clamp((w.happiness || 65) + (program.happinessGain || 6), 0, 100);
-        if (program.promotionBonus) w.promotionReady = true;
-        addLog(game, `${w.name} completed ${program.label}${program.skillGain > 0 ? ` — skill +${program.skillGain}` : ""}.`);
-      }
-      w.trainingCompleteDay = null;
-      w.trainingProgramId = null;
-      if (w.status === "Training") w.status = "Idle";
-    }
-
-    w.promotionReady =
-      (w.ambition || 40) >= 68 &&
-      (w.deliveries || 0) >= 15 &&
-      (w.level || 1) < 5 &&
-      !w.burnout;
-
-    w.productivityMod = getProductivityModifier(w);
-  });
-}
-
-function applyDailyPersonalityEvents(game) {
-  const isCrewGame = !Array.isArray(game.workers) && Array.isArray(game.crew);
-  const workers = isCrewGame ? game.crew : (game.workers || []);
-
-  const toRemove = [];
-  workers.forEach((w) => {
-    if ((w.resignationRisk || 0) > 55 && Math.random() < (w.resignationRisk - 55) / 220) {
-      addLog(game, `${w.name} quit — morale and stress reached a breaking point.`);
-      if (game.weeklyStats) game.weeklyStats.quits = (game.weeklyStats.quits || 0) + 1;
-      const vehicle = (game.vehicles || []).find((v) => v.assignedWorkerId === w.id);
-      if (vehicle) { vehicle.status = "Idle"; vehicle.assignedWorkerId = null; vehicle.routeId = null; }
-      toRemove.push(w.id);
-      return;
-    }
-
-    if ((w.ambition || 40) > 72 && Math.random() < 0.035) {
-      requestRaise(game, w.id);
-    }
-
-    if ((w.stress || 0) > 72 && Math.random() < 0.055) {
-      w.callouts = (w.callouts || 0) + 1;
-      recordAttendance(game, w.id, false);
-      addLog(game, `${w.name} called out today — stress levels too high.`);
-    } else {
-      recordAttendance(game, w.id, true);
-    }
-
-    if ((w.absencesThisMonth || 0) > 0 && (game.day || 0) % 30 === 0) {
-      w.absencesThisMonth = 0;
-    }
-  });
-
-  if (toRemove.length > 0) {
-    if (isCrewGame) {
-      game.crew = game.crew.filter((w) => !toRemove.includes(w.id));
-    } else {
-      game.workers = game.workers.filter((w) => !toRemove.includes(w.id));
-    }
-  }
-}
-
-  return { PERSONALITY_TRAITS, TRAINING_PROGRAMS, initPersonality, getProductivityModifier, recordAttendance, sendToTraining, requestRaise, checkPromotion, tickEmployeePersonalities, applyDailyPersonalityEvents };
-})();
-
-const InventorySystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Advanced Inventory System
-// Per-item inventory with spoilage, expiration, auto-consumption, reorder points,
-// suppliers, delivery delays, substitutions, and shortage handling.
-// Works with any game by operating on game.inventory and game.suppliers.
-
-const SUPPLIER_TIERS = [
-  { id: "budget",    label: "Budget Supplier",    costMult: 0.82, reliability: 0.72, leadTimeDays: [3, 6] },
-  { id: "standard", label: "Standard Supplier",   costMult: 1.00, reliability: 0.88, leadTimeDays: [1, 3] },
-  { id: "premium",  label: "Premium Supplier",    costMult: 1.24, reliability: 0.97, leadTimeDays: [0, 1] },
-  { id: "local",    label: "Local Supplier",      costMult: 1.10, reliability: 0.82, leadTimeDays: [0, 1] },
-];
-
-function createSupplier(def = {}) {
-  const tier = SUPPLIER_TIERS.find((t) => t.id === (def.tierId || "standard")) || SUPPLIER_TIERS[1];
-  return {
-    id: uid(),
-    name: def.name || "Generic Supplier",
-    tierId: tier.id,
-    costMult: tier.costMult,
-    reliability: tier.reliability,
-    leadTimeDays: tier.leadTimeDays,
-    failStreak: 0,
-    totalOrders: 0,
-    failedOrders: 0,
-    active: true,
-  };
-}
-
-function createInventoryItem(def = {}) {
-  return {
-    id: uid(),
-    name: def.name || "Unknown Item",
-    category: def.category || "General",
-    quantity: def.quantity || 0,
-    unit: def.unit || "units",
-    costPerUnit: def.costPerUnit || 1,
-    reorderPoint: def.reorderPoint || 10,
-    reorderQty: def.reorderQty || 50,
-    maxStock: def.maxStock || 200,
-    supplierId: def.supplierId || null,
-    substituteItemId: def.substituteItemId || null,
-    spoilable: def.spoilable || false,
-    spoilRatePerDay: def.spoilable ? (def.spoilRatePerDay || 0.03) : 0,
-    expirationDays: def.expirationDays || null,
-    expiresOnDay: def.expirationDays ? (def.currentDay || 0) + def.expirationDays : null,
-    dailyConsumption: def.dailyConsumption || 0,
-    pendingOrders: [],
-    shortage: false,
-    lastRestockedDay: 0,
-  };
-}
-
-function placeReorder(game, itemId) {
-  const item = (game.inventory || []).find((i) => i.id === itemId);
-  if (!item) return false;
-
-  const supplier = (game.suppliers || []).find((s) => s.id === item.supplierId && s.active);
-  if (!supplier) {
-    addLog(game, `Shortage: no active supplier for ${item.name}.`);
-    item.shortage = true;
-    return false;
-  }
-
-  const alreadyPending = item.pendingOrders.some((o) => o.status === "Pending");
-  if (alreadyPending) return false;
-
-  const failed = Math.random() > supplier.reliability;
-  if (failed) {
-    supplier.failStreak = (supplier.failStreak || 0) + 1;
-    supplier.failedOrders = (supplier.failedOrders || 0) + 1;
-    if ((supplier.failStreak || 0) >= 3) {
-      supplier.active = false;
-      addLog(game, `Supplier ${supplier.name} has failed repeatedly and been removed.`);
-    } else {
-      addLog(game, `Supplier ${supplier.name} failed to fulfill order for ${item.name}.`);
-    }
-    return false;
-  }
-
-  supplier.failStreak = 0;
-  supplier.totalOrders = (supplier.totalOrders || 0) + 1;
-
-  const [minDays, maxDays] = supplier.leadTimeDays;
-  const deliveryDay = (game.day || 1) + rand(minDays, maxDays);
-  const totalCost = item.reorderQty * item.costPerUnit * supplier.costMult;
-
-  if ((game.cash || 0) < totalCost) {
-    addLog(game, `Cannot reorder ${item.name} — insufficient cash.`);
-    item.shortage = true;
-    return false;
-  }
-
-  game.cash -= totalCost;
-  item.pendingOrders.push({ id: uid(), qty: item.reorderQty, deliveryDay, supplierId: supplier.id, status: "Pending" });
-  addLog(game, `Reordered ${item.reorderQty} ${item.unit} of ${item.name} — arrives day ${deliveryDay}.`);
-  return true;
-}
-
-function receiveDelivery(game, itemId, orderId) {
-  const item = (game.inventory || []).find((i) => i.id === itemId);
-  if (!item) return;
-
-  const orderIdx = item.pendingOrders.findIndex((o) => o.id === orderId);
-  if (orderIdx === -1) return;
-
-  const order = item.pendingOrders[orderIdx];
-  item.quantity = Math.min(item.maxStock, item.quantity + order.qty);
-  item.shortage = false;
-  item.lastRestockedDay = game.day || 1;
-
-  if (item.expirationDays) {
-    item.expiresOnDay = (game.day || 1) + item.expirationDays;
-  }
-
-  item.pendingOrders.splice(orderIdx, 1);
-  addLog(game, `Received ${order.qty} ${item.unit} of ${item.name}.`);
-}
-
-function applySubstitution(game, itemId) {
-  const item = (game.inventory || []).find((i) => i.id === itemId);
-  if (!item || !item.substituteItemId) return false;
-
-  const sub = (game.inventory || []).find((i) => i.id === item.substituteItemId);
-  if (!sub || sub.quantity <= 0) return false;
-
-  const useQty = Math.min(sub.quantity, item.dailyConsumption || 1);
-  sub.quantity = Math.max(0, sub.quantity - useQty);
-  addLog(game, `Using ${sub.name} as substitute for ${item.name} (${useQty} ${sub.unit}).`);
-  return true;
-}
-
-function tickInventory(game) {
-  if (!Array.isArray(game.inventory)) return;
-
-  game.inventory.forEach((item) => {
-    if (!Array.isArray(item.pendingOrders)) item.pendingOrders = [];
-
-    item.pendingOrders = item.pendingOrders.filter((order) => {
-      if (order.status === "Pending" && (game.day || 0) >= order.deliveryDay) {
-        receiveDelivery(game, item.id, order.id);
-        return false;
-      }
-      return true;
-    });
-
-    if (item.dailyConsumption > 0) {
-      const consumed = Math.min(item.quantity, item.dailyConsumption);
-      item.quantity -= consumed;
-    }
-
-    if (item.spoilable && item.quantity > 0) {
-      const spoiled = Math.floor(item.quantity * item.spoilRatePerDay);
-      if (spoiled > 0) {
-        item.quantity = Math.max(0, item.quantity - spoiled);
-        addLog(game, `${spoiled} ${item.unit} of ${item.name} spoiled.`);
-      }
-    }
-
-    if (item.expiresOnDay && (game.day || 0) >= item.expiresOnDay && item.quantity > 0) {
-      addLog(game, `${item.quantity} ${item.unit} of ${item.name} expired and discarded.`);
-      item.quantity = 0;
-      item.expiresOnDay = null;
-    }
-
-    const hasPending = item.pendingOrders.some((o) => o.status === "Pending");
-    if (item.quantity <= item.reorderPoint && !hasPending) {
-      item.shortage = item.quantity === 0;
-      const ordered = placeReorder(game, item.id);
-      if (!ordered && item.quantity === 0) {
-        const substituted = applySubstitution(game, item.id);
-        if (!substituted) {
-          addLog(game, `Critical shortage: ${item.name} is out of stock with no substitute.`);
-        }
-      }
-    } else if (item.quantity > item.reorderPoint) {
-      item.shortage = false;
-    }
-  });
-}
-
-function getInventorySummary(game) {
-  const inventory = game.inventory || [];
-  return {
-    totalItems: inventory.length,
-    shortages: inventory.filter((i) => i.shortage).map((i) => i.name),
-    pendingDeliveries: inventory.reduce((sum, i) => sum + (i.pendingOrders || []).length, 0),
-    expiringSoon: inventory.filter((i) => i.expiresOnDay && (i.expiresOnDay - (game.day || 0)) <= 3 && i.quantity > 0).map((i) => i.name),
-    lowStock: inventory.filter((i) => i.quantity <= i.reorderPoint && i.quantity > 0).map((i) => i.name),
-  };
-}
-
-function initInventory(game) {
-  if (!Array.isArray(game.inventory)) game.inventory = [];
-  if (!Array.isArray(game.suppliers)) game.suppliers = [];
-}
-
-  return { SUPPLIER_TIERS, createSupplier, createInventoryItem, placeReorder, receiveDelivery, applySubstitution, tickInventory, getInventorySummary, initInventory };
-})();
-
-const RandomEventsSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Expanded Random Events System
-// Covers inspections, lawsuits, theft, vandalism, weather, power outages,
-// viral social media, celebrity visits, labor shortages, and supplier failures.
-// Generic: works with any business type via businessType checks.
-
-const SEVERITY = { minor: "minor", moderate: "moderate", major: "major", critical: "critical" };
-
-const EVENT_POOL = [
-  {
-    id: "health_inspection",
-    label: "Health Inspection",
-    severity: SEVERITY.moderate,
-    weight: 6,
-    businessTypes: ["restaurant", "food"],
-    resolve: (game, roll) => {
-      const pass = (game.reputation || 50) >= 55 && roll > 0.35;
-      if (pass) {
-        game.reputation = clamp((game.reputation || 50) + 3, 0, 100);
-        addLog(game, "Health inspection passed — reputation boosted.");
-      } else {
-        const fine = rand(800, 2800);
-        game.cash -= fine;
-        game.reputation = clamp((game.reputation || 50) - 8, 0, 100);
-        addLog(game, `Failed health inspection — ${money(fine)} fine and reputation hit.`);
-      }
-    },
-  },
-  {
-    id: "dot_inspection",
-    label: "DOT Vehicle Inspection",
-    severity: SEVERITY.moderate,
-    weight: 5,
-    businessTypes: ["fleet", "construction", "logistics"],
-    resolve: (game, roll) => {
-      const vehicles = game.vehicles || [];
-      const avgCondition = vehicles.length ? vehicles.reduce((s, v) => s + (v.condition || 100), 0) / vehicles.length : 100;
-      const pass = avgCondition >= 60 && roll > 0.3;
-      if (pass) {
-        addLog(game, "DOT inspection passed — fleet compliance confirmed.");
-      } else {
-        const fine = rand(500, 2200);
-        game.cash -= fine;
-        if (vehicles.length > 0) pick(vehicles).status = "In Repair";
-        addLog(game, `DOT inspection failed — ${money(fine)} fine, vehicle grounded.`);
-      }
-    },
-  },
-  {
-    id: "lawsuit",
-    label: "Customer Lawsuit",
-    severity: SEVERITY.major,
-    weight: 2,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const settlement = rand(3000, 12000);
-      game.cash -= settlement;
-      game.reputation = clamp((game.reputation || 50) - 12, 0, 100);
-      addLog(game, `Customer lawsuit settled for ${money(settlement)} — reputation damaged.`);
-    },
-  },
-  {
-    id: "theft",
-    label: "Theft Incident",
-    severity: SEVERITY.moderate,
-    weight: 4,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const stolen = rand(400, 2400);
-      const fromInventory = Array.isArray(game.inventory) && game.inventory.length > 0;
-      if (fromInventory) {
-        const item = pick(game.inventory);
-        const qtyStolen = Math.min(item.quantity, rand(5, 20));
-        item.quantity -= qtyStolen;
-        addLog(game, `Theft: ${qtyStolen} ${item.unit} of ${item.name} stolen.`);
-      }
-      game.cash -= stolen;
-      addLog(game, `Theft incident — ${money(stolen)} in losses.`);
-    },
-  },
-  {
-    id: "vandalism",
-    label: "Vandalism",
-    severity: SEVERITY.minor,
-    weight: 3,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const repairCost = rand(300, 1200);
-      game.cash -= repairCost;
-      const vehicles = (game.vehicles || []).filter((v) => v.status === "Idle");
-      if (vehicles.length > 0) {
-        const v = pick(vehicles);
-        v.condition = clamp((v.condition || 100) - rand(5, 14), 0, 100);
-      }
-      addLog(game, `Vandalism — ${money(repairCost)} in damage and cleanup costs.`);
-    },
-  },
-  {
-    id: "severe_weather",
-    label: "Severe Weather",
-    severity: SEVERITY.moderate,
-    weight: 5,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const vehicles = game.vehicles || [];
-      const affected = vehicles.filter((v) => v.status === "En Route");
-      affected.forEach((v) => {
-        v.condition = clamp((v.condition || 100) - rand(4, 10), 0, 100);
-      });
-      const routes = (game.routes || []).filter((r) => r.status === "Active");
-      routes.forEach((r) => { r.remainingSec = Math.round((r.remainingSec || 0) * 1.3); });
-      game.reputation = clamp((game.reputation || 50) - 3, 0, 100);
-      addLog(game, `Severe weather hit — ${affected.length} vehicles damaged, routes delayed.`);
-    },
-  },
-  {
-    id: "power_outage",
-    label: "Power Outage",
-    severity: SEVERITY.moderate,
-    weight: 3,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const lostRevenue = rand(500, 2500);
-      game.cash -= lostRevenue;
-      const inventory = (game.inventory || []).filter((i) => i.spoilable);
-      inventory.forEach((item) => {
-        const spoiled = Math.floor(item.quantity * 0.15);
-        item.quantity = Math.max(0, item.quantity - spoiled);
-        if (spoiled > 0) addLog(game, `Power outage spoiled ${spoiled} ${item.unit} of ${item.name}.`);
-      });
-      addLog(game, `Power outage — ${money(lostRevenue)} in lost revenue.`);
-    },
-  },
-  {
-    id: "viral_social_media",
-    label: "Viral Social Media Moment",
-    severity: SEVERITY.minor,
-    weight: 3,
-    businessTypes: ["all"],
-    resolve: (game, roll) => {
-      const positive = roll > 0.45;
-      if (positive) {
-        const boost = rand(8, 18);
-        game.reputation = clamp((game.reputation || 50) + boost, 0, 100);
-        addLog(game, `Viral social media post boosted reputation by ${boost} points!`);
-      } else {
-        const drop = rand(6, 14);
-        game.reputation = clamp((game.reputation || 50) - drop, 0, 100);
-        addLog(game, `Negative viral post — reputation dropped ${drop} points.`);
-      }
-    },
-  },
-  {
-    id: "celebrity_visit",
-    label: "Celebrity Visit",
-    severity: SEVERITY.minor,
-    weight: 2,
-    businessTypes: ["restaurant", "retail", "service"],
-    resolve: (game) => {
-      const reputationGain = rand(10, 22);
-      const revenueBoost = rand(800, 3000);
-      game.reputation = clamp((game.reputation || 50) + reputationGain, 0, 100);
-      game.cash = (game.cash || 0) + revenueBoost;
-      addLog(game, `Celebrity visited — +${reputationGain} reputation and ${money(revenueBoost)} bonus revenue!`);
-    },
-  },
-  {
-    id: "labor_shortage",
-    label: "Area Labor Shortage",
-    severity: SEVERITY.moderate,
-    weight: 4,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      if (Array.isArray(game.applicants)) game.applicants = [];
-      const workers = game.workers || [];
-      workers.forEach((w) => {
-        if (Math.random() < 0.25) {
-          w.wagePerHour = Math.round((w.wagePerHour || 12) * 1.08);
-          w.mood = clamp((w.mood || 65) + 5, 0, 100);
-        }
-      });
-      addLog(game, "Labor shortage: applicant pool dried up, workers demanding higher wages.");
-    },
-  },
-  {
-    id: "supplier_failure",
-    label: "Supplier Failure",
-    severity: SEVERITY.major,
-    weight: 3,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const suppliers = (game.suppliers || []).filter((s) => s.active);
-      if (suppliers.length === 0) {
-        addLog(game, "Supplier failure warning — no active suppliers on file.");
-        return;
-      }
-      const failed = pick(suppliers);
-      failed.active = false;
-      failed.failStreak = (failed.failStreak || 0) + 5;
-      const inventory = (game.inventory || []).filter((i) => i.supplierId === failed.id);
-      inventory.forEach((item) => { item.shortage = true; });
-      addLog(game, `Supplier ${failed.name} collapsed — ${inventory.length} items now in shortage.`);
-    },
-  },
-  {
-    id: "equipment_recall",
-    label: "Equipment Recall",
-    severity: SEVERITY.major,
-    weight: 2,
-    businessTypes: ["fleet", "construction", "manufacturing"],
-    resolve: (game) => {
-      const vehicles = (game.vehicles || []).filter((v) => v.tier >= 2);
-      if (vehicles.length === 0) return;
-      const recalled = pick(vehicles);
-      recalled.status = "In Repair";
-      recalled.repairMinsLeft = rand(480, 1440);
-      const cost = rand(1500, 5000);
-      game.cash -= cost;
-      addLog(game, `Equipment recall: ${recalled.name} grounded for ${Math.round(recalled.repairMinsLeft / 60)}h — ${money(cost)} cost.`);
-    },
-  },
-  {
-    id: "employee_accident",
-    label: "Workplace Accident",
-    severity: SEVERITY.major,
-    weight: 3,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const workers = (game.workers || []).filter((w) => w.status !== "En Route");
-      if (workers.length === 0) return;
-      const worker = pick(workers);
-      worker.status = "Idle";
-      worker.fatigue = clamp((worker.fatigue || 0) + 40, 0, 100);
-      worker.mood = clamp((worker.mood || 65) - 20, 0, 100);
-      const medCost = rand(1000, 4500);
-      game.cash -= medCost;
-      game.reputation = clamp((game.reputation || 50) - 5, 0, 100);
-      addLog(game, `Workplace accident involving ${worker.name} — ${money(medCost)} medical costs.`);
-    },
-  },
-  {
-    id: "financial_audit",
-    label: "Tax / Financial Audit",
-    severity: SEVERITY.major,
-    weight: 2,
-    businessTypes: ["all"],
-    resolve: (game) => {
-      const penalty = rand(1000, 3500);
-      game.cash -= penalty;
-      addLog(game, `Financial audit — ${money(penalty)} in penalties.`);
-    },
-  },
-];
-
-function rollRandomEvent(game, businessType) {
-  const eligible = EVENT_POOL.filter(
-    (e) => e.businessTypes.includes("all") || e.businessTypes.includes(businessType)
-  );
-
-  const totalWeight = eligible.reduce((sum, e) => sum + e.weight, 0);
-  let roll = Math.random() * totalWeight;
-
-  for (const event of eligible) {
-    roll -= event.weight;
-    if (roll <= 0) return event;
-  }
-
-  return eligible[eligible.length - 1];
-}
-
-function applyRandomEvent(game, event) {
-  if (!event || typeof event.resolve !== "function") return;
-  const roll = Math.random();
-  event.resolve(game, roll);
-
-  if (!Array.isArray(game.activeEvents)) game.activeEvents = [];
-  game.activeEvents.push({
-    id: uid(),
-    eventId: event.id,
-    label: event.label,
-    severity: event.severity,
-    day: game.day || 0,
-  });
-  if (game.activeEvents.length > 30) game.activeEvents.shift();
-}
-
-function maybeFireRandomEvent(game, businessType, dailyChance = 0.08) {
-  if (Math.random() < dailyChance) applyRandomEvent(game, rollRandomEvent(game, businessType));
-}
-
-function getActiveEventEffects(game) {
-  const recent = (game.activeEvents || []).filter((e) => e.day >= (game.day || 0) - 3);
-  return {
-    recentCount: recent.length,
-    hasMajor: recent.some((e) => e.severity === SEVERITY.major || e.severity === SEVERITY.critical),
-    labels: recent.map((e) => e.label),
-  };
-}
-
-  return { EVENT_POOL, rollRandomEvent, applyRandomEvent, maybeFireRandomEvent, getActiveEventEffects };
-})();
-
-const AiCompetitorsSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// AI Competitors System
-// Simulates competing companies with expansion, contract bidding, pricing competition,
-// acquisitions, and bankruptcies. Works across all business types.
-
-const COMPETITOR_NAMES = [
-  "Apex Logistics", "BlueStar Freight", "Meridian Delivery", "Nova Transit",
-  "Summit Carriers", "IronRoute Co.", "Pacific Haul", "CrossTown Express",
-  "Atlas Freight", "PeakLine Transport", "ClearPath Logistics", "Velocity Freight",
-  "Harbor Haulers", "Canyon Carriers", "Ridgeline Express",
-];
-
-const OWNER_NAMES = [
-  "Marcus Chen",   "Sandra Rivera",  "James Okafor",  "Priya Patel",
-  "Tom Brennan",   "Layla Hassan",   "Derek Walsh",   "Aisha Osei",
-  "Carlos Reyes",  "Mina Tanaka",    "Paul Morin",    "Zara Ahmed",
-];
-
-const STRATEGIES = [
-  { id: "aggressive",  label: "Aggressive",  expansionRate: 1.6, pricingMod: 0.88, riskTolerance: 0.80 },
-  { id: "balanced",    label: "Balanced",    expansionRate: 1.0, pricingMod: 1.00, riskTolerance: 0.50 },
-  { id: "conservative",label: "Conservative",expansionRate: 0.6, pricingMod: 1.08, riskTolerance: 0.25 },
-  { id: "predatory",   label: "Predatory",   expansionRate: 1.3, pricingMod: 0.82, riskTolerance: 0.70 },
-];
-
-function createAiCompetitor(overrides = {}) {
-  const strategy = pick(STRATEGIES);
-  const startCash = rand(8000, 35000);
-  return {
-    id: uid(),
-    name: overrides.name || pick(COMPETITOR_NAMES),
-    ownerName: overrides.ownerName || pick(OWNER_NAMES),
-    strategyId: strategy.id,
-    cash: startCash,
-    companyValue: startCash,
-    reputation: rand(35, 65),
-    fleetSize: rand(1, 4),
-    staffCount: rand(2, 8),
-    companyLevel: 1,
-    weeklyRevenue: rand(800, 3000),
-    weeklyExpenses: rand(400, 1800),
-    weeklyProfit: 0,
-    totalProfit: 0,
-    marketShare: rand(3, 12),
-    contractsWon: 0,
-    contractsLost: 0,
-    acquisitions: [],
-    acquiredBy: null,
-    status: "Active",
-    bankruptcyWarning: false,
-    bankruptcyCountdown: 0,
-    expansionCooldown: 0,
-    biddingCooldown: 0,
-    foundedDay: 1,
-    lastActionDay: 0,
-  };
-}
-
-function initAiCompetitors(game, count) {
-  if (!Array.isArray(game.aiCompetitors)) game.aiCompetitors = [];
-  const existing = game.aiCompetitors.length;
-  const toAdd = Math.max(0, (count || 3) - existing);
-  for (let i = 0; i < toAdd; i++) {
-    game.aiCompetitors.push(createAiCompetitor());
-  }
-}
-
-function getStrategy(competitor) {
-  return STRATEGIES.find((s) => s.id === competitor.strategyId) || STRATEGIES[1];
-}
-
-function tickFinances(competitor, marketState) {
-  const marketMult = marketState === "Boom" ? 1.15 : marketState === "Slow" ? 0.85 : 1.0;
-  const revenueGrowth = competitor.weeklyRevenue * (0.98 + Math.random() * 0.08) * marketMult;
-  const expenseGrowth = competitor.weeklyExpenses * (0.97 + Math.random() * 0.06);
-  competitor.weeklyRevenue = Math.max(300, revenueGrowth);
-  competitor.weeklyExpenses = Math.max(150, expenseGrowth);
-  competitor.weeklyProfit = competitor.weeklyRevenue - competitor.weeklyExpenses;
-  competitor.cash = Math.max(0, competitor.cash + competitor.weeklyProfit);
-  competitor.totalProfit += competitor.weeklyProfit;
-  competitor.companyValue = Math.round(competitor.cash + competitor.weeklyRevenue * 8);
-}
-
-function tryExpansion(competitor, game) {
-  const strategy = getStrategy(competitor);
-  if ((competitor.expansionCooldown || 0) > 0) { competitor.expansionCooldown -= 1; return; }
-  if (competitor.cash < 5000) return;
-
-  const expandRoll = Math.random();
-  const threshold = 0.04 * strategy.expansionRate;
-  if (expandRoll > threshold) return;
-
-  const expandType = Math.random();
-  if (expandType < 0.5) {
-    competitor.fleetSize += 1;
-    const cost = rand(3000, 10000);
-    competitor.cash -= cost;
-    competitor.weeklyExpenses += rand(50, 150);
-    competitor.companyLevel = Math.min(10, Math.ceil(competitor.fleetSize / 3) + 1);
-  } else {
-    competitor.staffCount += 1;
-    competitor.weeklyExpenses += rand(30, 80);
-  }
-
-  competitor.expansionCooldown = rand(5, 14);
-  addLog(game, `Competitor ${competitor.name} expanded — now ${competitor.fleetSize} vehicles, ${competitor.staffCount} staff.`);
-}
-
-function tryBidOnContract(competitor, game) {
-  if ((competitor.biddingCooldown || 0) > 0) { competitor.biddingCooldown -= 1; return; }
-  const strategy = getStrategy(competitor);
-  if (Math.random() > 0.12) return;
-
-  const playerRep = game.reputation || 50;
-  const compRep = competitor.reputation || 50;
-  const pricingAdvantage = strategy.pricingMod < 1.0 ? 0.12 : 0;
-  const reputationFactor = compRep > playerRep ? 0.08 : -0.05;
-
-  const winChance = clamp(0.25 + pricingAdvantage + reputationFactor, 0.05, 0.65);
-  const won = Math.random() < winChance;
-
-  if (won) {
-    competitor.contractsWon += 1;
-    competitor.reputation = clamp(competitor.reputation + rand(1, 4), 0, 100);
-    competitor.weeklyRevenue += rand(200, 800);
-    competitor.marketShare = clamp(competitor.marketShare + rand(0, 2), 0, 100);
-    game.reputation = clamp(playerRep - rand(1, 3), 0, 100);
-    addLog(game, `${competitor.name} outbid you on a contract — market share up.`);
-  } else {
-    competitor.contractsLost += 1;
-    competitor.reputation = clamp(competitor.reputation - 1, 0, 100);
-  }
-
-  competitor.biddingCooldown = rand(3, 8);
-}
-
-function checkBankruptcy(competitor, game) {
-  const isLosing = competitor.weeklyProfit < -500;
-  const lowCash = competitor.cash < 500;
-
-  if (isLosing && lowCash) {
-    if (!competitor.bankruptcyWarning) {
-      competitor.bankruptcyWarning = true;
-      competitor.bankruptcyCountdown = rand(7, 21);
-      addLog(game, `${competitor.name} is struggling financially — bankruptcy possible.`);
-    } else {
-      competitor.bankruptcyCountdown -= 1;
-      if (competitor.bankruptcyCountdown <= 0) {
-        competitor.status = "Bankrupt";
-        competitor.cash = 0;
-        competitor.fleetSize = 0;
-        competitor.marketShare = 0;
-        addLog(game, `${competitor.name} has gone bankrupt — market share opens up.`);
-        game.reputation = clamp((game.reputation || 50) + rand(3, 8), 0, 100);
-        return true;
-      }
-    }
-  } else {
-    competitor.bankruptcyWarning = false;
-    competitor.bankruptcyCountdown = 0;
-  }
-  return false;
-}
-
-function tryAcquisition(competitor, game) {
-  const strategy = getStrategy(competitor);
-  if (strategy.id !== "predatory" && strategy.id !== "aggressive") return;
-  if (competitor.cash < 20000) return;
-  if (Math.random() > 0.015) return;
-
-  const target = (game.aiCompetitors || []).find(
-    (c) => c.id !== competitor.id && c.status === "Bankrupt" || (c.status === "Active" && c.cash < 2000 && c.weeklyProfit < 0)
-  );
-  if (!target) return;
-
-  const acquisitionCost = rand(5000, 15000);
-  if (competitor.cash < acquisitionCost) return;
-
-  competitor.cash -= acquisitionCost;
-  competitor.fleetSize += Math.floor(target.fleetSize * 0.6);
-  competitor.staffCount += Math.floor(target.staffCount * 0.5);
-  competitor.marketShare = clamp(competitor.marketShare + target.marketShare * 0.7, 0, 100);
-  competitor.acquisitions.push(target.id);
-
-  target.status = "Acquired";
-  target.acquiredBy = competitor.id;
-
-  addLog(game, `${competitor.name} acquired ${target.name} — growing fast.`);
-}
-
-function tickAiCompetitors(game) {
-  if (!Array.isArray(game.aiCompetitors)) return;
-
-  const marketState = game.marketState || "Normal";
-
-  game.aiCompetitors.forEach((competitor) => {
-    if (competitor.status !== "Active") return;
-
-    tickFinances(competitor, marketState);
-    const wentBankrupt = checkBankruptcy(competitor, game);
-    if (wentBankrupt) return;
-
-    tryExpansion(competitor, game);
-    tryBidOnContract(competitor, game);
-    tryAcquisition(competitor, game);
-
-    competitor.reputation = clamp(competitor.reputation + (competitor.weeklyProfit > 0 ? 0.3 : -0.5), 0, 100);
-    competitor.lastActionDay = game.day || 0;
-  });
-}
-
-function getMarketPressure(game) {
-  const competitors = (game.aiCompetitors || []).filter((c) => c.status === "Active");
-  if (competitors.length === 0) return { pressureLevel: "None", pricingPressure: 1.0, totalMarketShare: 0 };
-
-  const avgRep = competitors.reduce((s, c) => s + c.reputation, 0) / competitors.length;
-  const aggressiveCount = competitors.filter((c) => c.strategyId === "predatory" || c.strategyId === "aggressive").length;
-  const totalShare = competitors.reduce((s, c) => s + c.marketShare, 0);
-
-  const pricingPressure = 1.0 - (aggressiveCount * 0.03);
-  const level = totalShare > 60 ? "High" : totalShare > 35 ? "Moderate" : "Low";
-
-  return {
-    pressureLevel: level,
-    pricingPressure: clamp(pricingPressure, 0.75, 1.0),
-    totalMarketShare: totalShare,
-    competitorCount: competitors.length,
-    averageReputation: Math.round(avgRep),
-  };
-}
-
-function getCompetitorLeaderboard(game) {
-  const all = game.aiCompetitors || [];
-  return [...all]
-    .filter((c) => c.status === "Active")
-    .sort((a, b) => b.companyValue - a.companyValue)
-    .slice(0, 5)
-    .map((c) => ({
-      name: c.name,
-      ownerName: c.ownerName,
-      companyValue: c.companyValue,
-      reputation: c.reputation,
-      fleetSize: c.fleetSize,
-      status: c.status,
-    }));
-}
-
-  return { createAiCompetitor, initAiCompetitors, tickAiCompetitors, getMarketPressure, getCompetitorLeaderboard };
-})();
-
-const EconomyEngineSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Economy Engine
-// Global macro economy affecting prices, wages, interest rates, and seasons.
-// All costs in the game scale off these modifiers — nothing is hard-coded.
-
-const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
-
-const SEASONAL_DEMAND = {
-  fleet:        { Spring: 1.05, Summer: 1.15, Fall: 1.10, Winter: 0.85 },
-  construction: { Spring: 1.15, Summer: 1.20, Fall: 1.00, Winter: 0.75 },
-  restaurant:   { Spring: 1.00, Summer: 1.10, Fall: 1.05, Winter: 0.90 },
-  realestate:   { Spring: 1.15, Summer: 1.05, Fall: 1.00, Winter: 0.90 },
-};
-
-const ECONOMY_EVENTS = [
-  { id: "recession",      label: "Economic Recession",    weight: 2, duration: [30, 60], effects: { inflationMod: -0.3, demandMod: -0.2, wageMod: -0.05, fuelMod: -0.1 } },
-  { id: "boom",           label: "Economic Boom",         weight: 3, duration: [20, 45], effects: { inflationMod: +0.4, demandMod: +0.25, wageMod: +0.08, fuelMod: +0.05 } },
-  { id: "fuel_crisis",    label: "Fuel Price Spike",      weight: 4, duration: [10, 25], effects: { fuelMod: +0.45, demandMod: -0.08, inflationMod: +0.1 } },
-  { id: "supply_shock",   label: "Supply Chain Shock",    weight: 3, duration: [14, 30], effects: { ingredientMod: +0.3, inventoryMod: +0.2, inflationMod: +0.15 } },
-  { id: "labor_tight",    label: "Labor Market Tightening", weight: 3, duration: [20, 40], effects: { wageMod: +0.12, demandMod: +0.05 } },
-  { id: "rate_hike",      label: "Interest Rate Hike",   weight: 2, duration: [30, 60], effects: { interestRateMod: +0.025, demandMod: -0.05 } },
-  { id: "consumer_conf",  label: "High Consumer Confidence", weight: 4, duration: [15, 35], effects: { demandMod: +0.15, wageMod: +0.03 } },
-];
-
-function dayToSeason(day) {
-  const dayInYear = (day % 360) + 1;
-  if (dayInYear <= 90) return "Spring";
-  if (dayInYear <= 180) return "Summer";
-  if (dayInYear <= 270) return "Fall";
-  return "Winter";
-}
-
-function initEconomy(game) {
-  if (game.economy) return;
-  game.economy = {
-    inflationRate: 0.03,
-    fuelPriceIndex: 1.0,
-    ingredientPriceIndex: 1.0,
-    inventoryPriceIndex: 1.0,
-    interestRate: 0.065,
-    wagePressureIndex: 1.0,
-    demandIndex: 1.0,
-    season: dayToSeason(game.day || 0),
-    activeEvent: null,
-    activeEventDaysLeft: 0,
-    lastEventDay: 0,
-    eventHistory: [],
-    totalInflation: 1.0,
-  };
-}
-
-function tickEconomy(game) {
-  if (!game.economy) initEconomy(game);
-  const eco = game.economy;
-  const day = game.day || 0;
-
-  eco.season = dayToSeason(day);
-
-  // Decay active event
-  if (eco.activeEvent && eco.activeEventDaysLeft > 0) {
-    eco.activeEventDaysLeft -= 1;
-    if (eco.activeEventDaysLeft === 0) {
-      addLog(game, `Economy: "${eco.activeEvent.label}" has ended.`);
-      eco.activeEvent = null;
-    }
-  }
-
-  // Possibly trigger a new economy event (3% daily chance, min 20 days between events)
-  if (!eco.activeEvent && day - (eco.lastEventDay || 0) >= 20 && Math.random() < 0.03) {
-    const totalWeight = ECONOMY_EVENTS.reduce((s, e) => s + e.weight, 0);
-    let roll = Math.random() * totalWeight;
-    let chosen = null;
-    for (const ev of ECONOMY_EVENTS) {
-      roll -= ev.weight;
-      if (roll <= 0) { chosen = ev; break; }
-    }
-    if (chosen) {
-      eco.activeEvent = chosen;
-      eco.activeEventDaysLeft = rand(chosen.duration[0], chosen.duration[1]);
-      eco.lastEventDay = day;
-      eco.eventHistory.unshift({ id: uid(), label: chosen.label, day });
-      if (eco.eventHistory.length > 10) eco.eventHistory.pop();
-      addLog(game, `Economy shift: "${chosen.label}" — lasting ~${eco.activeEventDaysLeft} days.`);
-    }
-  }
-
-  const eff = eco.activeEvent?.effects || {};
-
-  // Inflation drift: ±0.002% daily, pulled toward baseline 3%
-  const infTarget = 0.03 + (eff.inflationMod || 0);
-  eco.inflationRate = clamp(eco.inflationRate + (infTarget - eco.inflationRate) * 0.04 + (Math.random() - 0.5) * 0.001, 0.0, 0.12);
-  eco.totalInflation = clamp(eco.totalInflation * (1 + eco.inflationRate / 360), 1.0, 2.5);
-
-  // Fuel price index: random walk clamped 0.7–1.8, influenced by events
-  const fuelTarget = 1.0 + (eff.fuelMod || 0);
-  eco.fuelPriceIndex = clamp(eco.fuelPriceIndex + (fuelTarget - eco.fuelPriceIndex) * 0.03 + (Math.random() - 0.5) * 0.015, 0.70, 1.80);
-
-  // Ingredient prices
-  const ingTarget = 1.0 + (eff.ingredientMod || 0);
-  eco.ingredientPriceIndex = clamp(eco.ingredientPriceIndex + (ingTarget - eco.ingredientPriceIndex) * 0.025 + (Math.random() - 0.5) * 0.008, 0.75, 1.70);
-
-  // Inventory/supply prices
-  const invTarget = 1.0 + (eff.inventoryMod || 0);
-  eco.inventoryPriceIndex = clamp(eco.inventoryPriceIndex + (invTarget - eco.inventoryPriceIndex) * 0.02 + (Math.random() - 0.5) * 0.006, 0.80, 1.60);
-
-  // Wage pressure
-  const wageTarget = 1.0 + (eff.wageMod || 0);
-  eco.wagePressureIndex = clamp(eco.wagePressureIndex + (wageTarget - eco.wagePressureIndex) * 0.02 + (Math.random() - 0.5) * 0.004, 0.85, 1.40);
-
-  // Interest rate
-  const irTarget = 0.065 + (eff.interestRateMod || 0);
-  eco.interestRate = clamp(eco.interestRate + (irTarget - eco.interestRate) * 0.01, 0.02, 0.18);
-
-  // Demand index
-  const demandTarget = 1.0 + (eff.demandMod || 0);
-  eco.demandIndex = clamp(eco.demandIndex + (demandTarget - eco.demandIndex) * 0.05 + (Math.random() - 0.5) * 0.01, 0.60, 1.50);
-}
-
-function getEconomyModifiers(game) {
-  const eco = game.economy;
-  if (!eco) return { fuel: 1.0, ingredients: 1.0, wages: 1.0, demand: 1.0, interest: 0.065, inventory: 1.0 };
-  return {
-    fuel: eco.fuelPriceIndex,
-    ingredients: eco.ingredientPriceIndex,
-    wages: eco.wagePressureIndex,
-    demand: eco.demandIndex,
-    interest: eco.interestRate,
-    inventory: eco.inventoryPriceIndex,
-    inflation: eco.inflationRate,
-    totalInflation: eco.totalInflation,
-    season: eco.season,
-    activeEvent: eco.activeEvent?.label || null,
-    activeEventDaysLeft: eco.activeEventDaysLeft || 0,
-  };
-}
-
-function applySeasonalEffects(game, businessType) {
-  const eco = game.economy;
-  if (!eco) return 1.0;
-  const profile = SEASONAL_DEMAND[businessType] || { Spring: 1.0, Summer: 1.0, Fall: 1.0, Winter: 1.0 };
-  const seasonMod = profile[eco.season] || 1.0;
-  return seasonMod * (eco.demandIndex || 1.0);
-}
-
-  return { ECONOMY_EVENTS, initEconomy, tickEconomy, getEconomyModifiers, applySeasonalEffects };
-})();
-
-const CustomerSatisfactionSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Customer Satisfaction System
-// Tracks reviews, loyalty, repeat visit rates, and demographic breakdown.
-// Rating drives reputation modifier and revenue multiplier across all business types.
-
-const CUSTOMER_DEMOGRAPHICS = [
-  { id: "budget",    label: "Budget",    weight: 35, spendMult: 0.75, loyaltyBase: 45, sensitivityToPrice: 1.4 },
-  { id: "standard", label: "Standard",  weight: 40, spendMult: 1.00, loyaltyBase: 60, sensitivityToPrice: 1.0 },
-  { id: "premium",  label: "Premium",   weight: 18, spendMult: 1.45, loyaltyBase: 55, sensitivityToPrice: 0.7 },
-  { id: "corporate",label: "Corporate", weight: 7,  spendMult: 1.80, loyaltyBase: 70, sensitivityToPrice: 0.5 },
-];
-
-const REVIEW_SENTIMENTS = {
-  excellent: { minSatisfaction: 85, label: "Excellent", stars: 5 },
-  good:      { minSatisfaction: 68, label: "Good",      stars: 4 },
-  average:   { minSatisfaction: 48, label: "Average",   stars: 3 },
-  poor:      { minSatisfaction: 28, label: "Poor",      stars: 2 },
-  terrible:  { minSatisfaction: 0,  label: "Terrible",  stars: 1 },
-};
-
-function getSentiment(satisfaction) {
-  if (satisfaction >= 85) return REVIEW_SENTIMENTS.excellent;
-  if (satisfaction >= 68) return REVIEW_SENTIMENTS.good;
-  if (satisfaction >= 48) return REVIEW_SENTIMENTS.average;
-  if (satisfaction >= 28) return REVIEW_SENTIMENTS.poor;
-  return REVIEW_SENTIMENTS.terrible;
-}
-
-function pickDemographic() {
-  const total = CUSTOMER_DEMOGRAPHICS.reduce((s, d) => s + d.weight, 0);
-  let roll = Math.random() * total;
-  for (const d of CUSTOMER_DEMOGRAPHICS) {
-    roll -= d.weight;
-    if (roll <= 0) return d;
-  }
-  return CUSTOMER_DEMOGRAPHICS[1];
-}
-
-function recordCustomerVisit(game, satisfaction, revenueAmount = 0) {
-  if (!Array.isArray(game.reviews)) game.reviews = [];
-  if (!game.demographics) game.demographics = {};
-
-  const demo = pickDemographic();
-  const sentiment = getSentiment(clamp(satisfaction, 0, 100));
-  const isRepeat = Math.random() < ((game.repeatRate || 0.2) + (sentiment.stars >= 4 ? 0.15 : 0));
-
-  const review = {
-    id: uid(),
-    day: game.day || 0,
-    satisfaction: Math.round(satisfaction),
-    stars: sentiment.stars,
-    sentiment: sentiment.label,
-    demographicId: demo.id,
-    isRepeat,
-    revenue: Math.round(revenueAmount * demo.spendMult),
-  };
-
-  game.reviews.unshift(review);
-  if (game.reviews.length > 150) game.reviews.length = 150;
-
-  // Update demographic counts
-  game.demographics[demo.id] = (game.demographics[demo.id] || 0) + 1;
-
-  // Log notable reviews
-  if (sentiment.stars <= 2) {
-    addLog(game, `⭐ ${sentiment.stars}-star review from ${demo.label} customer — satisfaction ${Math.round(satisfaction)}.`);
-  } else if (sentiment.stars === 5 && Math.random() < 0.3) {
-    addLog(game, `⭐⭐⭐⭐⭐ 5-star review from ${demo.label} customer — excellent service!`);
-  }
-
-  return review;
-}
-
-function tickCustomerSatisfaction(game) {
-  if (!Array.isArray(game.reviews)) game.reviews = [];
-
-  const reviews = game.reviews;
-  const currentDay = game.day || 0;
-
-  // Age out reviews older than 60 days (keep last 150 anyway)
-  const fresh = reviews.filter((r) => currentDay - r.day <= 60);
-  if (fresh.length < reviews.length) game.reviews = fresh;
-
-  if (fresh.length === 0) {
-    game.customerRating = 3.5;
-    game.loyaltyScore = 50;
-    game.repeatRate = 0.20;
-    return;
-  }
-
-  // Weighted star rating (recent reviews count more)
-  let weightedSum = 0;
-  let weightTotal = 0;
-  fresh.forEach((r) => {
-    const age = currentDay - r.day;
-    const weight = Math.max(0.3, 1 - age / 60);
-    weightedSum += r.stars * weight;
-    weightTotal += weight;
-  });
-  game.customerRating = Math.round((weightedSum / weightTotal) * 10) / 10;
-
-  // Loyalty decays slightly each day, boosted by positive reviews
-  const avgStars = weightedSum / weightTotal;
-  const loyaltyTarget = clamp((avgStars - 1) * 25, 10, 95);
-  game.loyaltyScore = Math.round(clamp(
-    ((game.loyaltyScore || 50) * 0.97) + (loyaltyTarget * 0.03),
-    10, 95
-  ));
-
-  // Repeat rate
-  const repeatVisits = fresh.filter((r) => r.isRepeat).length;
-  game.repeatRate = clamp(repeatVisits / Math.max(1, fresh.length), 0.05, 0.65);
-
-  // Apply to reputation
-  const repDelta = (avgStars - 3) * 0.5;
-  game.reputation = clamp((game.reputation || 50) + repDelta, 0, 100);
-}
-
-function applyReviewImpact(game) {
-  const rating = game.customerRating || 3.5;
-  // Revenue multiplier: 1-star = 0.7x, 5-star = 1.35x
-  const revenueMultiplier = clamp(0.70 + (rating - 1) * 0.1625, 0.70, 1.35);
-  // Reputation drift
-  const repTarget = clamp((rating - 1) * 20 + 20, 0, 100);
-  game.reputation = clamp(
-    (game.reputation || 50) * 0.99 + repTarget * 0.01,
-    0, 100
-  );
-  return revenueMultiplier;
-}
-
-function getCustomerMetrics(game) {
-  const reviews = game.reviews || [];
-  const total = reviews.length;
-  const starCounts = [0, 0, 0, 0, 0];
-  reviews.forEach((r) => { starCounts[r.stars - 1] += 1; });
-
-  const demo = game.demographics || {};
-  const demoTotal = Object.values(demo).reduce((s, v) => s + v, 0);
-  const demoBreakdown = CUSTOMER_DEMOGRAPHICS.map((d) => ({
-    id: d.id,
-    label: d.label,
-    count: demo[d.id] || 0,
-    pct: demoTotal > 0 ? Math.round(((demo[d.id] || 0) / demoTotal) * 100) : 0,
-  }));
-
-  const recentAvg = reviews.length > 0
-    ? Math.round(reviews.slice(0, 10).reduce((s, r) => s + r.satisfaction, 0) / Math.min(10, reviews.length))
-    : 0;
-
-  return {
-    rating: game.customerRating || 3.5,
-    reviewCount: total,
-    loyaltyScore: game.loyaltyScore || 50,
-    repeatRate: Math.round((game.repeatRate || 0.20) * 100),
-    recentSatisfaction: recentAvg,
-    starCounts,
-    demographics: demoBreakdown,
-    revenueMultiplier: applyReviewImpact(game),
-  };
-}
-
-  return { CUSTOMER_DEMOGRAPHICS, recordCustomerVisit, tickCustomerSatisfaction, applyReviewImpact, getCustomerMetrics };
-})();
-
-const DemandPricingSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Demand & Pricing Engine
-// Computes real-time price multipliers from reputation, season, competition,
-// time-of-day, customer satisfaction, and economy. Every revenue event in
-// every game should pass through getPriceMultiplier() before finalizing.
-
-const TIME_OF_DAY_DEMAND = {
-  // hour (0–23) → demand index
-  0: 0.55, 1: 0.50, 2: 0.45, 3: 0.45, 4: 0.50, 5: 0.65,
-  6: 0.80, 7: 0.90, 8: 1.00, 9: 1.05, 10: 1.10, 11: 1.15,
-  12: 1.20, 13: 1.10, 14: 1.05, 15: 1.10, 16: 1.15, 17: 1.20,
-  18: 1.15, 19: 1.10, 20: 1.00, 21: 0.90, 22: 0.75, 23: 0.65,
-};
-
-const BUSINESS_PRICE_FLOORS = {
-  fleet:        0.60,
-  construction: 0.55,
-  restaurant:   0.50,
-  realestate:   0.70,
-};
-
-const BUSINESS_PRICE_CEILINGS = {
-  fleet:        2.00,
-  construction: 2.20,
-  restaurant:   1.80,
-  realestate:   1.60,
-};
-
-const PRICING_STRATEGIES = [
-  { id: "economy",    label: "Economy",    baseMult: 0.82, demandSensitivity: 0.6, notes: "Lower price, higher volume" },
-  { id: "standard",  label: "Standard",   baseMult: 1.00, demandSensitivity: 1.0, notes: "Market rate" },
-  { id: "premium",   label: "Premium",    baseMult: 1.22, demandSensitivity: 1.3, notes: "Higher price, requires good rep" },
-  { id: "dynamic",   label: "Dynamic",    baseMult: 1.00, demandSensitivity: 1.8, notes: "Floats with demand — best average" },
-  { id: "surge",     label: "Surge",      baseMult: 1.40, demandSensitivity: 2.2, notes: "Peak-demand pricing — alienates loyalists" },
-];
-
-function initPricing(game) {
-  if (game.pricingStrategyId) return;
-  game.pricingStrategyId = "standard";
-  game.priceMultiplierOverride = null;
-  game.demandScore = 1.0;
-  game.surgeActive = false;
-  game.surgeEndHour = null;
-}
-
-function getTimeOfDayMultiplier(gameHour) {
-  return TIME_OF_DAY_DEMAND[gameHour] ?? 1.0;
-}
-
-function getReputationMultiplier(reputation) {
-  // 0 rep → 0.70x, 50 rep → 1.00x, 100 rep → 1.30x
-  return clamp(0.70 + (reputation / 100) * 0.60, 0.70, 1.30);
-}
-
-function getCompetitionMultiplier(game) {
-  const competitors = game.aiCompetitors || [];
-  if (competitors.length === 0) return 1.0;
-  const avgRep = competitors.reduce((s, c) => s + (c.reputation || 50), 0) / competitors.length;
-  const myRep = game.reputation || 50;
-  // If competitors have higher rep, our effective price is pushed down
-  const delta = myRep - avgRep;
-  return clamp(1.0 + delta * 0.004, 0.75, 1.25);
-}
-
-function getCustomerSatisfactionMultiplier(game) {
-  const rating = game.customerRating || 3.5;
-  // 1 star → 0.80x, 3.5 stars → 1.00x, 5 stars → 1.20x
-  return clamp(0.80 + (rating - 1) / 4 * 0.40, 0.80, 1.20);
-}
-
-function getLoyaltyVolumeBonus(game) {
-  const loyalty = game.loyaltyScore || 50;
-  const repeatRate = game.repeatRate || 0.20;
-  // High loyalty = more repeat customers = higher effective volume
-  return clamp(1.0 + (loyalty - 50) / 200 + repeatRate * 0.3, 0.90, 1.35);
-}
-
-function getPriceMultiplier(game, businessType, gameHour) {
-  initPricing(game);
-
-  const strategy = PRICING_STRATEGIES.find((s) => s.id === game.pricingStrategyId) || PRICING_STRATEGIES[1];
-  const eco = game.economy || {};
-  const demandIndex = eco.demandIndex || 1.0;
-  const hour = gameHour ?? new Date().getHours();
-
-  const repMult = getReputationMultiplier(game.reputation || 50);
-  const timeMult = getTimeOfDayMultiplier(hour);
-  const compMult = getCompetitionMultiplier(game);
-  const satMult = getCustomerSatisfactionMultiplier(game);
-
-  // Dynamic strategy floats with demand; others use base
-  let basePrice = strategy.baseMult;
-  if (strategy.id === "dynamic" || strategy.id === "surge") {
-    basePrice = strategy.baseMult * (1 + (demandIndex - 1) * strategy.demandSensitivity);
-  }
-
-  const floor = BUSINESS_PRICE_FLOORS[businessType] || 0.55;
-  const ceiling = BUSINESS_PRICE_CEILINGS[businessType] || 2.0;
-
-  const raw = basePrice * repMult * timeMult * compMult * satMult * demandIndex;
-  const final = clamp(raw, floor, ceiling);
-
-  return {
-    multiplier: Math.round(final * 1000) / 1000,
-    breakdown: {
-      strategy: basePrice,
-      reputation: repMult,
-      timeOfDay: timeMult,
-      competition: compMult,
-      satisfaction: satMult,
-      demand: demandIndex,
-    },
-    surgeActive: strategy.id === "surge" && final > 1.30,
-    demandScore: demandIndex * timeMult,
-  };
-}
-
-function getDemandScore(game, businessType, gameHour) {
-  const hour = gameHour ?? new Date().getHours();
-  const eco = game.economy || {};
-  const seasonal = (eco.season && SEASONAL_DEMAND_BY_TYPE[businessType]?.[eco.season]) || 1.0;
-  return clamp(
-    getTimeOfDayMultiplier(hour) * (eco.demandIndex || 1.0) * seasonal,
-    0.3, 2.0
-  );
-}
-
-const SEASONAL_DEMAND_BY_TYPE = {
-  fleet:        { Spring: 1.05, Summer: 1.15, Fall: 1.10, Winter: 0.85 },
-  construction: { Spring: 1.15, Summer: 1.20, Fall: 1.00, Winter: 0.75 },
-  restaurant:   { Spring: 1.00, Summer: 1.10, Fall: 1.05, Winter: 0.90 },
-  realestate:   { Spring: 1.15, Summer: 1.05, Fall: 1.00, Winter: 0.90 },
-};
-
-function tickDemand(game, businessType) {
-  initPricing(game);
-  const eco = game.economy || {};
-  const seasonal = (eco.season && SEASONAL_DEMAND_BY_TYPE[businessType]?.[eco.season]) || 1.0;
-  const loyaltyBonus = getLoyaltyVolumeBonus(game);
-  game.demandScore = clamp((eco.demandIndex || 1.0) * seasonal * loyaltyBonus, 0.30, 2.20);
-  // Surge detection: if demand > 1.4 and strategy is dynamic, flag it
-  game.surgeActive = game.pricingStrategyId === "surge" && game.demandScore > 1.35;
-}
-
-function setPricingStrategy(game, strategyId) {
-  const strategy = PRICING_STRATEGIES.find((s) => s.id === strategyId);
-  if (!strategy) return false;
-  game.pricingStrategyId = strategyId;
-  return true;
-}
-
-function estimateRevenueImpact(game, businessType, baseRevenue) {
-  const result = getPriceMultiplier(game, businessType, 12);
-  const demand = game.demandScore || 1.0;
-  return {
-    base: Math.round(baseRevenue),
-    adjusted: Math.round(baseRevenue * result.multiplier),
-    demand: Math.round(demand * 100),
-    breakdown: result.breakdown,
-  };
-}
-
-  return { PRICING_STRATEGIES, initPricing, getPriceMultiplier, getDemandScore, tickDemand, setPricingStrategy, estimateRevenueImpact };
-})();
-
-const WeatherRouteConditionsSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Weather & Route Conditions System
-// Daily weather affects delivery times, fuel costs, breakdown risk, and customer demand.
-// Integrates with equipmentWear (breakdown mod), demandPricing (demand index),
-// financialLedger (fuel surcharge), and randomEvents (storm disruption).
-
-const WEATHER_TYPES = [
-  { id: "clear",    label: "Clear",      icon: "☀️",  timeMult: 1.00, fuelMult: 1.00, breakdownMod: 0.00, demandMod: 1.00, weight: 35 },
-  { id: "cloudy",   label: "Overcast",   icon: "⛅",  timeMult: 1.02, fuelMult: 1.00, breakdownMod: 0.00, demandMod: 0.98, weight: 20 },
-  { id: "rain",     label: "Rain",       icon: "🌧️", timeMult: 1.15, fuelMult: 1.05, breakdownMod: 0.02, demandMod: 0.92, weight: 20 },
-  { id: "storm",    label: "Storm",      icon: "⛈️", timeMult: 1.35, fuelMult: 1.15, breakdownMod: 0.05, demandMod: 0.80, weight: 8  },
-  { id: "snow",     label: "Snow",       icon: "🌨️", timeMult: 1.50, fuelMult: 1.25, breakdownMod: 0.08, demandMod: 0.75, weight: 7  },
-  { id: "fog",      label: "Dense Fog",  icon: "🌫️", timeMult: 1.25, fuelMult: 1.02, breakdownMod: 0.03, demandMod: 0.88, weight: 6  },
-  { id: "heatwave", label: "Heat Wave",  icon: "🔥",  timeMult: 1.08, fuelMult: 1.12, breakdownMod: 0.04, demandMod: 1.05, weight: 4  },
-];
-
-// Season biases: each season shifts the probability of certain weather
-const SEASON_WEATHER_BIAS = {
-  Spring:  { rain: 2.0, storm: 1.5, snow: 0.2, clear: 0.9, fog: 1.2 },
-  Summer:  { heatwave: 3.0, storm: 1.8, clear: 1.4, snow: 0, rain: 0.8 },
-  Fall:    { rain: 1.5, fog: 2.0, storm: 1.2, clear: 0.8, snow: 0.5 },
-  Winter:  { snow: 4.0, fog: 1.5, clear: 0.6, heatwave: 0, storm: 0.8 },
-};
-
-// Road condition modifiers layered on top of weather
-const ROAD_CONDITIONS = [
-  { id: "normal",      label: "Normal",        timeMod: 1.00, fuelMod: 1.00, weight: 60 },
-  { id: "roadwork",    label: "Road Works",    timeMod: 1.18, fuelMod: 1.03, weight: 15 },
-  { id: "accident",    label: "Accident",      timeMod: 1.30, fuelMod: 1.05, weight: 10 },
-  { id: "flooding",    label: "Flooding",      timeMod: 1.45, fuelMod: 1.15, weight: 5  },
-  { id: "detour",      label: "Detour",        timeMod: 1.20, fuelMod: 1.08, weight: 10 },
-];
-
-function pickWeighted(options, season) {
-  const bias = (season && SEASON_WEATHER_BIAS[season]) || {};
-  const weighted = options.map((o) => ({
-    ...o,
-    effectiveWeight: (o.weight || 1) * (bias[o.id] ?? 1.0),
-  }));
-  const total = weighted.reduce((s, o) => s + o.effectiveWeight, 0);
-  let r = Math.random() * total;
-  for (const o of weighted) {
-    r -= o.effectiveWeight;
-    if (r <= 0) return o;
-  }
-  return weighted[0];
-}
-
-function initWeather(game) {
-  if (game.weather) return;
-  game.weather = {
-    current: "clear",
-    icon: "☀️",
-    label: "Clear",
-    daysSinceChange: 0,
-    roadCondition: "normal",
-    roadLabel: "Normal",
-    fuelSurchargeActive: false,
-    weatherHistory: [],
-  };
-}
-
-function tickWeather(game) {
-  initWeather(game);
-  const w = game.weather;
-  const season = game.economy?.season || "Summer";
-
-  w.daysSinceChange = (w.daysSinceChange || 0) + 1;
-
-  // Weather persists 1–4 days; chance of change increases each day
-  const changeChance = clamp((w.daysSinceChange - 1) * 0.30, 0.10, 0.90);
-  if (Math.random() < changeChance) {
-    const next = pickWeighted(WEATHER_TYPES, season);
-    const prevId = w.current;
-    w.current = next.id;
-    w.icon = next.icon;
-    w.label = next.label;
-    w.daysSinceChange = 0;
-
-    // Log notable weather changes
-    if (next.id === "storm" || next.id === "snow") {
-      addLog(game, `${next.icon} Weather alert: ${next.label} moving in — deliveries will be slower and fuel costs up.`);
-    } else if ((prevId === "storm" || prevId === "snow") && next.id === "clear") {
-      addLog(game, "☀️ Skies cleared up — back to normal delivery conditions.");
-    }
-
-    w.weatherHistory = [...(w.weatherHistory || []).slice(-13), { day: game.day || 0, id: next.id, label: next.label }];
-  }
-
-  // Road conditions refresh daily
-  const road = pickWeighted(ROAD_CONDITIONS, null);
-  w.roadCondition = road.id;
-  w.roadLabel = road.label;
-  if (road.id !== "normal" && Math.random() < 0.4) {
-    addLog(game, `🚧 ${road.label} reported on main routes today.`);
-  }
-
-  // Fuel surcharge: storm or heatwave triggers surcharge
-  const weatherDef = WEATHER_TYPES.find((t) => t.id === w.current);
-  w.fuelSurchargeActive = (weatherDef?.fuelMult || 1) > 1.10;
-
-  // Apply demand index nudge from weather into economy
-  if (game.economy && weatherDef) {
-    const existingDemand = game.economy.demandIndex || 1.0;
-    game.economy.demandIndex = clamp(
-      existingDemand * 0.85 + weatherDef.demandMod * 0.15,
-      0.50, 1.80
-    );
-  }
-}
-
-function getWeatherEffects(game) {
-  const w = game.weather || { current: "clear" };
-  const weatherDef = WEATHER_TYPES.find((t) => t.id === w.current) || WEATHER_TYPES[0];
-  const roadDef = ROAD_CONDITIONS.find((r) => r.id === (w.roadCondition || "normal")) || ROAD_CONDITIONS[0];
-
-  return {
-    weatherId: w.current,
-    weatherLabel: w.label || "Clear",
-    weatherIcon: w.icon || "☀️",
-    roadCondition: w.roadCondition || "normal",
-    roadLabel: w.roadLabel || "Normal",
-    timeMult: weatherDef.timeMult * roadDef.timeMod,
-    fuelMult: weatherDef.fuelMult * roadDef.fuelMod,
-    breakdownMod: weatherDef.breakdownMod,
-    demandMod: weatherDef.demandMod,
-    fuelSurchargeActive: w.fuelSurchargeActive || false,
-    severe: weatherDef.id === "storm" || weatherDef.id === "snow",
-  };
-}
-
-// Call this when a route completes or when computing ETA
-function applyWeatherToRoute(game, route) {
-  const fx = getWeatherEffects(game);
-  if (fx.timeMult <= 1.00) return route;
-
-  // Extend remaining duration proportional to weather
-  if (route.remainingSec && route.remainingSec > 0) {
-    route.remainingSec = Math.round(route.remainingSec * fx.timeMult);
-  }
-  if (route.totalSec && !route._weatherApplied) {
-    route.totalSec = Math.round(route.totalSec * fx.timeMult);
-    route._weatherApplied = fx.weatherId;
-  }
-
-  // Add fuel surcharge to cost if severe
-  if (fx.severe && route.fuelCost) {
-    route.fuelCost = Math.round(route.fuelCost * fx.fuelMult);
-  }
-
-  return route;
-}
-
-// Increase breakdown probability based on current weather
-function getWeatherBreakdownBonus(game) {
-  const fx = getWeatherEffects(game);
-  return fx.breakdownMod;
-}
-
-// For construction: bad weather delays project by days
-function getConstructionWeatherDelay(game) {
-  const fx = getWeatherEffects(game);
-  if (fx.severe) return rand(1, 3);
-  if (fx.timeMult > 1.10) return rand(0, 1);
-  return 0;
-}
-
-// For restaurant: weather affects foot traffic / customer volume
-function getRestaurantWeatherTrafficMod(game) {
-  const fx = getWeatherEffects(game);
-  // Storm/snow = fewer walk-ins; heatwave = more drink/light meal demand
-  if (fx.weatherId === "storm" || fx.weatherId === "snow") return 0.70;
-  if (fx.weatherId === "heatwave") return 1.15;
-  if (fx.weatherId === "rain" || fx.weatherId === "fog") return 0.88;
-  return 1.00;
-}
-
-// For real estate: weather affects showings and tenant satisfaction
-function getRealEstateWeatherMod(game) {
-  const fx = getWeatherEffects(game);
-  if (fx.severe) return { showings: 0.60, satisfaction: -2 };
-  if (fx.weatherId === "rain") return { showings: 0.85, satisfaction: -1 };
-  if (fx.weatherId === "clear") return { showings: 1.10, satisfaction: 1 };
-  return { showings: 1.00, satisfaction: 0 };
-}
-
-function getWeatherSummary(game) {
-  const fx = getWeatherEffects(game);
-  return {
-    ...fx,
-    history: (game.weather?.weatherHistory || []).slice(-7),
-    daysSinceChange: game.weather?.daysSinceChange || 0,
-  };
-}
-
-  return { WEATHER_TYPES, initWeather, tickWeather, getWeatherEffects, applyWeatherToRoute, getWeatherBreakdownBonus, getConstructionWeatherDelay, getRestaurantWeatherTrafficMod, getRealEstateWeatherMod, getWeatherSummary };
-})();
-
-const StaffPerformanceSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Staff Performance & Morale System
-// Periodic performance reviews, team morale aggregation, retention bonuses,
-// and KPI tracking. Layers on top of employeePersonalities without duplicating
-// the daily tick — reviews fire every 14 days, team morale updates weekly.
-
-// Review outcome thresholds (0–100 performance score)
-const REVIEW_OUTCOMES = [
-  { min: 85, label: "Outstanding", ratingLabel: "⭐⭐⭐⭐⭐", raiseChance: 0.80, loyaltyGain: 15, stressRelief: 10, promotionEligible: true  },
-  { min: 70, label: "Exceeds Expectations", ratingLabel: "⭐⭐⭐⭐",  raiseChance: 0.45, loyaltyGain: 8,  stressRelief: 5,  promotionEligible: false },
-  { min: 55, label: "Meets Expectations",   ratingLabel: "⭐⭐⭐",   raiseChance: 0.20, loyaltyGain: 3,  stressRelief: 0,  promotionEligible: false },
-  { min: 35, label: "Needs Improvement",    ratingLabel: "⭐⭐",    raiseChance: 0,    loyaltyGain: -5, stressRelief: -5, promotionEligible: false },
-  { min: 0,  label: "Underperforming",      ratingLabel: "⭐",     raiseChance: 0,    loyaltyGain: -12, stressRelief: -10, promotionEligible: false },
-];
-
-// Retention bonus tiers — offered to high-risk/high-value workers
-const RETENTION_BONUSES = [
-  { id: "spot_bonus",  label: "Spot Bonus",       cost: 200,  loyaltyGain: 12, riskReduction: 20 },
-  { id: "extra_day",   label: "Extra Day Off",     cost: 0,    loyaltyGain: 8,  riskReduction: 15, happinessGain: 10 },
-  { id: "raise_early", label: "Early Raise",       cost: 0,    loyaltyGain: 18, riskReduction: 30, wageIncrease: 0.5 },
-  { id: "stock_grant", label: "Profit Share",      cost: 500,  loyaltyGain: 25, riskReduction: 40, happinessGain: 15 },
-];
-
-const REVIEW_INTERVAL_DAYS = 14;
-
-function getWorkerArray(game) {
-  return game.workers || game.crew || game.staff || [];
-}
-
-// Compute a 0–100 performance score for one worker
-function computePerformanceScore(worker) {
-  const deliveries = Math.min(worker.deliveries || worker.jobsDone || 0, 30);
-  const deliveryScore = (deliveries / 30) * 35;
-
-  const happiness = worker.happiness || 65;
-  const happinessScore = (happiness / 100) * 25;
-
-  const skill = worker.skill || 50;
-  const skillScore = (skill / 100) * 20;
-
-  const attendance = 1.0 - Math.min(worker.absences || 0, 5) * 0.08;
-  const attendanceScore = attendance * 15;
-
-  const burnoutPenalty = worker.burnout ? -15 : 0;
-  const stressPenalty = (worker.stress || 0) > 70 ? -5 : 0;
-
-  return clamp(Math.round(deliveryScore + happinessScore + skillScore + attendanceScore + burnoutPenalty + stressPenalty), 0, 100);
-}
-
-function getOutcome(score) {
-  return REVIEW_OUTCOMES.find((o) => score >= o.min) || REVIEW_OUTCOMES[REVIEW_OUTCOMES.length - 1];
-}
-
-// Run a performance review for a single worker
-function reviewWorker(game, worker) {
-  const score = computePerformanceScore(worker);
-  const outcome = getOutcome(score);
-
-  worker.lastReviewDay = game.day || 0;
-  worker.lastReviewScore = score;
-  worker.lastReviewLabel = outcome.label;
-  worker.performanceScore = score;
-
-  // Apply loyalty/stress effects
-  worker.loyalty = clamp((worker.loyalty || 60) + outcome.loyaltyGain, 0, 100);
-  worker.stress = clamp((worker.stress || 20) + outcome.stressRelief * -1, 0, 100);
-
-  // Auto-raise for outstanding performers (small bump)
-  if (outcome.raiseChance > 0 && Math.random() < outcome.raiseChance) {
-    const bump = score >= 85 ? 0.75 : 0.25;
-    worker.hourlyWage = Math.round(((worker.hourlyWage || 15) + bump) * 100) / 100;
-    worker.loyalty = clamp((worker.loyalty || 60) + 5, 0, 100);
-    addLog(game, `📋 ${worker.name} — ${outcome.label} review. Wage ↑ $${bump.toFixed(2)}/hr.`);
-  } else if (outcome.loyaltyGain < 0) {
-    worker.resignationRisk = clamp((worker.resignationRisk || 0) + 15, 0, 100);
-    addLog(game, `📋 ${worker.name} — ${outcome.label} review. Improvement needed or morale drops further.`);
-  } else {
-    addLog(game, `📋 ${worker.name} — ${outcome.label} review (${score}/100).`);
-  }
-
-  // Promotion eligible flag
-  worker.promotionEligible = outcome.promotionEligible && (worker.skill || 50) >= 70;
-
-  // Reset delivery counter post-review
-  worker.deliveries = 0;
-
-  return { workerId: worker.id, score, label: outcome.label };
-}
-
-// Called every game day — fires reviews on schedule
-function tickPerformanceReviews(game) {
-  const day = game.day || 0;
-  if (day < 7) return; // no reviews in first week
-  if (!game.performanceReviewsEnabled) game.performanceReviewsEnabled = true;
-
-  const workers = getWorkerArray(game);
-  const reviewed = [];
-  workers.forEach((w) => {
-    const lastReview = w.lastReviewDay || 0;
-    if (day - lastReview >= REVIEW_INTERVAL_DAYS) {
-      reviewed.push(reviewWorker(game, w));
-    }
-  });
-
-  if (reviewed.length > 0) {
-    game.lastReviewBatch = { day, reviews: reviewed };
-  }
-}
-
-// Aggregate team morale (0–100) from all active workers
-function getTeamMorale(game) {
-  const workers = getWorkerArray(game);
-  if (workers.length === 0) return 65;
-
-  const totalHappiness = workers.reduce((s, w) => s + (w.happiness || 65), 0);
-  const totalStress = workers.reduce((s, w) => s + (w.stress || 20), 0);
-  const burnoutCount = workers.filter((w) => w.burnout).length;
-
-  const avgHappiness = totalHappiness / workers.length;
-  const avgStress = totalStress / workers.length;
-  const burnoutPenalty = burnoutCount * 8;
-
-  return clamp(Math.round(avgHappiness * 0.6 - avgStress * 0.3 - burnoutPenalty + 30), 0, 100);
-}
-
-// Team morale → service quality multiplier (feeds into customerSatisfaction)
-function getMoraleServiceMult(game) {
-  const morale = getTeamMorale(game);
-  // 0 morale → 0.75x, 50 morale → 1.00x, 100 morale → 1.20x
-  return clamp(0.75 + (morale / 100) * 0.45, 0.75, 1.20);
-}
-
-// Apply a retention bonus to a specific worker
-function applyRetentionBonus(game, workerId, bonusId) {
-  const workers = getWorkerArray(game);
-  const worker = workers.find((w) => w.id === workerId);
-  const bonus = RETENTION_BONUSES.find((b) => b.id === bonusId);
-  if (!worker || !bonus) return false;
-
-  if (bonus.cost > 0) {
-    if ((game.cash || 0) < bonus.cost) return false;
-    game.cash -= bonus.cost;
-  }
-
-  worker.loyalty = clamp((worker.loyalty || 60) + bonus.loyaltyGain, 0, 100);
-  worker.resignationRisk = clamp((worker.resignationRisk || 0) - bonus.riskReduction, 0, 100);
-  if (bonus.happinessGain) worker.happiness = clamp((worker.happiness || 65) + bonus.happinessGain, 0, 100);
-  if (bonus.wageIncrease) worker.hourlyWage = Math.round(((worker.hourlyWage || 15) + bonus.wageIncrease) * 100) / 100;
-
-  addLog(game, `🎁 Retention bonus (${bonus.label}) offered to ${worker.name} — risk ↓${bonus.riskReduction}.`);
-  return true;
-}
-
-// Weekly morale event — small random morale swings from team dynamics
-function tickTeamMorale(game) {
-  const workers = getWorkerArray(game);
-  if (workers.length === 0) return;
-
-  const morale = getTeamMorale(game);
-
-  // Positive feedback loop when morale is high
-  if (morale >= 80 && Math.random() < 0.3) {
-    workers.forEach((w) => {
-      w.happiness = clamp((w.happiness || 65) + rand(1, 4), 0, 100);
-    });
-    addLog(game, "👥 High team morale — positive energy spreading through the crew.");
-  }
-
-  // Negative cascade when morale collapses
-  if (morale <= 25 && Math.random() < 0.4) {
-    workers.forEach((w) => {
-      w.stress = clamp((w.stress || 20) + rand(3, 8), 0, 100);
-      w.resignationRisk = clamp((w.resignationRisk || 0) + 5, 0, 100);
-    });
-    addLog(game, "⚠ Low team morale — stress spreading. Consider a retention bonus or team day.");
-  }
-
-  game.teamMorale = morale;
-}
-
-function getStaffPerformanceSummary(game) {
-  const workers = getWorkerArray(game);
-  const morale = getTeamMorale(game);
-  const atRisk = workers.filter((w) => (w.resignationRisk || 0) >= 60);
-  const promotionReady = workers.filter((w) => w.promotionEligible);
-  const burnoutCount = workers.filter((w) => w.burnout).length;
-  const avgScore = workers.length > 0
-    ? Math.round(workers.reduce((s, w) => s + (w.performanceScore || 50), 0) / workers.length)
-    : 50;
-
-  return {
-    teamMorale: morale,
-    moraleLabel: morale >= 80 ? "Excellent" : morale >= 60 ? "Good" : morale >= 40 ? "Fair" : "Poor",
-    serviceMultiplier: getMoraleServiceMult(game),
-    avgPerformanceScore: avgScore,
-    atRiskCount: atRisk.length,
-    atRiskWorkers: atRisk.map((w) => ({ id: w.id, name: w.name, risk: w.resignationRisk })),
-    promotionReadyCount: promotionReady.length,
-    burnoutCount,
-    totalWorkers: workers.length,
-    lastReviewBatch: game.lastReviewBatch || null,
-  };
-}
-
-  return { RETENTION_BONUSES, REVIEW_INTERVAL_DAYS, tickPerformanceReviews, getTeamMorale, getMoraleServiceMult, applyRetentionBonus, tickTeamMorale, getStaffPerformanceSummary };
-})();
-
-const ContractBiddingSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Contract Bidding System
-// Time-limited RFPs arrive periodically. Player sets bid price vs AI competitors.
-// Win probability = function of price competitiveness + reputation vs client requirements.
-// Won contracts pay recurring income for their duration. Integrates with financialLedger
-// (recordRevenue), aiCompetitors (competing bids), and demandPricing (market context).
-
-const CONTRACT_TYPES = [
-  { id: "supply_run",     label: "Supply Run Contract",     baseValue: 800,   duration: 7,  repRequired: 0,  clientType: "Small Business", frequency: 0.35 },
-  { id: "retail_chain",   label: "Retail Chain Account",    baseValue: 2200,  duration: 14, repRequired: 30, clientType: "Retail Chain",    frequency: 0.25 },
-  { id: "gov_logistics",  label: "Gov. Logistics Tender",   baseValue: 4500,  duration: 21, repRequired: 55, clientType: "Government",      frequency: 0.15 },
-  { id: "corp_account",   label: "Corporate Account",       baseValue: 3200,  duration: 14, repRequired: 45, clientType: "Corporation",     frequency: 0.18 },
-  { id: "hospital_chain", label: "Medical Supply Deal",     baseValue: 5500,  duration: 30, repRequired: 65, clientType: "Healthcare",      frequency: 0.07 },
-];
-
-// How often (days) a new RFP can spawn
-const RFP_SPAWN_INTERVAL = 5;
-const MAX_OPEN_RFPS = 3;
-const RFP_EXPIRY_DAYS = 4;
-
-function pickContractType(reputation) {
-  const eligible = CONTRACT_TYPES.filter((t) => reputation >= t.repRequired);
-  if (eligible.length === 0) return CONTRACT_TYPES[0];
-  const total = eligible.reduce((s, t) => s + t.frequency, 0);
-  let r = Math.random() * total;
-  for (const t of eligible) {
-    r -= t.frequency;
-    if (r <= 0) return t;
-  }
-  return eligible[eligible.length - 1];
-}
-
-function generateAiBids(contractType, reputation, aiCompetitors) {
-  const base = contractType.baseValue;
-  const numBidders = Math.min(aiCompetitors.length, rand(1, 3));
-  const rivals = aiCompetitors.slice(0, numBidders);
-
-  return rivals.map((ai) => {
-    const repFactor = clamp((ai.reputation || 50) / 80, 0.7, 1.3);
-    // AI bids within ±25% of base, weighted by their reputation
-    const bidAmount = Math.round(base * (0.75 + Math.random() * 0.50) * repFactor);
-    return { name: ai.name || ai.id, bid: bidAmount, reputation: ai.reputation || 50 };
-  });
-}
-
-// Spawn a new RFP if conditions are met
-function tickContractRFPs(game) {
-  const day = game.day || 0;
-  if (!game.openRFPs) game.openRFPs = [];
-  if (!game.activeContracts) game.activeContracts = [];
-  if (!game.contractHistory) game.contractHistory = [];
-
-  // Expire old RFPs
-  game.openRFPs = game.openRFPs.filter((rfp) => {
-    if (day - rfp.spawnDay >= RFP_EXPIRY_DAYS) {
-      addLog(game, `📋 RFP expired: ${rfp.label} — no bid submitted.`);
-      return false;
-    }
-    return true;
-  });
-
-  // Tick active contracts — collect daily income, expire when duration ends
-  game.activeContracts = game.activeContracts.filter((contract) => {
-    if (day >= contract.expiresDay) {
-      addLog(game, `✅ Contract complete: ${contract.label} — finished.`);
-      game.contractHistory.push({ ...contract, completedDay: day });
-      return false;
-    }
-    // Daily income from contract (proportional to weekly payout)
-    const dailyPay = Math.round(contract.weeklyPayout / 7);
-    game.cash = (game.cash || 0) + dailyPay;
-    game.weeklyProfit = (game.weeklyProfit || 0) + dailyPay;
-    if (!game.contractIncome) game.contractIncome = 0;
-    game.contractIncome += dailyPay;
-    return true;
-  });
-
-  // Spawn new RFP
-  const lastSpawn = game.lastRFPSpawnDay || 0;
-  if (day - lastSpawn >= RFP_SPAWN_INTERVAL && game.openRFPs.length < MAX_OPEN_RFPS) {
-    const type = pickContractType(game.reputation || 0);
-    const demandMod = (game.economy?.demandIndex || 1.0);
-    const baseValue = Math.round(type.baseValue * demandMod * (0.9 + Math.random() * 0.2));
-
-    const rfp = {
-      id: uid(),
-      type: type.id,
-      label: type.label,
-      clientType: type.clientType,
-      baseValue,
-      weeklyPayout: baseValue,
-      duration: type.duration,
-      repRequired: type.repRequired,
-      spawnDay: day,
-      expiresDay: day + RFP_EXPIRY_DAYS,
-      aiBids: generateAiBids(type, game.reputation || 0, game.aiCompetitors || []),
-      playerBid: null,
-      status: "open",
-    };
-
-    game.openRFPs.push(rfp);
-    game.lastRFPSpawnDay = day;
-    addLog(game, `📋 New RFP: ${rfp.label} (${rfp.clientType}) — ${rfp.duration}d contract, up to $${baseValue.toLocaleString()}/wk. Bid before day ${rfp.expiresDay}.`);
-  }
-}
-
-// Calculate win probability for a player bid
-function calculateBidWinChance(game, rfpId, playerBidAmount) {
-  const rfp = (game.openRFPs || []).find((r) => r.id === rfpId);
-  if (!rfp) return 0;
-
-  const reputation = game.reputation || 0;
-  const repBonus = clamp((reputation - rfp.repRequired) / 50, -0.2, 0.3);
-
-  // If player bids lower than lowest AI bid → better chance
-  const lowestAiBid = rfp.aiBids.length > 0 ? Math.min(...rfp.aiBids.map((b) => b.bid)) : rfp.baseValue;
-  const priceFactor = clamp((lowestAiBid / Math.max(playerBidAmount, 1)) * 0.6, 0.1, 0.9);
-
-  const satisfactionBonus = clamp(((game.customerRating || 3.5) - 3.5) * 0.08, -0.15, 0.15);
-
-  return clamp(priceFactor + repBonus + satisfactionBonus, 0.05, 0.95);
-}
-
-// Player submits a bid on an open RFP
-function submitBid(game, rfpId, playerBidAmount) {
-  const rfpIndex = (game.openRFPs || []).findIndex((r) => r.id === rfpId);
-  if (rfpIndex === -1) return { success: false, reason: "RFP not found or expired" };
-
-  const rfp = game.openRFPs[rfpIndex];
-  if (rfp.status !== "open") return { success: false, reason: "RFP already bid on" };
-
-  const winChance = calculateBidWinChance(game, rfpId, playerBidAmount);
-  const won = Math.random() < winChance;
-
-  rfp.playerBid = playerBidAmount;
-  rfp.winChance = Math.round(winChance * 100);
-  rfp.status = won ? "won" : "lost";
-
-  if (won) {
-    const contract = {
-      id: uid(),
-      rfpId: rfp.id,
-      type: rfp.type,
-      label: rfp.label,
-      clientType: rfp.clientType,
-      weeklyPayout: playerBidAmount,
-      duration: rfp.duration,
-      startDay: game.day || 0,
-      expiresDay: (game.day || 0) + rfp.duration,
-      status: "active",
-    };
-    if (!game.activeContracts) game.activeContracts = [];
-    game.activeContracts.push(contract);
-    addLog(game, `🏆 Contract won: ${rfp.label} — $${playerBidAmount.toLocaleString()}/wk for ${rfp.duration} days!`);
-    game.reputation = clamp((game.reputation || 0) + 3, 0, 100);
-  } else {
-    const winner = rfp.aiBids.sort((a, b) => b.bid - a.bid)[0];
-    addLog(game, `❌ Bid lost: ${rfp.label} — ${winner ? winner.name : "competitor"} won at $${winner?.bid?.toLocaleString() || "?"}.`);
-  }
-
-  // Remove from open RFPs
-  game.openRFPs.splice(rfpIndex, 1);
-
-  return { success: true, won, winChance: Math.round(winChance * 100) };
-}
-
-function getContractSummary(game) {
-  return {
-    openRFPs: (game.openRFPs || []).map((r) => ({
-      ...r,
-      daysLeft: (r.expiresDay || 0) - (game.day || 0),
-    })),
-    activeContracts: game.activeContracts || [],
-    contractCount: (game.activeContracts || []).length,
-    weeklyContractIncome: (game.activeContracts || []).reduce((s, c) => s + (c.weeklyPayout || 0), 0),
-    totalWon: (game.contractHistory || []).length,
-    dailyContractIncome: (game.activeContracts || []).reduce((s, c) => s + Math.round((c.weeklyPayout || 0) / 7), 0),
-  };
-}
-
-  return { CONTRACT_TYPES, tickContractRFPs, calculateBidWinChance, submitBid, getContractSummary };
-})();
-
-const AnalyticsEngineSystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Business Analytics & KPI Engine
-// Weekly snapshots, trend data, KPIs, and performance benchmarks.
-// Feeds the Finance tab charts and weekly email report.
-// Integrates with financialLedger, demandPricing, staffPerformance, customerSatisfaction.
-
-const SNAPSHOT_INTERVAL = 7; // days between snapshots
-const MAX_SNAPSHOTS = 26;    // ~6 months of weekly history
-
-const KPI_BENCHMARKS = {
-  revenuePerVehicle:  { good: 1200, great: 2000, label: "Revenue / Vehicle / Week" },
-  onTimeRate:         { good: 0.80, great: 0.92, label: "On-Time Delivery Rate" },
-  costPerRoute:       { good: 120,  great: 70,   label: "Cost per Route", lowerIsBetter: true },
-  utilizationRate:    { good: 0.65, great: 0.82, label: "Fleet Utilization" },
-  staffRetention:     { good: 0.80, great: 0.92, label: "Staff Retention Rate" },
-  customerRating:     { good: 3.8,  great: 4.5,  label: "Customer Rating" },
-  profitMargin:       { good: 0.15, great: 0.30, label: "Profit Margin" },
-  contractWinRate:    { good: 0.40, great: 0.65, label: "Contract Win Rate" },
-};
-
-function scoreKpi(value, benchmark) {
-  if (benchmark.lowerIsBetter) {
-    if (value <= benchmark.great) return "great";
-    if (value <= benchmark.good) return "good";
-    return "poor";
-  }
-  if (value >= benchmark.great) return "great";
-  if (value >= benchmark.good) return "good";
-  return "poor";
-}
-
-function initAnalytics(game) {
-  if (game.analytics) return;
-  game.analytics = {
-    snapshots: [],
-    lastSnapshotDay: 0,
-    weeklyReport: null,
-    allTimeRevenue: 0,
-    allTimeRoutes: 0,
-    allTimeExpenses: 0,
-  };
-}
-
-function captureSnapshot(game) {
-  const day = game.day || 0;
-
-  // Fleet metrics
-  const vehicles = game.vehicles || game.equipment || [];
-  const activeVehicles = vehicles.filter((v) => v.status === "En Route").length;
-  const utilizationRate = vehicles.length > 0 ? clamp(activeVehicles / vehicles.length, 0, 1) : 0;
-
-  // Delivery metrics
-  const completedRoutes = game.weeklyStats?.completedRoutes || 0;
-  const lateDeliveries = game.weeklyStats?.lateDeliveries || 0;
-  const onTimeRate = completedRoutes > 0 ? clamp((completedRoutes - lateDeliveries) / completedRoutes, 0, 1) : 1;
-
-  // Financial
-  const routeIncome = game.weeklyStats?.routeIncome || 0;
-  const contractIncome = game.weeklyStats?.contractIncome || 0;
-  const totalRevenue = routeIncome + contractIncome;
-  const totalExpenses = game.weeklyStats?.wages || 0
-    + (game.weeklyStats?.fuel || 0)
-    + (game.weeklyStats?.repairs || 0)
-    + (game.weeklyStats?.rent || 0)
-    + (game.weeklyStats?.insurance || 0)
-    + (game.weeklyStats?.taxes || 0);
-  const netProfit = totalRevenue - totalExpenses;
-  const profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
-
-  // Per-vehicle revenue
-  const revenuePerVehicle = vehicles.length > 0 ? Math.round(totalRevenue / vehicles.length) : 0;
-
-  // Staff metrics
-  const workers = game.workers || game.crew || game.staff || [];
-  const activeWorkers = workers.filter((w) => !w.fired && w.status !== "Fired");
-  const burnoutCount = activeWorkers.filter((w) => w.burnout).length;
-  const staffRetention = activeWorkers.length > 0
-    ? clamp(1.0 - (game.weeklyStats?.quits || 0) / activeWorkers.length, 0, 1)
-    : 1;
-
-  // Cost per route
-  const costPerRoute = completedRoutes > 0 ? Math.round(totalExpenses / completedRoutes) : 0;
-
-  // Contract win rate
-  const contractHistory = game.contractHistory || [];
-  const recentWins = contractHistory.filter((c) => c.completedDay && day - c.completedDay <= 30).length;
-  const contractWinRate = recentWins > 0 ? clamp(recentWins / Math.max(recentWins + 2, 5), 0, 1) : 0;
-
-  const snapshot = {
-    day,
-    week: Math.floor(day / 7),
-    totalRevenue,
-    totalExpenses,
-    netProfit,
-    profitMargin: Math.round(profitMargin * 100) / 100,
-    revenuePerVehicle,
-    onTimeRate: Math.round(onTimeRate * 100) / 100,
-    utilizationRate: Math.round(utilizationRate * 100) / 100,
-    costPerRoute,
-    staffRetention: Math.round(staffRetention * 100) / 100,
-    customerRating: game.customerRating || 3.5,
-    contractWinRate: Math.round(contractWinRate * 100) / 100,
-    reputation: game.reputation || 0,
-    cash: game.cash || 0,
-    fleetSize: vehicles.length,
-    workerCount: activeWorkers.length,
-    burnoutCount,
-    completedRoutes,
-    demandScore: game.demandScore || 1.0,
-  };
-
-  // Update all-time counters
-  game.analytics.allTimeRevenue = (game.analytics.allTimeRevenue || 0) + totalRevenue;
-  game.analytics.allTimeRoutes = (game.analytics.allTimeRoutes || 0) + completedRoutes;
-  game.analytics.allTimeExpenses = (game.analytics.allTimeExpenses || 0) + totalExpenses;
-
-  return snapshot;
-}
-
-function tickAnalytics(game) {
-  initAnalytics(game);
-  const day = game.day || 0;
-  const lastSnap = game.analytics.lastSnapshotDay || 0;
-
-  if (day > 0 && day - lastSnap >= SNAPSHOT_INTERVAL) {
-    const snap = captureSnapshot(game);
-    game.analytics.snapshots = [snap, ...game.analytics.snapshots].slice(0, MAX_SNAPSHOTS);
-    game.analytics.lastSnapshotDay = day;
-    game.analytics.weeklyReport = generateWeeklyReport(game, snap);
-  }
-}
-
-function generateWeeklyReport(game, snap) {
-  const prev = game.analytics.snapshots[1];
-  const revChange = prev ? snap.totalRevenue - prev.totalRevenue : 0;
-  const profitChange = prev ? snap.netProfit - prev.netProfit : 0;
-
-  const highlights = [];
-  if (snap.onTimeRate >= 0.92) highlights.push("Excellent on-time rate this week.");
-  if (snap.onTimeRate < 0.70) highlights.push("Late deliveries hurting reputation — dispatch earlier.");
-  if (snap.utilizationRate < 0.40) highlights.push("Fleet underutilized — hire more drivers or reduce vehicles.");
-  if (snap.burnoutCount > 0) highlights.push(`${snap.burnoutCount} worker(s) burned out — reduce shifts.`);
-  if (snap.customerRating >= 4.5) highlights.push("Customer ratings outstanding — keep it up.");
-  if (snap.customerRating < 3.0) highlights.push("Customer satisfaction falling — check staffing.");
-
-  return {
-    week: snap.week,
-    day: snap.day,
-    revenue: snap.totalRevenue,
-    expenses: snap.totalExpenses,
-    netProfit: snap.netProfit,
-    revChange,
-    profitChange,
-    highlights,
-    kpis: {
-      revenuePerVehicle: { value: snap.revenuePerVehicle, rating: scoreKpi(snap.revenuePerVehicle, KPI_BENCHMARKS.revenuePerVehicle) },
-      onTimeRate: { value: snap.onTimeRate, rating: scoreKpi(snap.onTimeRate, KPI_BENCHMARKS.onTimeRate) },
-      utilizationRate: { value: snap.utilizationRate, rating: scoreKpi(snap.utilizationRate, KPI_BENCHMARKS.utilizationRate) },
-      profitMargin: { value: snap.profitMargin, rating: scoreKpi(snap.profitMargin, KPI_BENCHMARKS.profitMargin) },
-      staffRetention: { value: snap.staffRetention, rating: scoreKpi(snap.staffRetention, KPI_BENCHMARKS.staffRetention) },
-      customerRating: { value: snap.customerRating, rating: scoreKpi(snap.customerRating, KPI_BENCHMARKS.customerRating) },
-    },
-  };
-}
-
-// Returns last N snapshots in chronological order (oldest first) for chart rendering
-function getAnalyticsTrend(game, limit = 8) {
-  initAnalytics(game);
-  return [...(game.analytics.snapshots || [])].reverse().slice(-limit);
-}
-
-function getAnalyticsSummary(game) {
-  initAnalytics(game);
-  const snap = game.analytics.snapshots[0];
-  if (!snap) {
-    return { ready: false, snapshots: [], weeklyReport: null, allTime: { revenue: 0, routes: 0 } };
-  }
-  return {
-    ready: true,
-    latest: snap,
-    weeklyReport: game.analytics.weeklyReport,
-    snapshots: game.analytics.snapshots,
-    trend: getAnalyticsTrend(game, 8),
-    allTime: {
-      revenue: game.analytics.allTimeRevenue || 0,
-      routes: game.analytics.allTimeRoutes || 0,
-      expenses: game.analytics.allTimeExpenses || 0,
-    },
-  };
-}
-
-  return { KPI_BENCHMARKS, initAnalytics, tickAnalytics, getAnalyticsTrend, getAnalyticsSummary };
-})();
-
-const TerritorySystem = (() => {
-// Shared utilities for all gameplay systems
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-function addLog(game, msg) {
-  if (!Array.isArray(game.logs)) game.logs = [];
-  if (!Array.isArray(game.eventLog)) game.eventLog = [];
-  game.logs.unshift(msg);
-  if (game.logs.length > 100) game.logs.length = 100;
-  game.eventLog.unshift({ id: uid(), msg, day: game.day || 0 });
-  if (game.eventLog.length > 80) game.eventLog.length = 80;
-}
-
-function money(n) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString()}`;
-}
-
-// Territory & Delivery Zone System
-// Players unlock city districts/zones for bonus payouts, exclusive job types,
-// and daily zone-presence income. Competitors can contest zones.
-// Each game type maps zones to their business context.
-
-const ZONE_TYPES = {
-  fleet: [
-    { id: "downtown",    label: "Downtown Core",      unlockCost: 3500,  repRequired: 20, payoutMult: 1.12, exclusiveTag: "rush",       presenceIncome: 45,  competitorWeight: 3, desc: "High-volume commercial deliveries, rush premium" },
-    { id: "industrial",  label: "Industrial District", unlockCost: 5000,  repRequired: 35, payoutMult: 1.18, exclusiveTag: "heavy",      presenceIncome: 60,  competitorWeight: 2, desc: "Bulk freight, manufacturing accounts" },
-    { id: "airport",     label: "Airport Corridor",    unlockCost: 8000,  repRequired: 50, payoutMult: 1.25, exclusiveTag: "time_critical", presenceIncome: 80, competitorWeight: 4, desc: "Time-critical cargo, highest payout density" },
-    { id: "suburbs",     label: "Suburban Network",    unlockCost: 4500,  repRequired: 30, payoutMult: 1.08, exclusiveTag: "residential", presenceIncome: 50,  competitorWeight: 1, desc: "High volume, reliable steady income" },
-    { id: "port",        label: "Port & Docks",        unlockCost: 9500,  repRequired: 60, payoutMult: 1.35, exclusiveTag: "hazmat",     presenceIncome: 95,  competitorWeight: 3, desc: "Hazmat and container logistics, top rates" },
-    { id: "medical",     label: "Medical Zone",         unlockCost: 12000, repRequired: 70, payoutMult: 1.40, exclusiveTag: "priority",   presenceIncome: 110, competitorWeight: 2, desc: "Medical supply chain, highest trust required" },
-  ],
-  construction: [
-    { id: "residential", label: "Residential Builds",  unlockCost: 4000,  repRequired: 20, payoutMult: 1.10, exclusiveTag: "housing",    presenceIncome: 40,  competitorWeight: 2, desc: "Subdivision and home builds" },
-    { id: "commercial",  label: "Commercial District", unlockCost: 7000,  repRequired: 40, payoutMult: 1.20, exclusiveTag: "commercial", presenceIncome: 65,  competitorWeight: 3, desc: "Office parks, retail builds" },
-    { id: "government",  label: "Gov. Infrastructure", unlockCost: 12000, repRequired: 65, payoutMult: 1.35, exclusiveTag: "gov",        presenceIncome: 100, competitorWeight: 1, desc: "Public works, highest contract stability" },
-  ],
-  restaurant: [
-    { id: "downtown",    label: "Downtown Foot Traffic", unlockCost: 3000, repRequired: 25, payoutMult: 1.15, exclusiveTag: "catering",  presenceIncome: 55,  competitorWeight: 3, desc: "Peak lunch rush, corporate catering" },
-    { id: "university",  label: "University District",   unlockCost: 2500, repRequired: 15, payoutMult: 1.08, exclusiveTag: "student",   presenceIncome: 40,  competitorWeight: 2, desc: "Consistent volume, budget-sensitive" },
-    { id: "upscale",     label: "Upscale Quarter",       unlockCost: 6000, repRequired: 55, payoutMult: 1.28, exclusiveTag: "premium",   presenceIncome: 80,  competitorWeight: 4, desc: "Fine dining demand, premium clientele" },
-  ],
-  realestate: [
-    { id: "urban_core",  label: "Urban Core",           unlockCost: 15000, repRequired: 30, payoutMult: 1.15, exclusiveTag: "highrise",  presenceIncome: 90,  competitorWeight: 4, desc: "High-density multi-family" },
-    { id: "suburb_dev",  label: "Suburb Development",   unlockCost: 10000, repRequired: 20, payoutMult: 1.10, exclusiveTag: "sfh",       presenceIncome: 70,  competitorWeight: 2, desc: "SFH and townhome market" },
-    { id: "luxury",      label: "Luxury Market",         unlockCost: 25000, repRequired: 60, payoutMult: 1.30, exclusiveTag: "luxury",    presenceIncome: 150, competitorWeight: 3, desc: "Premium listings, biggest margins" },
-  ],
-};
-
-function initTerritories(game, businessType) {
-  if (game.territories) return;
-  const zones = ZONE_TYPES[businessType] || ZONE_TYPES.fleet;
-  game.territories = {
-    businessType,
-    unlockedZones: [],
-    contestedZones: [],
-    totalPresenceIncome: 0,
-    lastPresenceDay: 0,
-  };
-}
-
-// Unlock a zone by spending cash
-function unlockZone(game, zoneId, businessType) {
-  const zones = ZONE_TYPES[businessType || game.territories?.businessType] || ZONE_TYPES.fleet;
-  const zone = zones.find((z) => z.id === zoneId);
-  if (!zone) return { success: false, reason: "Zone not found" };
-
-  const already = (game.territories?.unlockedZones || []).includes(zoneId);
-  if (already) return { success: false, reason: "Zone already unlocked" };
-
-  if ((game.reputation || 0) < zone.repRequired) {
-    return { success: false, reason: `Need ${zone.repRequired} reputation` };
-  }
-  if ((game.cash || 0) < zone.unlockCost) {
-    return { success: false, reason: `Need $${zone.unlockCost.toLocaleString()} to unlock` };
-  }
-
-  game.cash -= zone.unlockCost;
-  if (!game.territories) initTerritories(game, businessType);
-  game.territories.unlockedZones.push(zoneId);
-  addLog(game, `🗺️ Zone unlocked: ${zone.label} — ${zone.desc}. Presence income: $${zone.presenceIncome}/day.`);
-  return { success: true, zone };
-}
-
-// Daily tick — collect presence income and update contested status
-function tickTerritories(game) {
-  if (!game.territories) return;
-  const day = game.day || 0;
-  const t = game.territories;
-  const zones = ZONE_TYPES[t.businessType] || ZONE_TYPES.fleet;
-
-  if (day <= t.lastPresenceDay) return;
-  t.lastPresenceDay = day;
-
-  let totalIncome = 0;
-  const contestedNow = [];
-
-  t.unlockedZones.forEach((zoneId) => {
-    const zone = zones.find((z) => z.id === zoneId);
-    if (!zone) return;
-
-    // Check if competitors are in this zone
-    const competitors = game.aiCompetitors || [];
-    const avgCompRep = competitors.length > 0
-      ? competitors.reduce((s, c) => s + (c.reputation || 50), 0) / competitors.length
-      : 0;
-    const contested = avgCompRep > (game.reputation || 0) + 10 && Math.random() < zone.competitorWeight * 0.08;
-
-    const incomeMult = contested ? 0.65 : 1.0;
-    const dailyIncome = Math.round(zone.presenceIncome * incomeMult * (1 + (game.reputation || 0) * 0.002));
-
-    game.cash = (game.cash || 0) + dailyIncome;
-    totalIncome += dailyIncome;
-
-    if (contested) {
-      contestedNow.push(zoneId);
-      if (Math.random() < 0.25) {
-        addLog(game, `⚠ ${zone.label} is contested — presence income reduced. Build reputation to defend territory.`);
-      }
-    }
-  });
-
-  t.totalPresenceIncome = totalIncome;
-  t.contestedZones = contestedNow;
-
-  // Presence income boosts demand score slightly
-  if (totalIncome > 0 && game.economy) {
-    game.economy.demandIndex = clamp((game.economy.demandIndex || 1.0) + 0.005 * t.unlockedZones.length, 0.5, 1.8);
-  }
-}
-
-// Get payout multiplier for a job based on its tag and unlocked zones
-function getZonePayoutMult(game, jobTag, businessType) {
-  if (!game.territories) return 1.0;
-  const zones = ZONE_TYPES[businessType || game.territories.businessType] || ZONE_TYPES.fleet;
-  const unlockedZones = (game.territories?.unlockedZones || []).map((id) => zones.find((z) => z.id === id)).filter(Boolean);
-
-  if (unlockedZones.length === 0) return 1.0;
-
-  // If job tag matches an exclusive zone tag, apply that zone's multiplier
-  const matchingZone = unlockedZones.find((z) => z.exclusiveTag === jobTag);
-  if (matchingZone) return matchingZone.payoutMult;
-
-  // Otherwise average of all unlocked zone multipliers (presence knowledge)
-  const avgMult = unlockedZones.reduce((s, z) => s + z.payoutMult, 0) / unlockedZones.length;
-  return clamp(1.0 + (avgMult - 1.0) * 0.35, 1.0, 1.40);
-}
-
-function getTerritoryStatus(game, businessType) {
-  const type = businessType || game.territories?.businessType || "fleet";
-  const zones = ZONE_TYPES[type] || ZONE_TYPES.fleet;
-  const unlocked = game.territories?.unlockedZones || [];
-  const contested = game.territories?.contestedZones || [];
-
-  return {
-    zones: zones.map((z) => ({
-      ...z,
-      isUnlocked: unlocked.includes(z.id),
-      isContested: contested.includes(z.id),
-      canUnlock: (game.reputation || 0) >= z.repRequired && (game.cash || 0) >= z.unlockCost && !unlocked.includes(z.id),
-    })),
-    unlockedCount: unlocked.length,
-    totalZones: zones.length,
-    dailyPresenceIncome: game.territories?.totalPresenceIncome || 0,
-    contestedCount: contested.length,
-  };
-}
-
-  return { ZONE_TYPES, initTerritories, unlockZone, tickTerritories, getZonePayoutMult, getTerritoryStatus };
-})();
-
-// ─── Bindings the game screen below expects (mirrors its original imports) ─────
-
-const { tickEmployeePersonalities, applyDailyPersonalityEvents } = EmployeePersonalitiesSystem;
-const { tickInventory } = InventorySystem;
-const { maybeFireRandomEvent } = RandomEventsSystem;
-const { tickAiCompetitors, initAiCompetitors } = AiCompetitorsSystem;
-const { initEconomy, tickEconomy } = EconomyEngineSystem;
-const { tickCustomerSatisfaction } = CustomerSatisfactionSystem;
-const { initPricing, tickDemand } = DemandPricingSystem;
-const { initWeather, tickWeather, getConstructionWeatherDelay } = WeatherRouteConditionsSystem;
-const { tickPerformanceReviews, tickTeamMorale } = StaffPerformanceSystem;
-const { tickContractRFPs } = ContractBiddingSystem;
-const { initAnalytics, tickAnalytics } = AnalyticsEngineSystem;
-const { initTerritories, tickTerritories } = TerritorySystem;
-
 // ─── ConstructionFlow game screen ───────────────────────────────────────────────
+
+// NOTE: this screen used to import 12 modules from ../../systems/ and tick 15 of their
+// functions every game day. Every one of them was inert: their output fields
+// (g.aiCompetitors, g.economy, g.territories, g.analytics, g.pricing, g.weather,
+// g.satisfaction, g.rfps, ...) were written each day and never read anywhere in gameplay
+// or UI. Two were worse than inert — getConstructionWeatherDelay() applied its delay to
+// `g.activeProjects`, a field that does not exist in this game (sites live in
+// `g.activeSites`), so weather delay had never once fired; and tickInventory() was gated on
+// `Array.isArray(g.inventory)`, which is never set because materials live in `g.materials`.
+// initAnalytics was imported and never called at all, so tickAnalytics ran on uninitialised
+// state. They are gone rather than wired up because this file already has better,
+// player-visible equivalents for each concern: enhancedRivalDailyLogic + buildContractorRankings
+// (rivals), the seasons/marketState/inflation block (economy), CITIES contract multipliers
+// (territories), clientRelationships (satisfaction), the materialPrices walk (pricing), and
+// WEATHER_PATTERNS/applyWeatherEvent (weather, now fixed below). The modules themselves stay
+// in src/systems/ — RestaurantFlow and RealEstateFlow still import them.
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "constructionflow_v1_save";
+// Rolling backup of the last save that loaded cleanly. Previously a single unreadable byte
+// in STORAGE_KEY sent the loader straight into `catch (_) { freshState() }` — the player's
+// whole company gone, with no warning and nothing to restore from. For a game people put
+// weeks into, silent save loss is the worst possible failure. FleetFlow learned this the
+// hard way and keeps the same pattern (see its BACKUP_STORAGE_KEY + applyEmergencyRecoveryV71).
+const BACKUP_STORAGE_KEY = "constructionflow_v1_backup";
+// Bumped only when a change makes old saves genuinely unreadable — migrateState() handles
+// additive field changes on its own and does not need a bump.
+const SAVE_SCHEMA_VERSION = 1;
 const TABS = ["Home", "Bids", "Sites", "Crew", "Vehicles", "Finance", "Empire"];
 
 const THEMES = {
@@ -2782,6 +124,113 @@ const CLIENTS = [
   "Nova Infrastructure","Ironclad Ventures","Pacific Construct","BlueSky Builders",
   "Landmark Projects","CrossRoads Corp","Apex Structures","Keystone Capital",
 ];
+
+// ─── Wage Scale ─────────────────────────────────────────────────────────────────
+// ConstructionFlow prices labour PER DAY. FleetFlow — which most of these systems were
+// ported from — prices it PER HOUR (`wagePerHour: 13`, `const desired = 18 * wagePressure`).
+// During the port those hourly constants landed in ConstructionFlow's per-day fields, so
+// createWorker() paid the three starting crew rand(160, 260)/day while createApplicant()
+// and JOB_POSTINGS priced every subsequent hire at 18-32/day. Firing your starters and
+// rehiring cut payroll by ~90%, which was both the strictly optimal opening move and the
+// thing that removed labour — a construction company's largest real cost — as a source of
+// pressure. Every wage number in this file now derives from this one table so the two
+// scales cannot silently diverge again. See __tests__/constructionFlowWageScale.test.js.
+export const WAGE_SCALE = {
+  VERSION: 2,     // bumped when the scale itself changes; saves carry g.wageScaleVersion
+  MIN: 120,       // hard floor a wage can be cut to (handleLowerWage)
+  BASE_MIN: 160,  // default hire range — matches the starting crew exactly
+  BASE_MAX: 260,
+  DEFAULT: 200,   // fallback when a worker record predates a field or is malformed
+  UNDERPAID: 170, // below this a skilled, unhappy worker starts looking elsewhere
+};
+
+// ─── Competitive Bidding ────────────────────────────────────────────────────────
+// Winning work is the core fantasy of running a construction company, so it gets a real
+// contest. Previously "Aggressive / Standard / Premium" were a bare payout multiplier
+// applied at the moment the player pressed Start — there was no roll and no way to lose,
+// which made Premium (+28% for nothing) strictly dominant and made every other choice a
+// self-inflicted pay cut. Now the style sets the PRICE YOU BID, the client weighs that
+// price against your reputation, relationships, readiness and the rival field, and you
+// can lose the job.
+//
+// One table, used by the resolver, the UI odds readout and the tests alike — the three
+// previously-duplicated copies of these multipliers are what let the UI and the payout
+// drift apart in the first place.
+export const BID_STYLES = [
+  { key: "aggressive", label: "Aggressive", sub: "Underbid to win",   multiplier: 0.82, baseWin: 0.80, color: "orange" },
+  { key: "standard",   label: "Standard",   sub: "Market rate",       multiplier: 1.00, baseWin: 0.55, color: "blue"   },
+  { key: "premium",    label: "Premium",    sub: "Price at a premium", multiplier: 1.28, baseWin: 0.30, color: "green"  },
+];
+export const DEFAULT_BID_STYLE = "standard";
+
+export function getBidStyle(key) {
+  return BID_STYLES.find((b) => b.key === key) || BID_STYLES.find((b) => b.key === DEFAULT_BID_STYLE);
+}
+
+// Reads a perk value off the current head-office tier. OFFICES has advertised "+5% / +12%
+// bid win chance" and "-10% / -15% delay penalties" in the upgrade UI since launch, but
+// only materialDiscount was ever actually read — the other two perks were sold to the
+// player and then silently ignored. Both are wired up now (bidBonus here, penaltyReduction
+// in the site-completion penalty math).
+export function getOfficePerkValue(g, key) {
+  const perk = (OFFICES[g?.officeIndex || 0]?.perks || []).find((p) => p.key === key);
+  return perk ? perk.value : 0;
+}
+
+// Probability of winning `contract` at `styleKey`, in 0.05..0.95. Pure and deterministic —
+// the UI shows exactly the number the resolver rolls against, so the odds are never a lie.
+export function computeBidWinChance(g, contract, styleKey) {
+  const style = getBidStyle(styleKey);
+  let chance = style.baseWin;
+
+  // Reputation is the single biggest lever: an unknown contractor struggles to win at any
+  // price, an elite one can hold out for premium rates.
+  chance += ((g?.reputation || 0) - 30) / 200;                       // -0.15 .. +0.35
+
+  // A better head office reads as a more credible bidder.
+  chance += getOfficePerkValue(g, "bidBonus");                        // 0 .. +0.12
+
+  // An Estimator on staff prices the job properly. This support role has been hireable
+  // (and payrolled at $340/day) since launch while doing nothing whatsoever.
+  const hasEstimator = (g?.officeStaff || []).some((sp) => sp.role === "Estimator");
+  if (hasEstimator) chance += 0.06;
+
+  // Repeat clients favour the contractor they already trust.
+  if (contract?.clientId) {
+    const rel = (g?.clientRelationships || {})[contract.clientId];
+    const tier = getClientTier(rel?.loyalty || 0);
+    chance += Math.min(0.10, (tier?.valueMult > 1 ? 0.06 : 0) + (rel?.jobsDone || 0) * 0.01);
+  }
+
+  // Visibly showing up with more crew and machines than the job strictly needs.
+  const idleCrewCount = (g?.crew || []).filter((w) => w.status === "Idle").length;
+  const idleEquipCount = (g?.equipment || []).filter((e) => e.status === "Idle").length;
+  const crewHeadroom = idleCrewCount - (contract?.crewMin || 1);
+  const equipHeadroom = idleEquipCount - (contract?.equipMin || 1);
+  if (crewHeadroom > 0) chance += Math.min(0.05, crewHeadroom * 0.015);
+  if (equipHeadroom > 0) chance += Math.min(0.03, equipHeadroom * 0.015);
+
+  // A named rival actively chasing this job is real competition.
+  if (contract?.interestedRival) chance -= 0.12;
+
+  // Bigger jobs draw more and better-resourced bidders.
+  const risk = contract?.risk || 1;
+  chance -= Math.max(0, risk - 2) * 0.04;                             // 0 .. -0.12
+
+  // A poor safety/compliance record costs you work, especially on public jobs.
+  if ((g?.safetyScore ?? 60) < 40) chance -= 0.08;
+  if ((contract?.category === "Government" || contract?.category === "Infrastructure")
+      && (g?.complianceScore ?? 60) < 50) chance -= 0.08;
+
+  return clamp(chance, 0.05, 0.95);
+}
+
+// Flat cost of preparing and submitting a bid — takeoffs, estimating time, bond paperwork.
+// Charged win or lose, which is what stops "bid Premium on everything and reroll" from
+// being free. Scaled to the job so it never dominates a small residential contract.
+export function getBidPrepCost(contract) {
+  return clamp(Math.round((contract?.value || 0) * 0.004), 60, 4000);
+}
 
 // ─── Crew Traits ────────────────────────────────────────────────────────────────
 
@@ -4099,9 +1548,9 @@ const DECISION_EVENTS = [
     id: "union_rep", title: "🤝 Union Representative Visits", tone: "orange",
     desc: "A labor organizer is on your site talking to crew. How you respond will shape morale and wages.",
     options: [
-      { label: "Engage cooperatively", sub: "All wages +$15/day · loyalty +8 · mood +10", apply: (g) => {
-        for (const w of (g.crew||[])) { w.wagePerDay=(w.wagePerDay||120)+15; w.loyalty=Math.min(100,(w.loyalty ?? 50)+8); w.mood=Math.min(100,(w.mood ?? 50)+10); }
-        addLog(g,"🤝 Cooperative with union — wages +$15/day, morale boosted.");
+      { label: "Engage cooperatively", sub: "All wages +8% · loyalty +8 · mood +10", apply: (g) => {
+        for (const w of (g.crew||[])) { w.wagePerDay=Math.round((w.wagePerDay||WAGE_SCALE.DEFAULT)*1.08); w.loyalty=Math.min(100,(w.loyalty ?? 50)+8); w.mood=Math.min(100,(w.mood ?? 50)+10); }
+        addLog(g,"🤝 Cooperative with union — wages +8%, morale boosted.");
         addImportantNotice(g,"Union engagement positive — crew morale and loyalty up.","green");
       }},
       { label: "Disclaim any issues", sub: "No change, 25% chance mood -5 all", apply: (g) => {
@@ -4258,7 +1707,7 @@ const EMPLOYEE_EVENTS = [
       { label: "Run short-handed", sub: "Progress -4% · no cost",
         apply: (g) => { const site = (g.activeSites||[]).find(s => s.id === g.pendingDecision?.context?.siteId); const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (site) site.phaseProgress = Math.max(0, (site.phaseProgress||0) - 4); addLog(g, `🤒 ${w?.name||"Crew"} absent — short-handed today.`); addImportantNotice(g, `${w?.name||"Crew member"} absent — site running short, 4% progress lost.`, "orange"); } },
       { label: "Paid sick day", sub: "-day's wages · loyalty +10",
-        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) { g.cash -= (w.wagePerDay||20); g.expenses += (w.wagePerDay||20); w.loyalty = Math.min(100,(w.loyalty ?? 50)+10); addLog(g, `🤒 ${w.name} given paid sick day — loyalty up.`); addImportantNotice(g, `${w.name} given paid sick day — loyalty +10.`, "green"); } } },
+        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) { g.cash -= (w.wagePerDay||WAGE_SCALE.DEFAULT); g.expenses += (w.wagePerDay||WAGE_SCALE.DEFAULT); w.loyalty = Math.min(100,(w.loyalty ?? 50)+10); addLog(g, `🤒 ${w.name} given paid sick day — loyalty up.`); addImportantNotice(g, `${w.name} given paid sick day — loyalty +10.`, "green"); } } },
     ],
   },
   {
@@ -4300,7 +1749,7 @@ const EMPLOYEE_EVENTS = [
       { label: "Address calmly, retrain on the spot", sub: "Progress -5% · skill +2",
         apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); const site = (g.activeSites||[]).find(s => s.id === g.pendingDecision?.context?.siteId); if (site) site.phaseProgress = Math.max(0,(site.phaseProgress||0)-5); if (w) w.skill = Math.min(150,(w.skill||50)+2); addLog(g, `🕐 ${w?.name||"Worker"} retrained after causing a delay.`); addImportantNotice(g, `${w?.name||"Worker"} retrained — skill +2, 5% progress lost.`, "orange"); } },
       { label: "Dock pay and issue warning", sub: "Progress -5% · loyalty -10",
-        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); const site = (g.activeSites||[]).find(s => s.id === g.pendingDecision?.context?.siteId); const dock = w?.wagePerDay||20; g.cash += dock; if (site) site.phaseProgress = Math.max(0,(site.phaseProgress||0)-5); if (w) w.loyalty = Math.max(0,(w.loyalty ?? 50)-10); addLog(g, `🕐 ${w?.name||"Worker"} docked pay for causing delay.`); addImportantNotice(g, `${w?.name||"Worker"} docked pay — loyalty -10, 5% progress lost.`, "orange"); } },
+        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); const site = (g.activeSites||[]).find(s => s.id === g.pendingDecision?.context?.siteId); const dock = w?.wagePerDay||WAGE_SCALE.DEFAULT; g.cash += dock; if (site) site.phaseProgress = Math.max(0,(site.phaseProgress||0)-5); if (w) w.loyalty = Math.max(0,(w.loyalty ?? 50)-10); addLog(g, `🕐 ${w?.name||"Worker"} docked pay for causing delay.`); addImportantNotice(g, `${w?.name||"Worker"} docked pay — loyalty -10, 5% progress lost.`, "orange"); } },
     ],
   },
   // ── Positive ────────────────────────────────────────────────────────────────
@@ -4370,6 +1819,23 @@ const WEATHER_PATTERNS = {
   "South Central":     { rainProb: 0.20, snowProb: 0.01, heatProb: 0.25 },
   "Southwest":         { rainProb: 0.08, snowProb: 0.01, heatProb: 0.35 },
 };
+
+// Per-tick probability of a weather roll on an active site, before seasonal modulation.
+// 48 ticks make an in-game day, so 0.0022 is about one roll every ~9 days; applyWeatherEvent
+// then decides whether that roll actually produces snow/rain/heat for the site's region.
+const WEATHER_TICK_PROB = 0.0022;
+
+// Winter and Spring are wetter and stop work more often; Summer brings heat rather than
+// rain but still disrupts. Uses the season the game already tracks on g.currentSeason.
+function getSeasonalWeatherMult(g) {
+  switch (g?.currentSeason) {
+    case "Winter": return 1.9;
+    case "Fall":   return 1.25;
+    case "Spring": return 1.15;
+    case "Summer": return 0.85;
+    default:       return 1.0;
+  }
+}
 
 // ─── Phase Visuals ───────────────────────────────────────────────────────────────
 
@@ -4516,9 +1982,9 @@ const LOAN_PRODUCTS = [
 // ─── Job Postings ────────────────────────────────────────────────────────────────
 
 const JOB_POSTINGS = [
-  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  wageMin: 18, wageMax: 26, desc: "Finds a reliable labourer or tradesperson." },
-  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, wageMin: 24, wageMax: 34, desc: "Attracts experienced tradespeople." },
-  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, wageMin: 30, wageMax: 45, desc: "Top-tier tradespeople. Foreman-quality." },
+  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  wageMin: 165, wageMax: 240, desc: "Finds a reliable labourer or tradesperson." },
+  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, wageMin: 220, wageMax: 315, desc: "Attracts experienced tradespeople." },
+  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, wageMin: 285, wageMax: 420, desc: "Top-tier tradespeople. Foreman-quality." },
 ];
 
 const CREW_ROLES = ["Labourer", "Carpenter", "Electrician", "Plumber", "Concreter", "Steelworker"];
@@ -4593,7 +2059,7 @@ function createWorker(role, overrides = {}) {
     loyalty: rand(55, 80),
     stamina: rand(70, 95),
     trait,
-    wagePerDay: rand(160, 260),
+    wagePerDay: rand(WAGE_SCALE.BASE_MIN, WAGE_SCALE.BASE_MAX),
     status: "Idle",
     onShift: true,
     assignedSiteId: null,
@@ -4612,7 +2078,7 @@ function createApplicant(boost = {}) {
     name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
     role,
     specialty: boost.specialty || pick(CREW_SPECIALTIES),
-    desiredWage: rand(boost.wageMin ?? 18, boost.wageMax ?? 32),
+    desiredWage: rand(boost.wageMin ?? WAGE_SCALE.BASE_MIN, boost.wageMax ?? WAGE_SCALE.BASE_MAX),
     skill: rand(boost.skillMin ?? 75, boost.skillMax ?? 105),
     mood: rand(58, 88),
     loyalty: rand(50, 78),
@@ -4981,7 +2447,7 @@ export function checkWorkerTurnover(g) {
   for (const w of g.crew) {
     let quitChance = 0;
     if (w.mood < 25 && w.loyalty < 40) quitChance = 0.15;
-    if (w.mood < 40 && w.wagePerDay < 25 && w.skill > 90) quitChance = Math.max(quitChance, 0.08);
+    if (w.mood < 40 && w.wagePerDay < WAGE_SCALE.UNDERPAID && w.skill > 90) quitChance = Math.max(quitChance, 0.08);
 
     // Burnout: stamina < 20 → 30% quit chance; stamina < 10 → 60% quit chance
     if ((w.stamina ?? 50) < 10 && w.status !== "Idle") {
@@ -5144,7 +2610,7 @@ export function startNewGeneration(g, perkId) {
   // Apply chosen perk
   if (perkId === "iron_foundation")       { fresh.cash += 50000; fresh.revenue += 50000; }
   if (perkId === "reputation_legacy")     { fresh.reputation = 25; }
-  if (perkId === "veteran_mentor" && mentor) { fresh.legacyMentor = { name: mentor.name, skill: mentor.skill||75, role: mentor.role, wagePerDay: Math.round((mentor.wagePerDay||120) * 0.5) }; }
+  if (perkId === "veteran_mentor" && mentor) { fresh.legacyMentor = { name: mentor.name, skill: mentor.skill||75, role: mentor.role, wagePerDay: Math.round((mentor.wagePerDay||WAGE_SCALE.DEFAULT) * 0.5) }; }
   if (perkId === "equipment_cache")       { fresh._pendingEquipCache = true; }
   if (perkId === "material_stockpile")    { const mats = ["concrete","lumber","steel"]; mats.forEach(m => { fresh.materials[m] = (fresh.materials[m]||0) + 30; }); }
   if (perkId === "political_connections") { fresh._politicalContractsLeft = 5; }
@@ -5594,6 +3060,14 @@ function cleanStaleState(g) {
   if (Array.isArray(g.logs))     g.logs = g.logs.slice(0, 25);
   if (Array.isArray(g.opsFeed))  g.opsFeed = g.opsFeed.slice(0, 20);
   g.eventLog = (g.eventLog || []).slice(0, 50);
+  // Lost bids linger for a few days as visible feedback ("Apex took that one"), then go.
+  // Without this they accumulate forever: the daily refresh only expires contracts still
+  // in "Open" status, and the open-pool cap deliberately preserves every non-Open entry.
+  if (Array.isArray(g.contracts)) {
+    g.contracts = g.contracts.filter(
+      (c) => c.status !== "Lost" || (g.day || 1) - (c.lostOnDay || 0) <= 3
+    );
+  }
   if (Array.isArray(g.contracts) && g.day > 10) {
     const currentDay = g.day || 1;
     g.contracts = g.contracts.filter((c) => c.status !== "Taken" || (c.expiresDay || 0) >= currentDay - 10);
@@ -5691,6 +3165,9 @@ export function freshState() {
     achievements: [],
     legacyStats: initLegacyStats(),
     contractBidStyles: {},
+    wageScaleVersion: WAGE_SCALE.VERSION,
+    bidsWon: 0, bidsLost: 0,
+    saveSchemaVersion: SAVE_SCHEMA_VERSION,
 
     logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and two crew. Start with the Fence job in Bids."],
     opsFeed: [],
@@ -5795,6 +3272,9 @@ export function migrateState(saved) {
   if (!g.achievements)                  g.achievements = [];
   if (!g.legacyStats)                   g.legacyStats = initLegacyStats();
   if (!g.contractBidStyles)            g.contractBidStyles = {};
+  if (g.bidsWon  === undefined)        g.bidsWon = 0;
+  if (g.bidsLost === undefined)        g.bidsLost = 0;
+  g.saveSchemaVersion = SAVE_SCHEMA_VERSION;
   // Sprint 15 fields
   if (g.materials && g.materials.asphalt === undefined) g.materials.asphalt = 0;
   if (g.materialPrices && g.materialPrices.asphalt === undefined) g.materialPrices.asphalt = 200;
@@ -5932,6 +3412,43 @@ export function migrateState(saved) {
     }
     return c;
   });
+  // ── Wage-scale repair (see WAGE_SCALE) ──────────────────────────────────────
+  // Saves written before the wage-scale fix hold crew hired at FleetFlow's per-HOUR
+  // range (18-32) in a per-DAY field, alongside starting crew on the correct per-day
+  // range (160-260). Left alone those workers would stay ~10x underpaid forever and the
+  // fire-and-rehire exploit would persist in every existing save. Anything below MIN is
+  // unreachable through any normal hire path on the corrected scale, so within a save that
+  // has not yet been stamped it identifies an old-scale record. The g.wageScaleVersion stamp
+  // (not the magnitude test alone) is what makes this idempotent: it runs at most once per
+  // save, so a legitimately cheap worker — e.g. a half-wage veteran_mentor at 100/day — is
+  // never repeatedly "corrected" upward on later loads.
+  let _rescaledWages = 0;
+  if (g.wageScaleVersion !== WAGE_SCALE.VERSION) {
+  for (const w of (g.crew || [])) {
+    const wage = Number(w.wagePerDay);
+    if (!Number.isFinite(wage) || wage <= 0) { w.wagePerDay = WAGE_SCALE.DEFAULT; _rescaledWages++; continue; }
+    if (wage < WAGE_SCALE.MIN) {
+      // Preserve each worker's relative standing within the old 18-32 band instead of
+      // flattening everyone to one number: an old 32/day hire stays the expensive one.
+      const rel = Math.max(0, Math.min(1, (wage - 18) / (32 - 18)));
+      w.wagePerDay = Math.round(WAGE_SCALE.BASE_MIN + rel * (WAGE_SCALE.BASE_MAX - WAGE_SCALE.BASE_MIN));
+      _rescaledWages++;
+    }
+  }
+  for (const a of (g.applicants || [])) {
+    const wage = Number(a.desiredWage);
+    if (!Number.isFinite(wage) || wage <= 0) { a.desiredWage = WAGE_SCALE.DEFAULT; continue; }
+    if (wage < WAGE_SCALE.MIN) {
+      const rel = Math.max(0, Math.min(1, (wage - 18) / (32 - 18)));
+      a.desiredWage = Math.round(WAGE_SCALE.BASE_MIN + rel * (WAGE_SCALE.BASE_MAX - WAGE_SCALE.BASE_MIN));
+    }
+  }
+  g.wageScaleVersion = WAGE_SCALE.VERSION;
+  }
+  if (_rescaledWages > 0) {
+    addLog(g, `\uD83D\uDCB5 Payroll correction: ${_rescaledWages} crew member${_rescaledWages === 1 ? " was" : "s were"} on an out-of-date pay scale and now earn a proper day rate.`);
+  }
+
   const cleaned = cleanStaleState(g);
   repairCrewAssignments(cleaned);
   return cleaned;
@@ -6157,6 +3674,11 @@ export function gameTick(prev) {
         } else {
           penalty = BASE_LATE_DAYS * site.penaltyPerDay + (daysLate - BASE_LATE_DAYS) * site.penaltyPerDay * 1.5;
         }
+        // The Small Site Office and Project Office tiers both advertise a delay-penalty
+        // reduction in the office upgrade screen ("-10% / -15% delay penalties"). Until now
+        // that perk was displayed and paid for but never read anywhere. Applied before the
+        // cap so the cap still bounds the final figure.
+        penalty = Math.round(penalty * (1 - getOfficePerkValue(g, "penaltyReduction")));
         penalty = Math.min(penalty, Math.round(site.totalValue * 0.85));
         // Deduct deposit already received; remainder is the payout
         const earned = Math.max(0, site.totalValue - penalty - (site.depositPaid || 0));
@@ -6420,15 +3942,20 @@ export function gameTick(prev) {
           }
           checkChainEvents(site, g, result.type);
         }
-        // Regional weather check
-        const siteCityDef = CITIES.find((c) => c.id === site.cityId);
-        const siteRegion = siteCityDef?.region || "Pacific Northwest";
-        if (Math.random() < 0.04) {
-          const weatherResult = applyWeatherEvent(site, g, siteRegion);
-          if (weatherResult) {
-            site.chaosHistory = [{ ...weatherResult, day: g.day }, ...site.chaosHistory].slice(0, 10);
-          }
-        }
+      }
+    }
+
+    // ── Weather ───────────────────────────────────────────────────────────────
+    // Independent of the chaos roll above. Rate is tuned to land roughly one weather
+    // event per active site per 8-12 in-game days at the seasonal baseline, so weather
+    // is a pressure the player plans around rather than a curiosity they never meet.
+    if (!site.currentWeather && Math.random() < WEATHER_TICK_PROB * getSeasonalWeatherMult(g)) {
+      const siteCityDef = CITIES.find((c) => c.id === site.cityId);
+      const siteRegion = siteCityDef?.region || "Pacific Northwest";
+      const weatherResult = applyWeatherEvent(site, g, siteRegion);
+      if (weatherResult) {
+        if (!site.chaosHistory) site.chaosHistory = [];
+        site.chaosHistory = [{ ...weatherResult, day: g.day }, ...site.chaosHistory].slice(0, 10);
       }
     }
 
@@ -7157,35 +4684,6 @@ export function gameTick(prev) {
       g.bankruptcyDays = 0;
     }
 
-    tickEmployeePersonalities(g);
-    applyDailyPersonalityEvents(g);
-    if (Array.isArray(g.inventory)) tickInventory(g);
-    maybeFireRandomEvent(g, "construction", 0.06);
-    initAiCompetitors(g, 3);
-    tickAiCompetitors(g);
-    initEconomy(g);
-    tickEconomy(g);
-    tickCustomerSatisfaction(g);
-    initPricing(g);
-    tickDemand(g, "construction");
-    initWeather(g);
-    tickWeather(g);
-    tickPerformanceReviews(g);
-    if ((g.day || 0) % 7 === 0) tickTeamMorale(g);
-    tickContractRFPs(g);
-    tickAnalytics(g);
-    initTerritories(g, "construction");
-    tickTerritories(g);
-    // Weather delays active projects
-    const wxDelay = getConstructionWeatherDelay(g);
-    if (wxDelay > 0) {
-      (g.activeProjects || []).forEach((proj) => {
-        if (proj.status === "Active") {
-          proj.daysRemaining = (proj.daysRemaining || 0) + wxDelay;
-        }
-      });
-    }
-
     // ── Empire goals ──────────────────────────────────────────────────────────
     checkEmpireGoals(g);
   }
@@ -7316,6 +4814,100 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
   return g;
 }
 
+// ─── Submit a bid on an open contract ───────────────────────────────────────────
+// Extracted out of the screen component so the bid contest is directly testable: it is the
+// central money decision in the game and it used to be a bare payout multiplier with no
+// outcome at all. Mutates `g` in place (matching every other state mutator here) and returns
+// a result object; the caller owns showing the alert. Never throws.
+export function submitBidCore(g, contractId, crewIds, equipIds) {
+  const c = (g.contracts || []).find((x) => x.id === contractId);
+  if (!c || c.status !== "Open") return { ok: false, reason: "This contract is no longer open." };
+  const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
+  if (blockReason) return { ok: false, reason: blockReason };
+
+  // Submitting costs the estimating fee whether you win or not, so bidding wide has a real
+  // price. Nothing else is committed until the bid is won: crew, equipment and materials are
+  // all left untouched on a loss.
+  const bidStyle = (g.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+  const style = getBidStyle(bidStyle);
+  const winChance = computeBidWinChance(g, c, bidStyle);
+  const prepCost = getBidPrepCost(c);
+  g.cash -= prepCost;
+  g.expenses += prepCost;
+  g.weeklyStats.expenses += prepCost;
+
+  const yourBid = Math.round(c.value * style.multiplier);
+
+  if (Math.random() >= winChance) {
+    // Lost. Name the winner and their price so this reads as a market you were beaten in
+    // rather than an invisible dice roll — the player can see that bidding lower would have
+    // won it, which is the entire point of having a strategy choice at all.
+    const activeRivals = (g.rivals || []).filter((r) => r.status !== "Bankrupt");
+    const winner = c.interestedRival
+      || (activeRivals.length ? pick(activeRivals).name : "another contractor");
+    const winningBid = Math.round(yourBid * (0.86 + Math.random() * 0.1));
+    c.status = "Lost";
+    c.lostToRival = winner;
+    c.lostOnDay = g.day;
+    g.bidsLost = (g.bidsLost || 0) + 1;
+    addLog(g, `📉 Bid lost: "${c.label}" went to ${winner} at ${money(winningBid)} — your ${style.label.toLowerCase()} bid was ${money(yourBid)}. Estimating cost ${money(prepCost)}.`);
+    addImportantNotice(g, `${winner} won "${c.label}". Bid lower next time, or build reputation to win at your price.`, "orange");
+    return { ok: true, won: false, winner, winChance, prepCost, yourBid };
+  }
+
+  g.bidsWon = (g.bidsWon || 0) + 1;
+  const effectiveValue = yourBid;
+
+  // Consume materials — track exactly what was fulfilled, never go negative
+  const materialsFulfilled = {};
+  for (const matId of Object.keys(c.materials || {})) {
+    const needed = c.materials[matId];
+    const available = Math.max(0, g.materials[matId] || 0);
+    const consumed = Math.min(needed, available);
+    g.materials[matId] = available - consumed;
+    materialsFulfilled[matId] = consumed;
+  }
+
+  // Mark crew and equipment as active
+  for (const id of crewIds) {
+    const w = g.crew.find((w) => w.id === id);
+    if (w) { w.status = "Active"; w.assignedSiteId = c.id; }
+  }
+  for (const id of equipIds) {
+    const e = g.equipment.find((e) => e.id === id);
+    if (e) { e.status = "Active"; e.assignedSiteId = c.id; }
+  }
+
+  trackContractWon(g);
+
+  c.status = "Active";
+  g.activeSites.push({
+    id: uid(), contractId: c.id, label: c.label, client: c.client,
+    totalValue: effectiveValue, phases: [...c.phases],
+    currentPhaseIdx: 0, phaseProgress: 0,
+    assignedCrewIds: [...crewIds],
+    assignedEquipmentIds: [...equipIds],
+    crewMin: c.crewMin, equipMin: c.equipMin,
+    startDay: g.day, durationDays: c.durationDays,
+    deadlineDay: c.deadline, penaltyPerDay: c.penaltyPerDay,
+    status: "Active", chaosHistory: [], pausedDays: 0,
+    cityId: c.cityId || "salem", siteMode: "normal",
+    materialsFulfilled,
+    depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
+  });
+
+  // R14-2: 25% deposit received on mobilise
+  const _deposit = Math.round(effectiveValue * 0.25);
+  g.cash += _deposit;
+  g.revenue += _deposit;
+  g.weeklyStats.revenue += _deposit;
+  const _newSite = g.activeSites[g.activeSites.length - 1];
+  _newSite.depositPaid = _deposit;
+
+  addLog(g, `🏗️ Bid WON: "${c.label}" for ${c.client} — ${money(effectiveValue)} on a ${style.label.toLowerCase()} bid (${Math.round(winChance * 100)}% odds). 💰 25% deposit: ${money(_deposit)}.`);
+  return { ok: true, won: true, winChance, prepCost, yourBid, site: _newSite };
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function ConstructionFlowScreen({ onBackToHub }) {
@@ -7347,34 +4939,71 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // ── Persist ────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      // Parse + migrate one stored payload. Returns null (never throws) if the payload is
+      // absent, unparseable, or fails the structural integrity check, so the caller can
+      // fall through to the next source rather than losing the company outright.
+      const tryLoad = (raw) => {
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!checkSaveIntegrity(parsed).valid) return null;
+          return migrateState(parsed);
+        } catch (_) {
+          return null;
+        }
+      };
+
+      let saved = null;
+      let recoveredFromBackup = false;
+      let lostSave = false;
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const integrity = checkSaveIntegrity(parsed);
-          if (!integrity.valid) {
-            // Save has issues - will be fixed by migrateState
-          }
-          const saved = migrateState(parsed);
-          const nowTs = Date.now();
-          const offlineInfo = computeOfflineProgress(saved, nowTs);
-          if (offlineInfo && offlineInfo.ticksToRun > 0) {
-            const progressed = applyOfflineProgress(saved, offlineInfo.ticksToRun);
-            setGame(progressed);
-            setTheme(progressed.theme || "dark");
-          } else {
-            saved.lastRealTimestamp = nowTs;
-            setGame(saved);
-            setTheme(saved.theme || "dark");
-          }
-        } else {
-          const fs = freshState();
-          fs.lastRealTimestamp = Date.now();
-          setGame(fs);
+        saved = tryLoad(raw);
+        if (saved) {
+          // Snapshot the payload we just proved loadable as this session's rollback point,
+          // once, before any gameplay write can replace it. Deliberately not done on every
+          // throttled save: that would keep overwriting the backup with the newest payload,
+          // so a save that goes bad would immediately be backed up over the last good one
+          // and the backup would protect nothing.
+          AsyncStorage.setItem(BACKUP_STORAGE_KEY, raw).catch(() => {});
+        }
+        if (!saved && raw) {
+          // The main slot exists but is unreadable. Fall back to the last good backup.
+          const backupRaw = await AsyncStorage.getItem(BACKUP_STORAGE_KEY);
+          saved = tryLoad(backupRaw);
+          recoveredFromBackup = !!saved;
+          lostSave = !saved;
         }
       } catch (_) {
+        // AsyncStorage itself is unavailable — fall through to a fresh company.
+        lostSave = true;
+      }
+
+      if (saved) {
+        if (recoveredFromBackup) {
+          addImportantNotice(saved, "⚠️ Your save was damaged and has been restored from the last good backup. You may have lost a little recent progress.", "orange");
+          addLog(saved, "🛟 Save recovered from backup after the main save failed to load.");
+        }
+        const nowTs = Date.now();
+        const offlineInfo = computeOfflineProgress(saved, nowTs);
+        if (offlineInfo && offlineInfo.ticksToRun > 0) {
+          const progressed = applyOfflineProgress(saved, offlineInfo.ticksToRun);
+          setGame(progressed);
+          setTheme(progressed.theme || "dark");
+        } else {
+          saved.lastRealTimestamp = nowTs;
+          setGame(saved);
+          setTheme(saved.theme || "dark");
+        }
+      } else {
         const fs = freshState();
         fs.lastRealTimestamp = Date.now();
+        if (lostSave) {
+          // Tell the player rather than silently handing them a new company and letting
+          // them work out for themselves that weeks of play are gone.
+          addImportantNotice(fs, "⚠️ Your previous save could not be read and no usable backup was found. Starting a new company.", "red");
+          addLog(fs, "⚠️ Previous save was unreadable — started a new company.");
+        }
         setGame(fs);
       }
       setLoaded(true);
@@ -7397,7 +5026,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         if (!prev || !prev.legacyMentor || (prev.crew||[]).length > 0) return prev;
         const next = clone(prev);
         const m = next.legacyMentor;
-        next.crew.push(createWorker({ name: m.name, skill: m.skill||75, role: m.role, wagePerDay: m.wagePerDay||60, loyalty: 90, jobsCompleted: 20 }));
+        next.crew.push(createWorker({ name: m.name, skill: m.skill||75, role: m.role, wagePerDay: m.wagePerDay||WAGE_SCALE.DEFAULT, loyalty: 90, jobsCompleted: 20 }));
         next.legacyMentor = null;
         addLog(next, `⭐ ${m.name} returns as your legacy mentor from the previous dynasty.`);
         addImportantNotice(next, `${m.name} joins your new company at half their previous wage!`, "green");
@@ -7751,65 +5380,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleStartSite = useCallback((contract, crewIds, equipIds) => {
     update((g) => {
-      const c = g.contracts.find((c) => c.id === contract.id);
-      if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
-      const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
-      if (blockReason) { Alert.alert("Cannot Start", blockReason); return; }
-
-      // Apply bid style multiplier
-      const BID_MULTIPLIERS = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
-      const bidStyle = (g.contractBidStyles || {})[c.id] || "standard";
-      const bidMult = BID_MULTIPLIERS[bidStyle] ?? 1.0;
-      const effectiveValue = Math.round(c.value * bidMult);
-
-      // Consume materials — track exactly what was fulfilled, never go negative
-      const materialsFulfilled = {};
-      for (const matId of Object.keys(c.materials || {})) {
-        const needed = c.materials[matId];
-        const available = Math.max(0, g.materials[matId] || 0);
-        const consumed = Math.min(needed, available);
-        g.materials[matId] = available - consumed;
-        materialsFulfilled[matId] = consumed;
-      }
-
-      // Mark crew and equipment as active
-      for (const id of crewIds) {
-        const w = g.crew.find((w) => w.id === id);
-        if (w) { w.status = "Active"; w.assignedSiteId = contract.id; }
-      }
-      for (const id of equipIds) {
-        const e = g.equipment.find((e) => e.id === id);
-        if (e) { e.status = "Active"; e.assignedSiteId = contract.id; }
-      }
-
-      trackContractWon(g);
-
-      c.status = "Active";
-      g.activeSites.push({
-        id: uid(), contractId: c.id, label: c.label, client: c.client,
-        totalValue: effectiveValue, phases: [...c.phases],
-        currentPhaseIdx: 0, phaseProgress: 0,
-        assignedCrewIds: [...crewIds],
-        assignedEquipmentIds: [...equipIds],
-        crewMin: c.crewMin, equipMin: c.equipMin,
-        startDay: g.day, durationDays: c.durationDays,
-        deadlineDay: c.deadline, penaltyPerDay: c.penaltyPerDay,
-        status: "Active", chaosHistory: [], pausedDays: 0,
-        cityId: c.cityId || "salem", siteMode: "normal",
-        materialsFulfilled,
-        depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
-      });
-
-      // R14-2: 25% deposit received on mobilise
-      const _deposit = Math.round(effectiveValue * 0.25);
-      g.cash += _deposit;
-      g.revenue += _deposit;
-      g.weeklyStats.revenue += _deposit;
-      const _newSite = g.activeSites[g.activeSites.length - 1];
-      _newSite.depositPaid = _deposit;
-
-      const bidNote = bidStyle !== "standard" ? ` [${bidStyle} bid]` : "";
-      addLog(g, `🏗️ Site started: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
+      const result = submitBidCore(g, contract.id, crewIds, equipIds);
+      if (!result.ok) Alert.alert("Cannot Submit Bid", result.reason);
     });
   }, [update]);
 
@@ -7999,6 +5571,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         setGame(fresh);
         setTheme("dark");
         AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+        AsyncStorage.removeItem(BACKUP_STORAGE_KEY).catch(() => {});
         AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {});
       }},
     ]);
@@ -8178,7 +5751,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const _w = (g.crew||[]).find(w => w.id === workerId);
       if (!_w) return;
       const _decrease = Math.round(_w.wagePerDay * 0.1);
-      _w.wagePerDay = Math.max(50, _w.wagePerDay - _decrease);
+      _w.wagePerDay = Math.max(WAGE_SCALE.MIN, _w.wagePerDay - _decrease);
       _w.loyalty = Math.max(0, (_w.loyalty ?? 0) - 15);
       _w.mood = Math.max(0, (_w.mood ?? 70) - 12);
       addLog(g, `🔴 ${_w.name} wage cut by ${money(_decrease)}/day — morale hit`);
@@ -12052,9 +9625,8 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                     }, 0);
                     const estLaborCost = (c.crewMin || 1) * 220 * (c.durationDays || 1);
                     const estProfit = c.value - estMatCost - estLaborCost;
-                    const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
-                    const BID_MULT = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
-                    const effectiveValue = Math.round(c.value * (BID_MULT[bidStyle] ?? 1.0));
+                    const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+                    const effectiveValue = Math.round(c.value * getBidStyle(bidStyle).multiplier);
                     return (
                       <View style={{ backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }}>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
@@ -12175,13 +9747,12 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
 
                   {/* Bid Style */}
                   {(() => {
-                    const BID_OPTIONS = [
-                      { key: "aggressive", label: "Aggressive", sub: "−18% value, fast close", multiplier: 0.82, color: T.orange },
-                      { key: "standard",   label: "Standard",   sub: "Market rate",            multiplier: 1.00, color: T.blue },
-                      { key: "premium",    label: "Premium",    sub: "+28% value, higher bar", multiplier: 1.28, color: T.green },
-                    ];
-                    const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
-                    const activeMultiplier = BID_OPTIONS.find(o => o.key === bidStyle)?.multiplier ?? 1;
+                    const BID_OPTIONS = BID_STYLES.map((b) => ({ ...b, color: T[b.color] }));
+                    const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+                    const activeMultiplier = getBidStyle(bidStyle).multiplier;
+                    const winPct = Math.round(computeBidWinChance(game, c, bidStyle) * 100);
+                    const prepCost = getBidPrepCost(c);
+                    const winColor = winPct >= 60 ? T.green : winPct >= 35 ? T.orange : T.red;
                     return (
                       <View style={{ marginTop: 10 }}>
                         <Text style={[styles.sub, { color: T.sub, marginBottom: 6, fontSize: 11 }]}>Bid Strategy</Text>
@@ -12192,14 +9763,22 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                               <TouchableOpacity key={opt.key} onPress={() => onSetBidStyle(c.id, opt.key)} style={{ flex: 1, paddingVertical: 7, paddingHorizontal: 4, borderRadius: 7, borderWidth: 1.5, borderColor: opt.color, backgroundColor: active ? opt.color + "33" : "transparent", alignItems: "center" }}>
                                 <Text style={{ fontWeight: "bold", fontSize: 12, color: active ? opt.color : T.sub }}>{opt.label}</Text>
                                 <Text style={{ fontSize: 9, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }}>{opt.sub}</Text>
+                                <Text style={{ fontSize: 10, fontWeight: "bold", color: active ? opt.color : T.sub, marginTop: 2 }}>{`${Math.round(computeBidWinChance(game, c, opt.key) * 100)}% win`}</Text>
                               </TouchableOpacity>
                             );
                           })}
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", backgroundColor: T.panel2, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}>
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Effective Value</Text>
+                          <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Your Bid</Text>
                           <Text style={{ color: T.text, fontWeight: "bold", fontSize: 12 }}>{`$${Math.round(c.value * activeMultiplier).toLocaleString()}`}</Text>
                         </View>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", backgroundColor: T.panel2, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10, marginTop: 4 }}>
+                          <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Chance to win</Text>
+                          <Text style={{ color: winColor, fontWeight: "bold", fontSize: 12 }}>{`${winPct}%`}</Text>
+                        </View>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 5 }]}>
+                          {`Estimating costs ${money(prepCost)} whether you win or lose. Reputation, an Estimator, repeat clients and spare capacity all improve your odds.`}
+                        </Text>
                       </View>
                     );
                   })()}
@@ -12210,7 +9789,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                     onPress={handleConfirm}
                   >
                     <Text style={[styles.btnText, { color: !blockReason ? "#fff" : T.sub }]}>
-                      {blockReason || "✅ Mobilise & Start Site"}
+                      {blockReason || `📨 Submit Bid — ${Math.round(computeBidWinChance(game, c, (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE) * 100)}% to win`}
                     </Text>
                   </TouchableOpacity>
                 </View>

@@ -29,21 +29,20 @@ const OUT_PATH = path.join(ROOT, "snack/ConstructionFlowSnack.js");
 const RAW_ASSET_BASE =
   "https://raw.githubusercontent.com/wildbearofficialco-png/constructionFlow/main/constructionFlow/assets/construction";
 
-// filename -> IIFE variable name the screen destructures from
-const SYSTEMS = [
-  ["employeePersonalities.js", "EmployeePersonalitiesSystem"],
-  ["inventorySystem.js", "InventorySystem"],
-  ["randomEvents.js", "RandomEventsSystem"],
-  ["aiCompetitors.js", "AiCompetitorsSystem"],
-  ["economyEngine.js", "EconomyEngineSystem"],
-  ["customerSatisfaction.js", "CustomerSatisfactionSystem"],
-  ["demandPricing.js", "DemandPricingSystem"],
-  ["weatherRouteConditions.js", "WeatherRouteConditionsSystem"],
-  ["staffPerformance.js", "StaffPerformanceSystem"],
-  ["contractBidding.js", "ContractBiddingSystem"],
-  ["analyticsEngine.js", "AnalyticsEngineSystem"],
-  ["territorySystem.js", "TerritorySystem"],
-];
+// Which systems to inline is DERIVED from what ConstructionFlowScreen.js actually imports,
+// not hardcoded. It used to be a fixed list of 12 that had to be hand-edited whenever the
+// screen's imports changed — and because that list was the source of truth, it kept inlining
+// ~2,400 lines of modules into Brady's copy-paste file long after the screen stopped needing
+// them. Deriving it means the Snack build tracks the real dependency set on its own,
+// including the current state: the screen imports no systems at all, so none are inlined.
+const SYSTEM_IMPORT_RE =
+  /import\s*(?:\{[^}]*\}|[A-Za-z_$][\w$]*)\s*from\s*"\.\.\/\.\.\/systems\/([a-zA-Z]+)\.js";\n/g;
+
+// weatherRouteConditions -> WeatherRouteConditionsSystem; territorySystem -> TerritorySystem.
+function systemVarName(base) {
+  const pascal = base.charAt(0).toUpperCase() + base.slice(1);
+  return /System$/.test(pascal) ? pascal : `${pascal}System`;
+}
 
 const EXPORT_DECL_RE = /^export (?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/gm;
 
@@ -77,18 +76,31 @@ function buildSystemIife(varName, systemSource, utilsBody) {
   );
 }
 
+// The generated file is the ONLY way ConstructionFlow gets tested on a real device: it is
+// pasted whole over Snack's App.js. A silently malformed build costs a full round-trip to
+// discover, so every regeneration self-checks the properties Snack actually depends on.
+function verify(output, assetCount) {
+  const codeOnly = output.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const checks = [
+    ["default export is intact (Snack renders App.js's default export)",
+      /export default function ConstructionFlowScreen/.test(output)],
+    ["no local imports remain (the file must be self-contained)",
+      !/from\s+["']\.\.?\//.test(codeOnly)],
+    ["no local asset require() remains (Snack has no local assets)",
+      !/require\(["']\.\.?\//.test(codeOnly)],
+    ["every asset resolves to a raw GitHub URI", assetCount > 0 &&
+      (output.match(/uri: "https:\/\/raw\.githubusercontent\.com/g) || []).length === assetCount],
+  ];
+  const failed = checks.filter(([, ok]) => !ok).map(([label]) => label);
+  if (failed.length) {
+    throw new Error(`Generated Snack build failed verification:\n  - ${failed.join("\n  - ")}`);
+  }
+  console.log(`Verified ${checks.length} structural checks on the generated file.`);
+}
+
 function main() {
   const utilsSource = fs.readFileSync(UTILS_PATH, "utf8");
   const utilsBody = stripExports(utilsSource).trim();
-
-  // --- one IIFE per system, each with its own private inlined copy of utils.js ---
-  const iifes = [];
-  const destructures = [];
-
-  for (const [file, varName] of SYSTEMS) {
-    const source = fs.readFileSync(path.join(SYSTEMS_DIR, file), "utf8");
-    iifes.push(buildSystemIife(varName, source, utilsBody));
-  }
 
   // --- ConstructionFlowScreen.js: drop its systems imports, keep npm-package imports,
   //     rewrite asset requires to remote URIs, then destructure exactly what it originally
@@ -98,21 +110,24 @@ function main() {
   // [^}]* (not [\s\S]*?) is deliberate: it cannot cross a "}" boundary, so this can only ever
   // match ONE complete { ... } group, never accidentally swallow the unrelated react-native/
   // AsyncStorage/Ionicons import statements that precede these in the source file.
-  const importBlockRe =
-    /import\s*(?:\{[^}]*\}|[A-Za-z_$][\w$]*)\s*from\s*"\.\.\/\.\.\/systems\/([a-zA-Z]+)\.js";\n/g;
   let match;
   const importsBySystemFile = {};
-  while ((match = importBlockRe.exec(screen))) {
+  SYSTEM_IMPORT_RE.lastIndex = 0;
+  while ((match = SYSTEM_IMPORT_RE.exec(screen))) {
     importsBySystemFile[match[1]] = match[0];
   }
-  screen = screen.replace(importBlockRe, "");
+  screen = screen.replace(SYSTEM_IMPORT_RE, "");
 
-  for (const [file, varName] of SYSTEMS) {
-    const base = path.basename(file, ".js");
+  // --- one IIFE per imported system, each with its own private inlined copy of utils.js ---
+  const iifes = [];
+  const destructures = [];
+
+  for (const base of Object.keys(importsBySystemFile)) {
+    const varName = systemVarName(base);
+    const source = fs.readFileSync(path.join(SYSTEMS_DIR, `${base}.js`), "utf8");
+    iifes.push(buildSystemIife(varName, source, utilsBody));
+
     const importStmt = importsBySystemFile[base];
-    if (!importStmt) {
-      throw new Error(`ConstructionFlowScreen.js does not import from ${file} — check SYSTEMS list`);
-    }
     const namesMatch = importStmt.match(/\{([\s\S]*?)\}/);
     const names = namesMatch
       ? namesMatch[1]
@@ -143,11 +158,9 @@ function main() {
  * Regenerate with \`node scripts/build-snack-single.js\` from src/games/constructionflow/
  * ConstructionFlowScreen.js and src/systems/*.
  *
- * Paste this ENTIRE file over Snack's App.js. No other files needed — every gameplay
- * system (economy, employees, inventory, random events, AI competitors, customer
- * satisfaction, demand/pricing, weather, staff performance, contract bidding, analytics,
- * territories) is inlined below as an isolated module (IIFE), and all 50 equipment/office
- * images load from this repo's raw GitHub content instead of local requires.
+ * Paste this ENTIRE file over Snack's App.js. No other files needed — any gameplay system
+ * the screen imports is inlined below as an isolated module (IIFE), and all 50
+ * equipment/office images load from this repo's raw GitHub content instead of local requires.
  *
  * Dependencies used (all standard in Expo Go / Snack SDK 57):
  *   react, react-native, @react-native-async-storage/async-storage, @expo/vector-icons
@@ -155,20 +168,26 @@ function main() {
 
 `;
 
+  const systemsSection = iifes.length
+    ? "\n\n// ─── Inlined gameplay systems (each isolated in its own module scope) ──────────\n\n" +
+      iifes.join("\n") +
+      "\n// ─── Bindings the game screen below expects (mirrors its original imports) ─────\n\n" +
+      destructures.join("\n")
+    : "";
+
   const output =
     header +
     npmImports +
-    "\n\n// ─── Inlined gameplay systems (each isolated in its own module scope) ──────────\n\n" +
-    iifes.join("\n") +
-    "\n// ─── Bindings the game screen below expects (mirrors its original imports) ─────\n\n" +
-    destructures.join("\n") +
+    systemsSection +
     "\n\n// ─── ConstructionFlow game screen ───────────────────────────────────────────────\n\n" +
     screen;
+
+  verify(output, assetMatches.length);
 
   fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
   fs.writeFileSync(OUT_PATH, output);
 
-  console.log(`Inlined ${SYSTEMS.length} systems (+utils.js x${SYSTEMS.length}) into ${iifes.length} IIFEs.`);
+  console.log(`Inlined ${iifes.length} system(s) that the screen actually imports.`);
   console.log(`Rewrote ${assetMatches.length} local asset requires to remote URIs.`);
   console.log(`Wrote ${OUT_PATH} (${output.split("\n").length} lines).`);
 }
