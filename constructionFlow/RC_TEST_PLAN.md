@@ -8,16 +8,41 @@
 
 ## Setup (2 minutes)
 
-1. Open `constructionFlow/snack/ConstructionFlowSnack.js` on GitHub, on the branch above.
-2. Select All → Copy.
-3. In Snack, select all of `App.js` → Paste over it.
-4. Dependencies panel: `@react-native-async-storage/async-storage`. **Nothing else to add** —
-   `expo-haptics` is loaded defensively and goes quiet if Snack can't resolve it.
-5. SDK version: **57**.
-6. Scan with Expo Go.
+### Use this exact link — do not browse to the file
 
-**Start a fresh company.** The economy changed substantially in Sprint 3; an old save will be
-migrated but won't show you the new opening.
+```
+https://raw.githubusercontent.com/wildbearofficialco-png/constructionFlow/claude/constructionflow-app-store-audit-828lht/constructionFlow/snack/ConstructionFlowSnack.js
+```
+
+Open it, Select All, Copy. That URL is pinned to the right branch, so it cannot serve you the
+wrong version.
+
+**Why this matters:** GitHub serves the `main` branch by default, and `main` has **none** of
+the four sprints on it — no competitive bidding, no retainage, no rentals, no diesel. Browsing
+to the file and copying it gets you the pre-audit game, and it looks close enough to be
+convincing. (This already happened once.)
+
+### Then
+
+1. In Snack, select all of `App.js` → Paste over it.
+2. Dependencies panel: `@react-native-async-storage/async-storage`. **Nothing else** —
+   `expo-haptics` is loaded defensively and goes quiet if Snack cannot resolve it.
+3. SDK version: **57**.
+4. Tap **My Device** (not Web) and scan with Expo Go. The Web preview is fine for a glance but
+   it is not the thing you are signing off — haptics, real touch targets and actual frame rate
+   only exist on the device.
+5. **Start a fresh company.** The economy changed substantially in Sprint 3; an old save is
+   migrated but will not show you the new opening.
+
+### Confirm you are on the right build before you start
+
+The setup screen shows **`Build RC1 · sprints 1-4`** under the starting-cash line, and the same
+tag sits next to your company name on Home. If you do not see it, you are on an old copy —
+stop and re-copy from the link above.
+
+Two more things you should see immediately if the build is correct:
+- Setup screen says **"You start with $24,000"** (not $75,000)
+- The first tutorial step is **"Win Your First Bid"** (not "Accept Your First Contract")
 
 ---
 

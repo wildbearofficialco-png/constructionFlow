@@ -172,6 +172,13 @@ export function triggerHaptic(kind, enabled = true) {
 // Opening bankroll. Roughly one month of a starting company's standing overhead (three crew,
 // one pickup, shed rent), so the first contract genuinely matters. See the day-30 band in
 // __tests__/constructionFlowEconomyCurve.test.js.
+// Visible build stamp. The single-file Snack build is pasted by hand from GitHub, and GitHub
+// serves the default branch unless you switch — so it is genuinely easy to test an old copy
+// for an hour without noticing. This shows on the setup screen and under the company name on
+// Home, so "am I running the build I think I am?" is answerable at a glance. Bump it whenever
+// the code Brady tests from changes meaningfully.
+export const BUILD_TAG = "RC1 · sprints 1-4";
+
 export const STARTING_CASH = 24000;
 
 // Revolving credit line, unlocked at 680+ credit. Named so the Finance copy and the facility
@@ -7129,6 +7136,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24 }}>
             {`You start with ${money(STARTING_CASH)} · 1 truck · 3 crew members`}
           </Text>
+          <Text style={{ color: T.sub, fontSize: 10, textAlign: "center", marginTop: 6, opacity: 0.7 }}>
+            {`Build ${BUILD_TAG}`}
+          </Text>
         </ScrollView>
       </SafeAreaView>
     );
@@ -7521,6 +7531,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 {(game.generation||1) > 1 && (
                   <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
                 )}
+                <Text style={{ fontSize: 9, color: T.sub, opacity: 0.65 }}>{BUILD_TAG}</Text>
               </View>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
