@@ -6967,6 +6967,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           <Text style={{ color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }}>ConstructionFlow</Text>
           <Text style={{ color: T.sub, fontSize: 14, textAlign: "center", marginBottom: 32 }}>Build a construction empire from the ground up.</Text>
 
+          {/* If we are here because a save could not be read, say so. The loader writes an
+              importantNotice explaining it, but the setup screen renders before the main UI
+              that normally displays notices — so without this the player whose save was lost
+              is dropped into "Name Your Company" with no explanation at all, which is the one
+              scenario the backup/recovery path exists to handle gracefully. */}
+          {game?.importantNotice?.message && (
+            <View style={{ backgroundColor: T.panel2, borderColor: T.red, borderWidth: 1.5, borderRadius: 12, padding: 14, marginBottom: 24 }}>
+              <Text style={{ color: T.red, fontWeight: "800", fontSize: 13, marginBottom: 4 }}>Previous save</Text>
+              <Text style={{ color: T.text, fontSize: 13, lineHeight: 19 }}>{game.importantNotice.message}</Text>
+            </View>
+          )}
+
           {/* Step indicator */}
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 28 }}>
             {[0,1,2].map(s => (
