@@ -79,6 +79,18 @@ function buildSystemIife(varName, systemSource, utilsBody) {
 // The generated file is the ONLY way ConstructionFlow gets tested on a real device: it is
 // pasted whole over Snack's App.js. A silently malformed build costs a full round-trip to
 // discover, so every regeneration self-checks the properties Snack actually depends on.
+// Packages that Expo Go bundles, so a bare require() of them resolves in Snack with no
+// dependency for the tester to add. expo-haptics is required lazily inside a try/catch in
+// ConstructionFlowScreen.js precisely so that even if this assumption is ever wrong, the
+// vibration goes quiet instead of the game failing to load.
+const SNACK_SAFE_PACKAGES = new Set(["expo-haptics"]);
+
+function unexpectedRequires(codeOnly) {
+  const found = codeOnly.match(/require\(\s*["']([^."'][^"']*)["']\s*\)/g) || [];
+  return [...new Set(found.map((r) => r.replace(/.*["']([^"']+)["'].*/, "$1")))]
+    .filter((pkg) => !SNACK_SAFE_PACKAGES.has(pkg));
+}
+
 function verify(output, assetCount) {
   const codeOnly = output.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const checks = [
@@ -90,6 +102,11 @@ function verify(output, assetCount) {
       !/require\(["']\.\.?\//.test(codeOnly)],
     ["every asset resolves to a raw GitHub URI", assetCount > 0 &&
       (output.match(/uri: "https:\/\/raw\.githubusercontent\.com/g) || []).length === assetCount],
+    // Any bare require() becomes a package Snack has to resolve. Modules bundled in Expo Go
+    // are fine; anything else would make Brady add a dependency by hand — or fail the whole
+    // paste if it cannot be resolved at all. Keep the list short and deliberate.
+    [`only expected runtime packages are required (${JSON.stringify(unexpectedRequires(codeOnly))})`,
+      unexpectedRequires(codeOnly).length === 0],
   ];
   const failed = checks.filter(([, ok]) => !ok).map(([label]) => label);
   if (failed.length) {

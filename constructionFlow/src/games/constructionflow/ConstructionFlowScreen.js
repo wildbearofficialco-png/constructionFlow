@@ -109,6 +109,40 @@ const CLIENTS = [
   "Landmark Projects","CrossRoads Corp","Apex Structures","Keystone Capital",
 ];
 
+// ─── Haptics ────────────────────────────────────────────────────────────────────
+// Winning a bid, losing one, and finishing a job are the moments worth feeling. expo-haptics
+// ships inside Expo Go, but it is loaded lazily inside a try/catch and every call is a no-op
+// if it is missing: the single-file Snack build is Brady's only on-device testing path, and a
+// hard `import` of a module Snack could not resolve would break the entire game rather than
+// just the vibration. Failing silently is the correct trade here.
+let _hapticsModule;
+let _hapticsUnavailable = false;
+function getHaptics() {
+  if (_hapticsModule || _hapticsUnavailable) return _hapticsModule;
+  try {
+    _hapticsModule = require("expo-haptics");
+  } catch (_) {
+    _hapticsUnavailable = true;
+  }
+  return _hapticsModule;
+}
+
+// kind: "light" | "success" | "warning" | "error"
+export function triggerHaptic(kind, enabled = true) {
+  if (!enabled) return;
+  if (Platform.OS === "web") return;
+  const H = getHaptics();
+  if (!H) return;
+  try {
+    if (kind === "light") H.impactAsync?.(H.ImpactFeedbackStyle?.Light);
+    else if (kind === "success") H.notificationAsync?.(H.NotificationFeedbackType?.Success);
+    else if (kind === "warning") H.notificationAsync?.(H.NotificationFeedbackType?.Warning);
+    else if (kind === "error") H.notificationAsync?.(H.NotificationFeedbackType?.Error);
+  } catch (_) {
+    // A vibration failing must never surface to the player.
+  }
+}
+
 // ─── Wage Scale ─────────────────────────────────────────────────────────────────
 // ConstructionFlow prices labour PER DAY. FleetFlow — which most of these systems were
 // ported from — prices it PER HOUR (`wagePerHour: 13`, `const desired = 18 * wagePressure`).
@@ -123,6 +157,12 @@ const CLIENTS = [
 // one pickup, shed rent), so the first contract genuinely matters. See the day-30 band in
 // __tests__/constructionFlowEconomyCurve.test.js.
 export const STARTING_CASH = 24000;
+
+// Revolving credit line, unlocked at 680+ credit. Named so the Finance copy and the facility
+// it describes cannot drift apart — the advertised terms were previously hardcoded in the UI
+// string separately from the object that actually gets created.
+export const CREDIT_LINE_LIMIT = 75000;
+export const CREDIT_LINE_APR = 14;
 
 export const WAGE_SCALE = {
   VERSION: 2,     // bumped when the scale itself changes; saves carry g.wageScaleVersion
@@ -1565,7 +1605,7 @@ const CHAOS_EVENTS = [
   // that most distinguishes this from a delivery game: you bid a job before you know what you
   // will hit. Each is gated to the phases where it could plausibly be discovered — you do not
   // strike a gas main while hanging drywall — via `groundPhase` below.
-  { id: "rock_strata", label: "Rock Strata Hit", prob: 0.030, tone: "orange", icon: "⛰️", groundPhase: true,
+  { id: "rock_strata", label: "Rock Strata Hit", prob: 0.016, tone: "orange", icon: "⛰️", groundPhase: true,
     apply: (site, game) => {
       const extraCost = Math.max(1500, Math.round((site.totalValue || 20000) * rand(3, 8) / 100));
       const lostDays = rand(1, 3);
@@ -1578,7 +1618,7 @@ const CHAOS_EVENTS = [
       return { text: `Rock strata hit. ${money(extraCost)} extra, ${lostDays} day(s) lost.`, type: "ground_rock" };
     }
   },
-  { id: "water_table", label: "High Water Table", prob: 0.024, tone: "cyan", icon: "💧", groundPhase: true,
+  { id: "water_table", label: "High Water Table", prob: 0.013, tone: "cyan", icon: "💧", groundPhase: true,
     apply: (site, game) => {
       const extraCost = Math.max(1200, Math.round((site.totalValue || 20000) * rand(2, 6) / 100));
       game.cash -= extraCost;
@@ -1589,7 +1629,7 @@ const CHAOS_EVENTS = [
       return { text: `High water table. ${money(extraCost)} on dewatering.`, type: "ground_water" };
     }
   },
-  { id: "contaminated_soil", label: "Contaminated Soil", prob: 0.016, tone: "red", icon: "☣️", groundPhase: true,
+  { id: "contaminated_soil", label: "Contaminated Soil", prob: 0.007, tone: "red", icon: "☣️", groundPhase: true,
     apply: (site, game) => {
       const extraCost = Math.max(3000, Math.round((site.totalValue || 20000) * rand(5, 12) / 100));
       const pauseDays = rand(2, 5);
@@ -1603,7 +1643,7 @@ const CHAOS_EVENTS = [
       return { text: `Contaminated soil. ${money(extraCost)} remediation, paused ${pauseDays} day(s).`, type: "ground_contamination" };
     }
   },
-  { id: "utility_strike", label: "Underground Utility Strike", prob: 0.020, tone: "red", icon: "⚡", groundPhase: true,
+  { id: "utility_strike", label: "Underground Utility Strike", prob: 0.009, tone: "red", icon: "⚡", groundPhase: true,
     apply: (site, game) => {
       const extraCost = Math.max(2000, Math.round((site.totalValue || 20000) * rand(4, 9) / 100));
       const pauseDays = rand(1, 3);
@@ -1620,7 +1660,7 @@ const CHAOS_EVENTS = [
       return { text: `Utility strike. ${money(extraCost)} repairs, ${pauseDays} day(s) closed.`, type: "ground_utility" };
     }
   },
-  { id: "archaeological_find", label: "Archaeological Find", prob: 0.008, tone: "yellow", icon: "🏺", groundPhase: true,
+  { id: "archaeological_find", label: "Archaeological Find", prob: 0.003, tone: "yellow", icon: "🏺", groundPhase: true,
     apply: (site, game) => {
       const pauseDays = rand(4, 9);
       site.status = "Paused";
@@ -3525,9 +3565,16 @@ function cleanStaleState(g) {
       (c) => c.status !== "Lost" || (g.day || 1) - (c.lostOnDay || 0) <= 3
     );
   }
-  if (Array.isArray(g.contracts) && g.day > 10) {
+  if (Array.isArray(g.contracts)) {
     const currentDay = g.day || 1;
+    // Contracts a rival took. Previously gated on `g.day > 10`, which was harmless, but the
+    // whole purge only ran on load — see the call site in gameTick's day rollover.
     g.contracts = g.contracts.filter((c) => c.status !== "Taken" || (c.expiresDay || 0) >= currentDay - 10);
+    // Finished work stays around briefly for the completion UI, then goes. Without this,
+    // every job a company ever completed remained in state for the life of the save.
+    g.contracts = g.contracts.filter(
+      (c) => c.status !== "Complete" || currentDay - (c.completedOnDay || 0) <= 5
+    );
   }
   if (Array.isArray(g.activeSites)) {
     for (const site of g.activeSites) {
@@ -3627,6 +3674,7 @@ export function freshState() {
     pendingRetainage: [],
     equipmentLoans: [],
     dieselPrice: DIESEL_BASE_PRICE,
+    hapticsEnabled: true,
     saveSchemaVersion: SAVE_SCHEMA_VERSION,
 
     logs: [`🏗️ Welcome to ConstructionFlow. You have ${money(STARTING_CASH)}, one truck, and three crew — about a month of overhead. Win the Fence job in Bids before it runs out.`],
@@ -3737,6 +3785,7 @@ export function migrateState(saved) {
   if (!Array.isArray(g.pendingRetainage)) g.pendingRetainage = [];
   if (!Array.isArray(g.equipmentLoans))   g.equipmentLoans = [];
   if (!Number.isFinite(g.dieselPrice))   g.dieselPrice = DIESEL_BASE_PRICE;
+  if (typeof g.hapticsEnabled !== "boolean") g.hapticsEnabled = true;
   // Sites started before progress billing existed only recorded a 25% deposit. Seed
   // billedToDate from it so the completion settlement pays the correct balance instead of
   // paying the full contract value a second time.
@@ -4164,6 +4213,16 @@ export function gameTick(prev) {
       if (site.currentPhaseIdx >= site.phases.length) {
         // Site complete
         site.status = "Complete";
+        // Close the contract too. It used to stay "Active" for the rest of the run, which
+        // both misreported the company's live workload and made the entry immortal: the
+        // daily refresh only expires contracts still in "Open" status.
+        {
+          const _finishedContract = (g.contracts || []).find((c) => c.id === site.contractId);
+          if (_finishedContract) {
+            _finishedContract.status = "Complete";
+            _finishedContract.completedOnDay = g.day;
+          }
+        }
         const daysLate = Math.max(0, g.day - site.deadlineDay);
         // Escalating penalty: 1× for first 5 days late, 1.5× after that, capped at 85%
         const BASE_LATE_DAYS = 5;
@@ -4242,7 +4301,7 @@ export function gameTick(prev) {
           g.pendingStory = g.pendingStory || { icon: "construct", title: "First Job Done!", body: `"${site.label}" complete. Every empire starts with one.` };
           if (!g.tutorialDone) {
             g.tutorialDone = true;
-            addImportantNotice(g, "First job complete! Check Finance for loans, Empire to grow your company.", "green");
+            addImportantNotice(g, "First job complete! Retainage from it is released in about two weeks — see Finance. Empire is where you grow.", "green");
           }
         }
         // Free up crew and update job history
@@ -4442,9 +4501,21 @@ export function gameTick(prev) {
       const siteEquip = g.equipment.find(e => (site.assignedEquipmentIds || []).includes(e.id));
       const telematicsTier = siteEquip?.upgrades?.telematics || 0;
       const safetyTier = siteEquip?.upgrades?.safety || 0;
-      // Ground conditions are only discovered while you are actually in the ground.
+      // Ground conditions are only discovered while you are actually in the ground, AND only
+      // on jobs substantial enough to be digging into the unknown.
+      //
+      // Without the scale gate these events applied to every job with a "Survey" or "Site
+      // Prep" phase — including the tutorial Fence Installation. A three-crew starting company
+      // on a six-day job was hit by rock strata, water table and archaeological finds faster
+      // than it could make progress: measured across four seeds, three of them left that first
+      // job unfinished after 120 in-game days, still on its opening phase. That is the worst
+      // possible place for it, since it reads as the game being broken.
       const currentPhase = site.phases[site.currentPhaseIdx || 0] || "";
-      const inGround = GROUND_PHASES.has(currentPhase);
+      const _siteDefForGround = CONTRACT_DEFS.find(
+        (d) => d.id === (g.contracts.find((c) => c.id === site.contractId)?.defId));
+      const substantialJob = (_siteDefForGround?.risk || 1) >= 2
+        || (site.durationDays || 0) >= 9;
+      const inGround = GROUND_PHASES.has(currentPhase) && substantialJob;
       const eligible = CHAOS_EVENTS.filter((e) => {
         if (e.groundPhase && !inGround) return false;
         let prob = e.prob * chaosProbMult;
@@ -5369,6 +5440,16 @@ export function gameTick(prev) {
       g.bankruptcyDays = 0;
     }
 
+    // ── Housekeeping ──────────────────────────────────────────────────────────
+    // cleanStaleState enforces every cap this save has — log length, event history,
+    // per-site chaos history, per-worker job history, and the purging of finished, lost and
+    // rival-taken contracts. It used to run ONLY from migrateState, i.e. once when a save was
+    // opened and never again while the game was actually being played. Everything it bounds
+    // therefore grew without limit for the whole session: a simulated 300-day run carried 813
+    // contracts (732 of them long-dead "Taken" entries) in a 435KB save, and both the per-tick
+    // state clone and the save serialisation scaled with it.
+    cleanStaleState(g);
+
     // ── Empire goals ──────────────────────────────────────────────────────────
     checkEmpireGoals(g);
   }
@@ -5803,6 +5884,27 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // capturing a stale closure or re-registering the listener on every tick.
   useEffect(() => { gameRef.current = game; }, [game]);
 
+  // Haptics for the two outcomes the player is not necessarily looking at the screen for:
+  // a job landing, and a breakdown pulling a machine off site. Keyed on the pending-card
+  // fields so each fires exactly once, when the card appears.
+  const celebratedRef = useRef(null);
+  useEffect(() => {
+    const key = game?.pendingCelebration ? `${game.pendingCelebration.label}-${game.pendingCelebration.day}` : null;
+    if (key && key !== celebratedRef.current) {
+      celebratedRef.current = key;
+      triggerHaptic("success", game.hapticsEnabled !== false);
+    }
+  }, [game?.pendingCelebration, game?.hapticsEnabled]);
+
+  const breakdownRef = useRef(null);
+  useEffect(() => {
+    const key = game?.pendingBreakdown?.equipId || null;
+    if (key && key !== breakdownRef.current) {
+      breakdownRef.current = key;
+      triggerHaptic("error", game.hapticsEnabled !== false);
+    }
+  }, [game?.pendingBreakdown, game?.hapticsEnabled]);
+
   // Throttled, not debounced — same fix as FleetFlowScreen.js's saveTimerRef effect, ported
   // here for the same reason: update() previously called saveGame() directly and
   // unconditionally on every single player action (every tap, not just periodic ticks), on top
@@ -6162,7 +6264,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleStartSite = useCallback((contract, crewIds, equipIds) => {
     update((g) => {
       const result = submitBidCore(g, contract.id, crewIds, equipIds);
-      if (!result.ok) Alert.alert("Cannot Submit Bid", result.reason);
+      if (!result.ok) { Alert.alert("Cannot Submit Bid", result.reason); return; }
+      triggerHaptic(result.won ? "success" : "warning", g.hapticsEnabled !== false);
     });
   }, [update]);
 
@@ -6290,16 +6393,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       if ((g.creditScore || 600) < 680) { Alert.alert("Credit Too Low", "Need 680+ credit score to open a line of credit."); return; }
       if (g.creditLine) { Alert.alert("Already Active", "You already have an open line of credit."); return; }
-      g.creditLine = { limit: 75000, drawn: 0, apr: 14, opened: g.day };
+      g.creditLine = { limit: CREDIT_LINE_LIMIT, drawn: 0, apr: CREDIT_LINE_APR, opened: g.day };
       g.creditScore = Math.max(300, (g.creditScore || 600) - 3);
-      addLog(g, `💳 Business Line of Credit opened — up to ${money(75000)} at 14% APR on drawn amount.`);
+      addLog(g, `💳 Business Line of Credit opened — up to ${money(CREDIT_LINE_LIMIT)} at ${CREDIT_LINE_APR}% APR on drawn amount.`);
     });
   }, [update]);
 
   const handleDrawCreditLine = useCallback((amount) => {
     update((g) => {
       if (!g.creditLine) return;
-      const avail = (g.creditLine.limit || 75000) - (g.creditLine.drawn || 0);
+      const avail = (g.creditLine.limit || CREDIT_LINE_LIMIT) - (g.creditLine.drawn || 0);
       const amt = Math.min(Math.round(amount), avail);
       if (amt <= 0) { Alert.alert("No Credit Available", "Credit limit reached."); return; }
       g.creditLine.drawn = (g.creditLine.drawn || 0) + amt;
@@ -6996,7 +7099,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           )}
 
           <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24 }}>
-            You start with $75,000 · 1 truck · 3 crew members
+            {`You start with ${money(STARTING_CASH)} · 1 truck · 3 crew members`}
           </Text>
         </ScrollView>
       </SafeAreaView>
@@ -7279,38 +7382,44 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {/* Tutorial — step-by-step, auto-advances with game state */}
         {!game.tutorialDone && (() => {
           const hasActiveSite  = (game.activeSites||[]).length > 0;
-          const hasBid         = (game.contracts||[]).some(c => c.status === "Active" || c.status === "Awarded");
+          const hasLostABid    = (game.bidsLost || 0) > 0 && (game.bidsWon || 0) === 0;
           const needsMaterials = hasActiveSite && (game.activeSites||[]).some(s => {
             const con = (game.contracts||[]).find(c => c.id === s.contractId);
             const def = CONTRACT_DEFS.find(d => d.id === con?.defId);
             return def?.materials && Object.entries(def.materials).some(([id,qty]) => ((s.materialsFulfilled||{})[id]||0) < qty);
           });
 
-          // Determine current step
+          // Determine current step. Losing the opening bid is a normal outcome now, so it
+          // gets its own step rather than leaving the player staring at "submit your first
+          // bid" wondering why nothing happened.
           let step = 0;
-          if (hasActiveSite && !needsMaterials)  step = 3;
-          else if (hasActiveSite && needsMaterials) step = 2;
-          else if (hasBid)                        step = 1;
+          if (hasActiveSite && !needsMaterials)      step = 3;
+          else if (hasActiveSite && needsMaterials)  step = 2;
+          else if (hasLostABid)                      step = 1;
+
+          const dailyBurn = (game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)
+            + game.equipment.reduce((s,e)=>s+getEquipmentDailyCost(e),0)
+            + (OFFICES[game.officeIndex||0]?.dailyRent || 0);
 
           const steps = [
             {
-              num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              num: "1 of 4", title: "Win Your First Bid",
+              body: `You have ${money(game.cash)}, one truck, ${(game.crew||[]).length} crew and 20 lumber in stock — about ${Math.max(1, Math.round(game.cash / Math.max(1, dailyBurn)))} days of overhead.\n\nGo to Bids → open Fence Installation (your lumber already covers it). Pick your crew and truck, choose a bid strategy, then Submit Bid.\n\nYou are bidding against other contractors, so you can lose. The screen shows your odds before you commit — bid Aggressive to win more often for less money.`,
               cta: "Go to Bids →", action: () => setTab("Bids"),
             },
             {
-              num: "2 of 4", title: "Buy Materials & Mobilise Crew",
-              body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
+              num: "1 of 4", title: "Someone Outbid You",
+              body: `That is normal — you are competing for work, not claiming it.\n\nEvery bid costs a small estimating fee whether you win or lose, so bid where you are strong. Your odds go up with reputation, spare crew and machines, and an Estimator on staff.\n\nGo back to Bids and try again — a lower (Aggressive) bid wins far more often.`,
+              cta: "Back to Bids →", action: () => setTab("Bids"),
+            },
+            {
+              num: "2 of 4", title: "Get Materials On Site",
+              body: `You won the job — the client has paid a mobilisation draw.\n\nWork will not start until the materials are on site. Go to Sites, open the job and tap Buy Materials.\n\nYour overhead runs at ${money(dailyBurn)}/day while you sort it out, so do not leave a site waiting.`,
               cta: "Go to Sites →", action: () => setTab("Sites"),
             },
             {
-              num: "3 of 4", title: "Buy Missing Materials",
-              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+getEquipmentDailyCost(e),0))} equipment.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-            {
-              num: "4 of 4", title: "Watch Your Site Progress",
-              body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
+              num: "3 of 4", title: "You Get Paid As You Build",
+              body: `Your crew are working. Each phase you finish is certified and paid — you do not wait until the end.\n\nA small percentage of every payment is held back as retainage and released about two weeks after handover, so the last slice arrives late. Watch for it in Finance.\n\nKeep an eye on diesel, machine service hours and crew stamina — a job that runs out of any of them stops.`,
               cta: "Go to Sites →", action: () => setTab("Sites"),
             },
           ];
@@ -7328,7 +7437,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
                   <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
+                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Bids to win work, Sites to run it, Crew and Vehicles to keep it moving, Finance for money.", "green"); })}>
                   <Text style={[styles.btnText, subCol]}>Skip</Text>
                 </TouchableOpacity>
               </View>
@@ -8208,7 +8317,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                   {(site.depositPaid || 0) > 0 && !isOverdue && (
                     <Text style={[styles.sub, { color: T.cyan, fontSize: 10, marginBottom: 4 }]}>
-                      💰 25% deposit received: {money(site.depositPaid)}
+                      {`💰 Mobilisation draw received: ${money(site.depositPaid)}`}
                     </Text>
                   )}
                   {isOverdue && daysLate > 0 && (
@@ -8487,6 +8596,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             { key: "autoAssignEquipment",   label: "Auto-Assign Vehicles", icon: "🚛", color: T.cyan   },
             { key: "autoRepairEquipment",   label: "Auto-Repair Fleet",    icon: "🔧", color: T.orange },
             { key: "autoPurchaseMaterials", label: "Auto-Buy Materials",   icon: "📦", color: T.yellow },
+            { key: "hapticsEnabled",        label: "Vibration Feedback",   icon: "📳", color: T.purple },
           ].map((item, idx, arr) => (
             <View key={item.key} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: idx < arr.length - 1 ? 1 : 0, borderColor: T.border }}>
               <Text style={[styles.sub, col]}>{item.icon}  {item.label}</Text>
@@ -9576,7 +9686,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {!game.creditLine && (game.creditScore || 600) >= 680 && (
           <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.purple, borderWidth: 1, marginBottom: 8 }]}>
             <Text style={[styles.sectionTitle, { color: T.purple }]}>💳 Business Line of Credit</Text>
-            <Text style={[styles.sub, subCol]}>$75,000 revolving · 14% APR on drawn amount only · repay anytime</Text>
+            <Text style={[styles.sub, subCol]}>{`${money(CREDIT_LINE_LIMIT)} revolving · ${CREDIT_LINE_APR}% APR on drawn amount only · repay anytime`}</Text>
             <TouchableOpacity style={[styles.btn, { marginTop: 8, backgroundColor: T.purple, borderColor: T.purple }]} onPress={handleOpenCreditLine}>
               <Text style={[styles.btnText, { color: "#fff" }]}>Open Line of Credit</Text>
             </TouchableOpacity>
@@ -9591,7 +9701,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
               <Text style={[styles.sub, subCol]}>Available</Text>
-              <Text style={[styles.label, { color: T.green }]}>{money((game.creditLine.limit || 75000) - (game.creditLine.drawn || 0))}</Text>
+              <Text style={[styles.label, { color: T.green }]}>{money((game.creditLine.limit || CREDIT_LINE_LIMIT) - (game.creditLine.drawn || 0))}</Text>
             </View>
             <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }]}>
               {(game.creditLine.drawn || 0) > 0 ? `Interest: ~${money(Math.round((game.creditLine.drawn || 0) * 0.14 / 365))}/day` : "No interest until you draw funds."}
