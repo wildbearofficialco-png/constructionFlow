@@ -119,6 +119,11 @@ const CLIENTS = [
 // thing that removed labour — a construction company's largest real cost — as a source of
 // pressure. Every wage number in this file now derives from this one table so the two
 // scales cannot silently diverge again. See __tests__/constructionFlowWageScale.test.js.
+// Opening bankroll. Roughly one month of a starting company's standing overhead (three crew,
+// one pickup, shed rent), so the first contract genuinely matters. See the day-30 band in
+// __tests__/constructionFlowEconomyCurve.test.js.
+export const STARTING_CASH = 24000;
+
 export const WAGE_SCALE = {
   VERSION: 2,     // bumped when the scale itself changes; saves carry g.wageScaleVersion
   MIN: 120,       // hard floor a wage can be cut to (handleLowerWage)
@@ -216,6 +221,102 @@ export function getBidPrepCost(contract) {
   return clamp(Math.round((contract?.value || 0) * 0.004), 60, 4000);
 }
 
+// ─── Diesel ─────────────────────────────────────────────────────────────────────
+// Fuel used to be consumed and refilled without anyone ever paying for it: machines burned
+// their tanks down while working, idle machines got a free 30% top-up overnight, and diesel
+// never appeared as a cost. Worse, it was a silent job-killer — see refuelFleet below.
+// Diesel is now bought at a fluctuating pump price and billed daily, which is what makes
+// running a big fleet on a long job genuinely expensive.
+const DIESEL_BASE_PRICE = 4.20;          // per unit; equipment burns ~12 units/day working
+const DIESEL_MIN_PRICE = 2.60;
+const DIESEL_MAX_PRICE = 8.40;
+
+// Top every machine's tank up to capacity and bill for the fuel actually added. When cash is
+// short the fleet gets a partial fill rather than nothing, so a cash squeeze slows the company
+// down instead of bricking it. Returns the total spend so the caller can log it.
+function refuelFleet(g) {
+  const price = g.dieselPrice || DIESEL_BASE_PRICE;
+  let unitsBought = 0;
+  let spend = 0;
+  for (const e of (g.equipment || [])) {
+    if (!e.fuelCap) continue;                     // electric/static plant has no tank
+    const needed = e.fuelCap - (e.fuel || 0);
+    if (needed <= 0.01) continue;
+    const affordable = Math.max(0, (g.cash - spend)) / price;
+    const units = Math.min(needed, affordable);
+    if (units <= 0.01) continue;
+    e.fuel = (e.fuel || 0) + units;
+    unitsBought += units;
+    spend += units * price;
+  }
+  spend = Math.round(spend);
+  if (spend > 0) {
+    g.cash -= spend;
+    g.expenses += spend;
+    g.weeklyStats.expenses += spend;
+    g.weeklyStats.fuel = (g.weeklyStats.fuel || 0) + spend;
+  }
+  return { spend, units: unitsBought };
+}
+
+// Re-staff and re-equip sites that have lost people or machines mid-job.
+//
+// A site only progresses while it has at least one crew member AND one usable machine
+// assigned. Several systems remove them mid-job and none of them put anything back: a machine
+// that runs dry is pulled off, a machine dropping below 20% condition goes to maintenance, and
+// crew who quit, burn out or retire are stripped from assignedCrewIds. Once the last one went,
+// the site froze at whatever phase it was on — permanently — while the remaining crew stayed
+// "Active" on it, drawing full wages on a job that could never finish or pay.
+//
+// This was not a rare edge case: a 200-day simulated run reached 99% "has an active site"
+// utilisation and completed ZERO jobs, because its only site had frozen around day 15 and
+// never recovered. Sending idle resources back out each morning is what a foreman does.
+function remobiliseSites(g) {
+  for (const site of (g.activeSites || [])) {
+    if (site.status !== "Active") continue;
+
+    const equipShort = (site.equipMin || 1) - (site.assignedEquipmentIds || []).length;
+    if (equipShort > 0) {
+      const available = (g.equipment || []).filter(
+        (e) => e.status === "Idle" && !e.assignedSiteId && (e.fuel || 0) > 0 && e.condition > 20
+      );
+      for (const e of available.slice(0, equipShort)) {
+        e.status = "Active";
+        e.assignedSiteId = site.contractId;
+        site.assignedEquipmentIds = [...(site.assignedEquipmentIds || []), e.id];
+        addLog(g, `\u{1F69C} ${e.name} sent back out to ${site.label}.`);
+      }
+    }
+
+    const crewShort = (site.crewMin || 1) - (site.assignedCrewIds || []).length;
+    if (crewShort > 0) {
+      // Only crew with something left in the tank — putting an exhausted worker straight back
+      // on site is how the burnout spiral starts.
+      const available = (g.crew || []).filter(
+        (w) => w.status === "Idle" && !w.assignedSiteId && (w.stamina ?? 50) > 25 && w.onShift !== false
+      );
+      for (const w of available.slice(0, crewShort)) {
+        w.status = "Active";
+        w.assignedSiteId = site.contractId;
+        site.assignedCrewIds = [...(site.assignedCrewIds || []), w.id];
+        addLog(g, `\u{1F477} ${w.name} reassigned to ${site.label} to keep it moving.`);
+      }
+    }
+
+    // Nothing left to send. Say so plainly rather than letting the job rot in silence.
+    if (!(site.assignedCrewIds || []).length || !(site.assignedEquipmentIds || []).length) {
+      site._stalledDays = (site._stalledDays || 0) + 1;
+      if (site._stalledDays === 2 || site._stalledDays % 7 === 0) {
+        const missing = !(site.assignedCrewIds || []).length ? "crew" : "usable equipment";
+        addLog(g, `\u26A0\uFE0F ${site.label} has no ${missing} and is not progressing — assign from Sites, or hire in Crew.`);
+        addImportantNotice(g, `${site.label} is stalled with no ${missing}. It cannot finish until you staff it.`, "red");
+      }
+    } else {
+      site._stalledDays = 0;
+    }
+  }
+}
+
 // ─── Equipment Acquisition: Rent, Finance, or Buy ───────────────────────────────
 // Owning outright used to be the only way to put a machine on a job, which made the entire
 // mid-game a cash-savings exercise: a $290k tower crane simply could not appear until you had
@@ -245,11 +346,25 @@ export function getRentalDeliveryFee(item) {
   return Math.max(150, Math.round((item?.price || 0) * RENTAL_DELIVERY_RATE));
 }
 
-// What a machine actually costs the company each day, whether owned or rented. One helper so
-// the payroll rollup, the runway projection and the UI can never disagree about the number.
+// A parked machine costs storage, insurance and depreciation — not fuel, wear and operator
+// time. Charging the full operating rate on idle plant made owning equipment a pure liability
+// between jobs: since a contract cannot be bid at all without its crewMin AND equipMin sitting
+// idle, the game forced players to hold capacity and then billed them full rate for holding it.
+// Measured across every operating policy, that was the single largest drain on the curve.
+export const IDLE_EQUIPMENT_COST_FACTOR = 0.35;
+
+// What a machine actually costs the company each day. One helper so the payroll rollup, the
+// runway projection and the UI can never disagree about the number.
+//
+// Rentals are charged in full regardless: you pay the hire company for every day you keep the
+// machine, working or not, which is exactly the pressure that makes renting a short-job tool
+// and owning the long-term play.
 export function getEquipmentDailyCost(e) {
   if (!e) return 0;
-  return e.isRental ? (e.rentalDailyRate || 0) : (e.dailyCost || 0);
+  if (e.isRental) return e.rentalDailyRate || 0;
+  const base = e.dailyCost || 0;
+  const working = e.status === "Active";
+  return Math.round(working ? base : base * IDLE_EQUIPMENT_COST_FACTOR);
 }
 
 export function getFinanceTerms(item, discountedPrice) {
@@ -590,7 +705,47 @@ const CONTRACT_DEFS = [
     repReward: 6, creditReward: 5,
     desc: "Full house build from slab to handover. Good reputation builder.",
     unlocksContractId: "apt_block" },
+  { id: "driveway",     label: "Driveway & Apron",         category: "Residential",
+    minTier: 1, crewMin: 1, equipMin: 1,
+    baseValue: 12500, durationDays: 4, phases: ["Site Prep","Base Layer","Concrete Pour"],
+    materials: { concrete: 8 }, penaltyPerDay: 70, creditReq: 500, risk: 1,
+    repReward: 2, creditReward: 2,
+    desc: "Concrete driveway and apron. Quick turnaround, steady cash." },
+  { id: "retaining_wall", label: "Retaining Wall",          category: "Residential",
+    minTier: 1, crewMin: 2, equipMin: 1,
+    baseValue: 24000, durationDays: 7, phases: ["Survey","Excavation","Footings","Wall Build"],
+    materials: { concrete: 14, steel: 2 }, penaltyPerDay: 110, creditReq: 500, risk: 1,
+    repReward: 3, creditReward: 2,
+    desc: "Engineered block wall on a sloping block. Earthwork practice." },
+  { id: "shed_slab",    label: "Workshop Slab & Shed",      category: "Residential",
+    minTier: 1, crewMin: 2, equipMin: 1,
+    baseValue: 16500, durationDays: 5, phases: ["Site Prep","Foundation","Erection"],
+    materials: { concrete: 10, steel: 3 }, penaltyPerDay: 90, creditReq: 500, risk: 1,
+    repReward: 2, creditReward: 2,
+    desc: "Slab and kit shed for a rural block. Reliable filler work." },
+  { id: "shopfit",      label: "Small Shop Fitout",         category: "Commercial",
+    minTier: 1, crewMin: 2, equipMin: 1,
+    baseValue: 34000, durationDays: 8, phases: ["Strip Out","Framing","Services","Finishes"],
+    materials: { lumber: 30, electrical: 14, plumbing: 6 },
+    penaltyPerDay: 150, creditReq: 500, risk: 1,
+    repReward: 3, creditReward: 3,
+    desc: "Fitout for a local café or shop. First step into commercial work.",
+    unlocksContractId: "comm_fitout" },
   // ── Infrastructure — reputation + community standing ─────────────────────────
+  { id: "footpath",     label: "Footpath & Kerb Renewal",   category: "Infrastructure",
+    minTier: 1, crewMin: 2, equipMin: 1,
+    baseValue: 27000, durationDays: 7, phases: ["Survey","Demo","Base Layer","Concrete Pour"],
+    materials: { concrete: 16, asphalt: 4 }, penaltyPerDay: 130, creditReq: 500, risk: 1,
+    repReward: 3, creditReward: 3,
+    desc: "Council footpath and kerb renewal. Visible community work." },
+  { id: "drainage",     label: "Stormwater Drainage",       category: "Infrastructure",
+    minTier: 1, crewMin: 3, equipMin: 1,
+    baseValue: 52000, durationDays: 11, phases: ["Survey","Excavation","Pipe Laying","Backfill","Inspection"],
+    materials: { concrete: 20, plumbing: 18 }, penaltyPerDay: 240, creditReq: 500, risk: 2,
+    repReward: 4, creditReward: 4,
+    desc: "Stormwater upgrade for a low-lying street. Trenching and utilities work.",
+    unlocksContractId: "city_road" },
+
   { id: "road_patch",   label: "Road Patch & Seal",        category: "Infrastructure",
     minTier: 1, crewMin: 3, equipMin: 1,
     baseValue: 45000, durationDays: 9, phases: ["Survey","Excavation","Base Layer","Paving","Inspection"],
@@ -810,7 +965,7 @@ const CONTRACT_DEFS = [
 
 // ─── Material Catalog ───────────────────────────────────────────────────────────
 
-const MATERIAL_DEFS = [
+export const MATERIAL_DEFS = [
   { id: "concrete",   label: "Concrete",   unit: "m³",   basePrice: 120, volatility: 0.14, icon: "layers" },
   { id: "lumber",     label: "Lumber",     unit: "sheets",basePrice: 85,  volatility: 0.18, icon: "leaf" },
   { id: "steel",      label: "Steel",      unit: "tons",  basePrice: 950, volatility: 0.20, icon: "build" },
@@ -2278,7 +2433,12 @@ const LOAN_PRODUCTS = [
 
 // ─── Job Postings ────────────────────────────────────────────────────────────────
 
-const JOB_POSTINGS = [
+// Organic applicant flow — see the walk-in block in gameTick. Capped so the Crew screen never
+// fills with stale candidates, and so paid ads keep their value.
+const WALKIN_BASE_CHANCE = 0.06;
+const WALKIN_APPLICANT_CAP = 5;
+
+export const JOB_POSTINGS = [
   { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  wageMin: 165, wageMax: 240, desc: "Finds a reliable labourer or tradesperson." },
   { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, wageMin: 220, wageMax: 315, desc: "Attracts experienced tradespeople." },
   { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, wageMin: 285, wageMax: 420, desc: "Top-tier tradespeople. Foreman-quality." },
@@ -3398,13 +3558,13 @@ export function freshState() {
   // Installation job, whose 20-lumber requirement matches the starting inventory exactly.
   // Leaving this to random draw meant the referenced contract was often missing entirely.
   const baseContracts = [
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }, "fence"),
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }, "fence"),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
   ];
 
   return {
-    cash: 75000, day: 1, gameMinutes: 480,
+    cash: STARTING_CASH, day: 1, gameMinutes: 480,
     reputation: 0, creditScore: 600,
     companyName: "New Build Co.",
     theme: "dark",
@@ -3412,7 +3572,7 @@ export function freshState() {
     businessFrozen: false,
     taxDue: 0, taxOverdueDays: 0,
     revenue: 0, expenses: 0,
-    weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
+    weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0, fuel: 0 },
     savings: 0,
     creditLine: null,
 
@@ -3466,9 +3626,10 @@ export function freshState() {
     bidsWon: 0, bidsLost: 0,
     pendingRetainage: [],
     equipmentLoans: [],
+    dieselPrice: DIESEL_BASE_PRICE,
     saveSchemaVersion: SAVE_SCHEMA_VERSION,
 
-    logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and two crew. Start with the Fence job in Bids."],
+    logs: [`🏗️ Welcome to ConstructionFlow. You have ${money(STARTING_CASH)}, one truck, and three crew — about a month of overhead. Win the Fence job in Bids before it runs out.`],
     opsFeed: [],
     eventLog: [],
     _milestones: {},
@@ -3575,6 +3736,7 @@ export function migrateState(saved) {
   if (g.bidsLost === undefined)        g.bidsLost = 0;
   if (!Array.isArray(g.pendingRetainage)) g.pendingRetainage = [];
   if (!Array.isArray(g.equipmentLoans))   g.equipmentLoans = [];
+  if (!Number.isFinite(g.dieselPrice))   g.dieselPrice = DIESEL_BASE_PRICE;
   // Sites started before progress billing existed only recorded a 25% deposit. Seed
   // billedToDate from it so the completion settlement pays the correct balance instead of
   // paying the full contract value a second time.
@@ -4045,7 +4207,12 @@ export function gameTick(prev) {
         const siteDef = CONTRACT_DEFS.find(d => d.id === (g.contracts.find(c => c.id === site.contractId)?.defId));
         const repGained = siteDef?.repReward || rand(3, 8);
         const creditGained = siteDef?.creditReward || rand(2, 5);
-        g.reputation = Math.min(100, (g.reputation || 0) + repGained);
+        // Diminishing returns near the top. Flat gains had companies at reputation 95-100
+        // by day 90 — the entire progression ceiling reached in a third of a run, after
+        // which the biggest contracts unlocked all at once and there was nothing left to
+        // climb. The last stretch of a reputation should be the hardest to earn.
+        const _repScale = 1 - Math.pow(Math.min(1, (g.reputation || 0) / 100), 1.6) * 0.82;
+        g.reputation = Math.min(100, (g.reputation || 0) + repGained * _repScale);
         g.creditScore = Math.min(850, (g.creditScore || 600) + creditGained);
         // Quality bonus (rush mode degrades quality)
         const avgQuality = assignedCrew.reduce((s, w) => s + (w.trait?.quality || 1.0), 0) / Math.max(1, assignedCrew.length);
@@ -4428,11 +4595,20 @@ export function gameTick(prev) {
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
 
-    // Crew stamina recovery
+    // ── Crew rest ─────────────────────────────────────────────────────────────
+    // Crew on site used to recover no stamina at all — only idle workers rested. Since a
+    // working day drains ~6 stamina and nothing replaced it, everyone assigned to a job
+    // slid to burnout in about a fortnight, quit, and left the site short-handed. On the
+    // long contracts that are supposed to be the mid-game that produced a one-way ratchet:
+    // simulated companies peaked around day 90 and shrank from there as crew bled out
+    // faster than they could be replaced. Crew go home at the end of a shift, so they
+    // recover overnight too — just less than someone who had the day off.
     for (const w of g.crew) {
       if (w.status === "Idle") {
-        w.stamina = Math.min(100, w.stamina + rand(15, 25));
-        w.mood = Math.min(100, w.mood + rand(2, 6));
+        w.stamina = Math.min(100, (w.stamina ?? 50) + rand(15, 25));
+        w.mood = Math.min(100, (w.mood ?? 50) + rand(2, 6));
+      } else {
+        w.stamina = Math.min(100, (w.stamina ?? 50) + rand(4, 8));
       }
     }
 
@@ -4448,9 +4624,22 @@ export function gameTick(prev) {
       if (sc.status === "Idle" && sc.daysLeft > 0) sc.status = "Active";
     }
 
-    // Equipment fuel refill (simulate overnight refuel)
-    for (const e of g.equipment) {
-      if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.3);
+    // ── Diesel: refuel the fleet and pay for it ───────────────────────────────
+    const _fuelBill = refuelFleet(g);
+    if (_fuelBill.spend > 0 && g.day % 7 === 0) {
+      addLog(g, `⛽ Diesel this week: ${money(g.weeklyStats.fuel || _fuelBill.spend)} at ${(g.dieselPrice || DIESEL_BASE_PRICE).toFixed(2)}/unit.`);
+    }
+    // People and machines that came off a job yesterday go back out this morning.
+    remobiliseSites(g);
+
+    // Pump price drifts, and the fuel_spike market event pushes it hard.
+    {
+      const drift = (Math.random() - 0.5) * 0.28;
+      const spikeMult = g.activeMarketEvent === "fuel_spike" ? 1.035 : 1.0;
+      g.dieselPrice = clamp(
+        Math.round(((g.dieselPrice || DIESEL_BASE_PRICE) + drift) * spikeMult * 100) / 100,
+        DIESEL_MIN_PRICE, DIESEL_MAX_PRICE
+      );
     }
 
     // Expire stale bids (preserve bids that have been accepted/active)
@@ -4679,7 +4868,7 @@ export function gameTick(prev) {
       const _wc = g.weeklyChallenge;
       const _needsNew = !_wc || ((g.day - (_wc.startDay||0)) >= 7 && (_wc.progress < 0 || _wc.claimedDay !== null));
       if (_needsNew) generateWeeklyChallenge(g);
-      g.weeklyStats = { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 };
+      g.weeklyStats = { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0, fuel: 0 };
     }
 
     // ── Retainage release ─────────────────────────────────────────────────────
@@ -4980,6 +5169,26 @@ export function gameTick(prev) {
         g.unlockedCities.push(t.cityId);
         const cityDef = CITIES.find(c=>c.id===t.cityId);
         addLog(g, `🏙️ ${cityDef?.name||t.cityId} is now available for expansion! Your company growth qualifies.`);
+      }
+    }
+
+    // ── Walk-in applicants ────────────────────────────────────────────────────
+    // Paid job ads used to be the ONLY source of labour: g.applicants started empty and was
+    // filled exclusively by handlePostJob. Since crew quit, burn out and retire, a player who
+    // lost people and did not know to buy an ad had no way back — the company simply stalled
+    // with too few crew to meet any contract's minimum. A reputable contractor gets people
+    // turning up looking for work, so there is now a small organic trickle. Ads still matter:
+    // they are faster and buy access to better tradespeople than a walk-in.
+    if ((g.applicants || []).length < WALKIN_APPLICANT_CAP) {
+      const repFactor = Math.min(1, (g.reputation || 0) / 60);
+      const shortHanded = g.crew.length < 3 ? 0.10 : 0;   // word gets round when you need people
+      if (Math.random() < WALKIN_BASE_CHANCE + repFactor * 0.14 + shortHanded) {
+        if (!g.applicants) g.applicants = [];
+        g.applicants.push(createApplicant({
+          // Walk-ins are ordinary hands; the Premium ad is still how you find a foreman.
+          skillMin: 70, skillMax: 95 + Math.round(repFactor * 15),
+        }));
+        addLog(g, `\uD83D\uDC77 A tradesperson stopped by looking for work — see Crew.`);
       }
     }
 
@@ -5382,6 +5591,86 @@ export function submitBidCore(g, contractId, crewIds, equipIds) {
   return { ok: true, won: true, winChance, prepCost, yourBid, site: _newSite };
 }
 
+// ─── Hiring and purchasing cores ────────────────────────────────────────────────
+// Extracted from the screen for the same reason submitBidCore was: these move real money,
+// and the balance harness (__tests__/constructionFlowEconomyCurve.test.js) has to drive the
+// SAME code the player does. A harness that re-implements "what hiring costs" measures its
+// own arithmetic instead of the game's, and would happily certify an economy the game does
+// not actually have. Both mutate `g` in place and return a result object; the caller owns
+// showing the alert.
+export function hireCrewCore(g, applicant) {
+  if (!applicant) return { ok: false, reason: "No applicant selected." };
+  if (g.crew.length >= getTotalCrewCap(g)) {
+    return { ok: false, reason: "Upgrade your office or open a Regional Office in a new city." };
+  }
+  const bonus = applicant.signingBonus || 0;
+  if (g.cash < bonus) return { ok: false, reason: `Signing bonus requires ${money(bonus)}.` };
+  g.cash -= bonus;
+  g.expenses += bonus;
+  g.applicants = (g.applicants || []).filter((a) => a.id !== applicant.id);
+  const worker = {
+    ...createWorker(applicant.role),
+    id: uid(), name: applicant.name, role: applicant.role,
+    skill: applicant.skill, wagePerDay: applicant.desiredWage,
+    mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
+    hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
+    status: "Idle",
+  };
+  delete worker.siteId;
+  delete worker.currentSiteId;
+  delete worker.assignedSiteId;
+  g.crew.push(worker);
+  trackHire(g);
+  addLog(g, `👷 ${applicant.name} hired as ${applicant.role}.`);
+  repairCrewAssignments(g);
+  return { ok: true, worker };
+}
+
+export function payTaxCore(g) {
+  if ((g.taxDue || 0) <= 0) return { ok: false, reason: "No tax owing." };
+  if (g.cash < g.taxDue) return { ok: false, reason: `Tax bill is ${money(g.taxDue)}.` };
+  const paid = g.taxDue;
+  g.cash -= paid;
+  g.expenses += paid;
+  addLog(g, `\u2705 Tax bill of ${money(paid)} paid.`);
+  g.taxDue = 0;
+  g.taxOverdueDays = 0;
+  g.businessFrozen = false;
+  return { ok: true, paid };
+}
+
+export function buyEquipmentCore(g, item, isUsed = false) {
+  if (!item) return { ok: false, reason: "No equipment selected." };
+  const discount = (g._equipDiscount || 0);
+  const basePrice = Math.round(item.price * (1 - discount));
+  const effectivePrice = isUsed ? Math.round(basePrice * 0.58) : basePrice;
+  if (g.cash < effectivePrice) return { ok: false, reason: `Need ${money(effectivePrice)}.` };
+  const office = OFFICES[g.officeIndex];
+  if (g.equipment.length >= office.equipCap + getEquipCapBonus(g)) {
+    return { ok: false, reason: "Upgrade your office to add more vehicles to your fleet." };
+  }
+  g.cash -= effectivePrice;
+  g.expenses += effectivePrice;
+  const equip = createEquipment(item);
+  if (isUsed) {
+    equip.condition = rand(40, 68);
+    equip.reliability = Math.round(item.reliability * 0.78);
+    equip.isUsed = true;
+    // A used machine has a working life behind it: it must not read as zero-hours, or
+    // buying used would be a way to acquire a pristine service history for 58% of list.
+    equip.engineHours = Math.round((100 - equip.condition) * 30);
+    equip.hoursAtLastService = Math.max(0, equip.engineHours - rand(0, SERVICE_INTERVAL_HOURS - 1));
+  }
+  g.equipment.push(equip);
+  if (discount > 0) {
+    delete g._equipDiscount;
+    delete g._equipDiscountExpiry;
+  }
+  addLog(g, `🚜 ${isUsed ? "Used " : ""}${item.name} purchased for ${money(effectivePrice)}${discount > 0 ? ` (${Math.round(discount * 100)}% discount)` : ""}.`);
+  trackEquipBuy(g);
+  return { ok: true, equipment: equip, price: effectivePrice };
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function ConstructionFlowScreen({ onBackToHub }) {
@@ -5606,30 +5895,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleBuyEquipment = useCallback((item, isUsed = false) => {
     update((g) => {
-      const discount = (g._equipDiscount || 0);
-      const basePrice = Math.round(item.price * (1 - discount));
-      const effectivePrice = isUsed ? Math.round(basePrice * 0.58) : basePrice;
-      if (g.cash < effectivePrice) { Alert.alert("Insufficient Funds", `Need ${money(effectivePrice)}.`); return; }
-      const office = OFFICES[g.officeIndex];
-      const totalEquipCap = office.equipCap + getEquipCapBonus(g);
-      if (g.equipment.length >= totalEquipCap) { Alert.alert("Vehicles Cap", `Upgrade your office to add more vehicles to your fleet.`); return; }
-      g.cash -= effectivePrice;
-      g.expenses += effectivePrice;
-      const equip = createEquipment(item);
-      if (isUsed) {
-        equip.condition = rand(40, 68);
-        equip.reliability = Math.round(item.reliability * 0.78);
-        equip.isUsed = true;
-      }
-      g.equipment.push(equip);
-      if (discount > 0) {
-        delete g._equipDiscount;
-        delete g._equipDiscountExpiry;
-        addLog(g, `🚜 ${isUsed ? "Used " : ""}${item.name} purchased for ${money(effectivePrice)}${discount > 0 ? ` (${Math.round(discount * 100)}% discount)` : ""}.`);
-      } else {
-        addLog(g, `🚜 ${isUsed ? "Used " : ""}${item.name} purchased for ${money(effectivePrice)}.`);
-      }
-      trackEquipBuy(g);
+      const result = buyEquipmentCore(g, item, isUsed);
+      if (!result.ok) Alert.alert("Cannot Purchase", result.reason);
     });
   }, [update]);
 
@@ -5756,28 +6023,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleHireCrew = useCallback((applicant) => {
     update((g) => {
-      const totalCrewCap = getTotalCrewCap(g);
-      if (g.crew.length >= totalCrewCap) { Alert.alert("Crew Cap", "Upgrade your office or open a Regional Office in a new city."); return; }
-      const bonus = applicant.signingBonus || 0;
-      if (g.cash < bonus) { Alert.alert("Insufficient Funds", `Signing bonus requires ${money(bonus)}.`); return; }
-      g.cash -= bonus;
-      g.expenses += bonus;
-      g.applicants = g.applicants.filter((a) => a.id !== applicant.id);
-      const _newWorker = {
-        ...createWorker(applicant.role),
-        id: uid(), name: applicant.name, role: applicant.role,
-        skill: applicant.skill, wagePerDay: applicant.desiredWage,
-        mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
-        hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
-        status: "Idle",
-      };
-      delete _newWorker.siteId;
-      delete _newWorker.currentSiteId;
-      delete _newWorker.assignedSiteId;
-      g.crew.push(_newWorker);
-      trackHire(g);
-      addLog(g, `👷 ${applicant.name} hired as ${applicant.role}.`);
-      repairCrewAssignments(g);
+      const result = hireCrewCore(g, applicant);
+      if (!result.ok) Alert.alert("Cannot Hire", result.reason);
     });
   }, [update]);
 
@@ -5975,14 +6222,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handlePayTax = useCallback(() => {
     update((g) => {
-      if ((g.taxDue || 0) <= 0) return;
-      if (g.cash < g.taxDue) { Alert.alert("Insufficient Funds", `Tax bill is ${money(g.taxDue)}.`); return; }
-      g.cash -= g.taxDue;
-      g.expenses += g.taxDue;
-      addLog(g, `✅ Tax bill of ${money(g.taxDue)} paid.`);
-      g.taxDue = 0;
-      g.taxOverdueDays = 0;
-      g.businessFrozen = false;
+      const result = payTaxCore(g);
+      if (!result.ok && (g.taxDue || 0) > 0) Alert.alert("Insufficient Funds", result.reason);
     });
   }, [update]);
 
