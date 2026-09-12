@@ -21,6 +21,12 @@ import { tickPerformanceReviews, tickTeamMorale } from "../../systems/staffPerfo
 import { tickContractRFPs } from "../../systems/contractBidding.js";
 import { initAnalytics, tickAnalytics } from "../../systems/analyticsEngine.js";
 import { initTerritories, tickTerritories } from "../../systems/territorySystem.js";
+import {
+  initEquipmentProfile,
+  tickEquipmentWear,
+  scheduleMaintenance,
+  performReplacement,
+} from "../../systems/equipmentWear.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -3749,18 +3755,13 @@ export function gameTick(prev) {
       }
     }
 
-    // Equipment wear
+    // Fuel consumption stays site-specific. Condition wear/breakdowns are handled centrally
+    // by tickEquipmentWear() below so there is only one source of truth for maintenance.
     for (const id of site.assignedEquipmentIds) {
       const e = g.equipment.find((eq) => eq.id === id);
       if (!e) continue;
-      e.condition = Math.max(0, e.condition - (0.1 * MINS_PER_TICK / 60));
-      e.fuel = Math.max(0, e.fuel - (0.5 * MINS_PER_TICK / 60));
-      if (e.condition < 20 && e.status === "Active") {
-        e.status = "Maintenance";
-        e.assignedSiteId = null;
-        site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
-        addLog(g, `🔧 ${e.name} pulled from ${site.label} for emergency maintenance.`);
-      } else if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
+      e.fuel = Math.max(0, (e.fuel ?? e.fuelCap ?? 0) - (0.5 * MINS_PER_TICK / 60));
+      if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
         e.status = "Idle";
         e.assignedSiteId = null;
         site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
@@ -3993,22 +3994,9 @@ export function gameTick(prev) {
       g.loans = g.loans.filter((l) => l.weeksLeft > 0);
     }
 
-    // Equipment maintenance costs: condition < 50% → $10/day per equipment
-    const maintenanceCost = (g.equipment||[]).reduce((s,e)=>{
-      return s + (e.condition < 50 ? 10 : 0);
-    }, 0);
-    if (maintenanceCost > 0) {
-      g.cash -= maintenanceCost;
-      g.expenses += maintenanceCost;
-      g.weeklyStats.expenses += maintenanceCost;
-    }
-
-    // Equipment condition degrades 0.05% per tick (independent of site assignment)
-    for (const e of (g.equipment||[])) {
-      if (e.status !== "Active") {
-        e.condition = Math.max(0, e.condition - 0.05);
-      }
-    }
+    // Equipment wear/maintenance is centralized in equipmentWear.js. This replaces the old
+    // flat low-condition charge and idle-condition decay, avoiding double wear and double cost.
+    tickEquipmentWear(g);
 
     // Weekly tax (every 7 days)
     if (g.day % 7 === 0) {
@@ -5684,13 +5672,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleScheduleMaintenance = useCallback((equipId) => {
     update((g) => {
-      const eq = (g.equipment||[]).find(e => e.id === equipId);
-      if (!eq || eq.status === "Maintenance") return;
-      (g.activeSites||[]).forEach(s => { s.assignedEquipmentIds = (s.assignedEquipmentIds||[]).filter(id => id !== equipId); });
-      eq.status = "Maintenance";
-      eq.assignedSiteId = null;
+      const eq = (g.equipment || []).find(e => e.id === equipId);
+      if (!eq) return;
+      if (eq.status === "Active" || eq.assignedSiteId) {
+        Alert.alert("In Use", "Unassign this vehicle from its site before scheduling maintenance.");
+        return;
+      }
+      const ok = scheduleMaintenance(g, equipId);
+      if (!ok) {
+        const estimated = Math.max(25, Math.round((eq.dailyCost || eq.maintenance || 50) * 0.35));
+        Alert.alert("Maintenance Unavailable", `Unable to schedule maintenance right now. Keep at least ${money(estimated)} available and make sure the vehicle is idle.`);
+        return;
+      }
       repairCrewAssignments(g);
-      addLog(g, `🔧 ${eq.name} pulled for scheduled maintenance.`);
     });
   }, [update]);
 
