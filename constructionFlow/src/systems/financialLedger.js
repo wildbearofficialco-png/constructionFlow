@@ -30,6 +30,15 @@ export const REVENUE_CATEGORIES = {
   misc:        { label: "Other Income", icon: "cash",            color: "#94a3b8" },
 };
 
+function refreshLedgerSnapshot(game) {
+  game._ledgerSnapshot = {
+    cash: Number(game.cash) || 0,
+    revenue: Number(game.revenue) || 0,
+    expenses: Number(game.expenses) || 0,
+    day: Number(game.day) || 0,
+  };
+}
+
 // Call this AFTER the game has already applied the cash change. It only records
 // what happened; it never changes cash, revenue, expenses or weeklyStats.
 export function recordTransaction(game, category, amount, description, meta = null) {
@@ -46,7 +55,51 @@ export function recordTransaction(game, category, amount, description, meta = nu
   };
   game.ledger.unshift(entry);
   if (game.ledger.length > 300) game.ledger.length = 300;
+  refreshLedgerSnapshot(game);
   return entry;
+}
+
+// Safety-net reconciliation for cash flows that have not yet been individually
+// instrumented. Explicit recordTransaction() calls refresh the snapshot, so already-
+// logged maintenance/repair/etc. are not duplicated here.
+export function reconcileUnloggedCashMovement(game) {
+  const snap = game._ledgerSnapshot;
+  if (!snap) {
+    refreshLedgerSnapshot(game);
+    return [];
+  }
+
+  const currentCash = Number(game.cash) || 0;
+  const currentRevenue = Number(game.revenue) || 0;
+  const currentExpenses = Number(game.expenses) || 0;
+  const deltaCash = currentCash - (Number(snap.cash) || 0);
+  const deltaRevenue = currentRevenue - (Number(snap.revenue) || 0);
+  const deltaExpenses = currentExpenses - (Number(snap.expenses) || 0);
+  const created = [];
+
+  if (deltaRevenue > 0) {
+    created.push(recordTransaction(game, "misc", deltaRevenue, "Uncategorized income", { source: "reconciliation" }));
+  }
+  if (deltaExpenses > 0) {
+    created.push(recordTransaction(game, "misc", -deltaExpenses, "Uncategorized operating expense", { source: "reconciliation" }));
+  }
+
+  // Cash movement not explained by revenue/expense totals is usually financing,
+  // savings transfer, asset movement, or another balance-sheet transaction.
+  const explainedCash = deltaRevenue - deltaExpenses;
+  const residual = deltaCash - explainedCash;
+  if (Math.abs(residual) >= 1) {
+    created.push(recordTransaction(
+      game,
+      "financing",
+      residual,
+      residual > 0 ? "Financing or balance transfer in" : "Financing or balance transfer out",
+      { source: "reconciliation" }
+    ));
+  }
+
+  refreshLedgerSnapshot(game);
+  return created.filter(Boolean);
 }
 
 export function getFinancialSummary(game, days = 7) {
