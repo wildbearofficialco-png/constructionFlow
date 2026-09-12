@@ -3,6 +3,7 @@
 // Operates on game.vehicles (or game.equipment in other game types).
 
 import { clamp, addLog, money } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 const WEAR_PROFILES = {
   light:    { dailyWear: 0.4,  breakdownBase: 0.003, maintenanceInterval: 20 },
@@ -22,10 +23,6 @@ const BREAKDOWN_TYPES = [
 
 const numericOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
 
-// FleetFlow used a dedicated `maintenance` field, while standalone Construction Flow already
-// prices equipment around `dailyCost`. Prefer the explicit maintenance value when present, but
-// derive a sensible maintenance basis from dailyCost for Construction Flow instead of falling
-// back to the old flat $50 placeholder for every machine.
 function maintenanceBasis(vehicle) {
   if (Number.isFinite(vehicle?.maintenance)) return Math.max(1, vehicle.maintenance);
   if (Number.isFinite(vehicle?.dailyCost)) return Math.max(1, Math.round(vehicle.dailyCost * 0.35));
@@ -50,8 +47,6 @@ export function initEquipmentProfile(vehicle) {
 }
 
 export function getBreakdownProbability(vehicle, activeRouteSec) {
-  // Do not use `vehicle.condition || 100`: condition=0 is valid and must remain catastrophic,
-  // not silently become 100%. This was a real Construction Flow integration bug.
   const condition = numericOr(vehicle.condition, 100);
   const profile = WEAR_PROFILES[vehicle.wearProfile || "moderate"] || WEAR_PROFILES.moderate;
   const baseProbability = profile.breakdownBase;
@@ -79,10 +74,15 @@ export function triggerBreakdown(game, vehicleId) {
 
   if ((game.cash || 0) >= repairCost) {
     game.cash -= repairCost;
+    if (Number.isFinite(game.expenses)) game.expenses += repairCost;
+    if (game.weeklyStats) {
+      game.weeklyStats.repairs = (game.weeklyStats.repairs || 0) + repairCost;
+      game.weeklyStats.expenses = (game.weeklyStats.expenses || 0) + repairCost;
+    }
     v.totalRepairCost = (v.totalRepairCost || 0) + repairCost;
     v.status = "In Repair";
     v.repairMinsLeft = repairMins;
-    if (game.weeklyStats) game.weeklyStats.repairs = (game.weeklyStats.repairs || 0) + repairCost;
+    recordTransaction(game, "maintenance", -repairCost, `${v.name}: ${breakdown.label} repair`);
     addLog(game, `${v.name}: ${breakdown.label} — ${money(repairCost)} repair, ${Math.round(repairMins / 60)}h downtime.`);
   } else {
     v.status = "Broken";
@@ -119,6 +119,7 @@ export function scheduleMaintenance(game, vehicleId) {
     game.weeklyStats.repairs = (game.weeklyStats.repairs || 0) + maintenanceCost;
     game.weeklyStats.expenses = (game.weeklyStats.expenses || 0) + maintenanceCost;
   }
+  recordTransaction(game, "maintenance", -maintenanceCost, `${v.name}: scheduled maintenance`);
   addLog(game, `${v.name} scheduled maintenance complete — condition restored.`);
   return true;
 }
@@ -146,6 +147,7 @@ export function performReplacement(game, vehicleId) {
   v.replacementNeeded = false;
   v.status = "Idle";
   v.repairMinsLeft = 0;
+  recordTransaction(game, "maintenance", -replacementCost, `${v.name}: major component replacement`);
   addLog(game, `${v.name} underwent major component replacement — ${money(replacementCost)}.`);
   return true;
 }
@@ -167,8 +169,6 @@ export function tickEquipmentWear(game) {
       v.maintenanceDue = true;
     }
 
-    // FleetFlow calls working vehicles "En Route". Construction Flow calls them "Active".
-    // Supporting both keeps this shared system reusable without requiring status translation.
     const isWorking = v.status === "En Route" || v.status === "Active";
     if (isWorking) {
       const dailyWear = profile.dailyWear * (v.maintenanceDue ? 1.35 : 1.0);
