@@ -40,7 +40,11 @@ jobs:
           const fs = require('fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           p.scripts = { ...p.scripts, test: 'jest' };
-          p.jest = { preset: 'jest-expo', testPathIgnorePatterns: ['/node_modules/'] };
+          p.jest = {
+            preset: 'jest-expo',
+            setupFiles: ['./jest.setup.js'],
+            testPathIgnorePatterns: ['/node_modules/']
+          };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
 
@@ -78,6 +82,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/ai-validation-pass.yml
-          git add constructionFlow/package.json constructionFlow/package-lock.json constructionFlow/snack/ConstructionFlowSnack.js constructionFlow/scripts/build-snack-single.js
+          git add constructionFlow/package.json constructionFlow/package-lock.json constructionFlow/snack/ConstructionFlowSnack.js constructionFlow/scripts/build-snack-single.js constructionFlow/jest.setup.js
           git commit -m "Validate Construction Flow and regenerate Snack build"
           git push origin HEAD:ai/constructionflow-parity-audit
