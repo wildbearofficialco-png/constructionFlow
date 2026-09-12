@@ -8417,10 +8417,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Local construction conditions actively affect bids, materials, wages, and financing.
           </Text>
           {[
-            { label: "Contract Market", val: \`\${regionalEconomy.contractValueMult.toFixed(2)}×\`, color: regionalEconomy.contractValueMult >= 1 ? T.green : T.orange },
-            { label: "Material Prices", val: \`\${regionalEconomy.materialPriceMult.toFixed(2)}×\`, color: regionalEconomy.materialPriceMult <= 1 ? T.green : T.orange },
-            { label: "Wage Pressure", val: \`\${regionalEconomy.wageMult.toFixed(2)}×\`, color: regionalEconomy.wageMult <= 1 ? T.green : T.orange },
-            { label: "Lending Climate", val: \`\${regionalEconomy.lendingEconomyMult.toFixed(2)}×\`, color: regionalEconomy.lendingEconomyMult >= 1 ? T.green : T.orange },
+            { label: "Contract Market", val: `${regionalEconomy.contractValueMult.toFixed(2)}×`, color: regionalEconomy.contractValueMult >= 1 ? T.green : T.orange },
+            { label: "Material Prices", val: `${regionalEconomy.materialPriceMult.toFixed(2)}×`, color: regionalEconomy.materialPriceMult <= 1 ? T.green : T.orange },
+            { label: "Wage Pressure", val: `${regionalEconomy.wageMult.toFixed(2)}×`, color: regionalEconomy.wageMult <= 1 ? T.green : T.orange },
+            { label: "Lending Climate", val: `${regionalEconomy.lendingEconomyMult.toFixed(2)}×`, color: regionalEconomy.lendingEconomyMult >= 1 ? T.green : T.orange },
           ].map((row) => (
             <View key={row.label} style={[styles.finRow, { borderBottomColor: T.border }]}>
               <Text style={[styles.sub, col]}>{row.label}</Text>
