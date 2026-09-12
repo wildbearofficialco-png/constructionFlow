@@ -25,7 +25,6 @@ import {
   initEquipmentProfile,
   tickEquipmentWear,
   scheduleMaintenance,
-  performReplacement,
 } from "../../systems/equipmentWear.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
