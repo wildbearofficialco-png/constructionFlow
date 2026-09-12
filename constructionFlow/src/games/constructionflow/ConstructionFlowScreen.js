@@ -5191,9 +5191,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const profile = buildBorrowerProfile(g, product);
       const offer = computeLoanOffer(product.id, profile);
       if (!offer.approved) {
-        Alert.alert("Financing Declined", (offer.reasons || ["You do not currently qualify for this product."]).join("
-
-"));
+        Alert.alert("Financing Declined", (offer.reasons || ["You do not currently qualify for this product."]).join("\n\n"));
         return;
       }
 
