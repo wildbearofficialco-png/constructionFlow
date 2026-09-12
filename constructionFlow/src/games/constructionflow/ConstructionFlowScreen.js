@@ -2202,7 +2202,8 @@ function getSiteMissingMaterials(site, contractDef, game) {
     const shortfall = Math.max(0, needed - fulfilled);
     if (shortfall === 0) return acc;
     const mat = MATERIAL_DEFS.find(m => m.id === matId);
-    const basePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+    const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+    const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
     const pricePerUnit = Math.round(basePrice * (1 - disc));
     acc.push({
       matId, needed, fulfilled, missing: shortfall,
