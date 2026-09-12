@@ -29,6 +29,10 @@ jobs:
         working-directory: constructionFlow
         run: npm ci
 
+      - name: Align Expo SDK dependencies
+        working-directory: constructionFlow
+        run: npx expo install --fix
+
       - name: Install Expo-supported Jest dependencies
         working-directory: constructionFlow
         run: npx expo install jest-expo jest @types/jest --dev
