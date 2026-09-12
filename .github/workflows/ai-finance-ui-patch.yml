@@ -21,8 +21,9 @@ jobs:
           fetch-depth: 0
 
       - name: Patch Finance UI
-        shell: python
+        shell: bash
         run: |
+          python <<'PY'
           from pathlib import Path
 
           path = Path('constructionFlow/src/games/constructionflow/ConstructionFlowScreen.js')
@@ -145,6 +146,7 @@ jobs:
               raise SystemExit('Finance UI marker not found; refusing unsafe patch')
           text = text.replace(ui_marker, ui_replacement, 1)
           path.write_text(text)
+          PY
 
       - name: Commit Finance UI patch and remove one-time workflow
         shell: bash
