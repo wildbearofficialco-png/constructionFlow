@@ -25,6 +25,12 @@ import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
 import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
 import { recordTransaction } from "../../systems/financialLedger.js";
 import {
+  getConstructionRegionalSnapshot,
+  applyRegionalContractValue,
+  applyRegionalMaterialPrice,
+  applyRegionalWage,
+} from "../../systems/constructionRegionalEconomy.js";
+import {
   initEquipmentProfile,
   tickEquipmentWear,
   scheduleMaintenance,
@@ -1862,7 +1868,7 @@ function buildBorrowerProfile(g, product) {
     missedPaymentCount,
     companyAgeDays: g.day || 0,
     collateralValue: collateral.value,
-    economyMult: g.economy?.demandIndex || 1.0,
+    economyMult: getConstructionRegionalSnapshot(g).lendingEconomyMult,
   };
 }
 
@@ -2086,7 +2092,8 @@ export function createContract(state, forcedDefId) {
   const contractCityId = pickContractCity(state);
   const baseDeadline = state.day + def.durationDays + rand(2, 6);
   const seasonMult = state.seasonContractMult || 1.0;
-  const enhanced = enhanceContractValue(def, state, { value: Math.round(def.baseValue * seasonMult), deadline: baseDeadline });
+  const regionAdjustedBase = applyRegionalContractValue(def.baseValue, state);
+  const enhanced = enhanceContractValue(def, state, { value: Math.round(regionAdjustedBase * seasonMult), deadline: baseDeadline });
 
   const contract = {
     id: uid(), defId: def.id, label: def.label, category: def.category || "Commercial",
@@ -4938,7 +4945,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const _newWorker = {
         ...createWorker(applicant.role),
         id: uid(), name: applicant.name, role: applicant.role,
-        skill: applicant.skill, wagePerDay: applicant.desiredWage,
+        skill: applicant.skill, wagePerDay: applyRegionalWage(applicant.desiredWage, g),
         mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
         hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
         status: "Idle",
@@ -4999,7 +5006,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleBuyMaterials = useCallback((matId, qty) => {
     update((g) => {
       if (!qty || qty < 1) return;
-      const basePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
+      const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
+      const basePrice = applyRegionalMaterialPrice(rawBasePrice, g);
       // R15-8: Apply flash deal price if active for this material
       const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
       const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
@@ -8329,6 +8337,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const dailyLoanInterest = game.loans.reduce((s, l) => s + (l.weeklyPayment || 0) / 7, 0);
     const dailyIncome = (game.weeklyStats?.revenue || 0) / 7;
     const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - office.dailyRent - dailyLoanInterest;
+    const regionalEconomy = getConstructionRegionalSnapshot(game);
     const loanOffers = LOAN_PRODUCTS.map((product) => {
       const offer = computeLoanOffer(product.id, buildBorrowerProfile(game, product));
       return {
@@ -8397,6 +8406,25 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               {row.note && (
                 <Text style={[styles.sub, { color: row.bar?.color || T.sub, fontSize: 10, marginTop: 2 }]}>{row.note}</Text>
               )}
+            </View>
+          ))}
+        </View>
+
+        {/* Regional Economy */}
+        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1 }]}>
+          <Text style={[styles.sectionTitle, { color: T.cyan }]}>Regional Economy · {regionalEconomy.stateName}</Text>
+          <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>
+            Local construction conditions actively affect bids, materials, wages, and financing.
+          </Text>
+          {[
+            { label: "Contract Market", val: \`\${regionalEconomy.contractValueMult.toFixed(2)}×\`, color: regionalEconomy.contractValueMult >= 1 ? T.green : T.orange },
+            { label: "Material Prices", val: \`\${regionalEconomy.materialPriceMult.toFixed(2)}×\`, color: regionalEconomy.materialPriceMult <= 1 ? T.green : T.orange },
+            { label: "Wage Pressure", val: \`\${regionalEconomy.wageMult.toFixed(2)}×\`, color: regionalEconomy.wageMult <= 1 ? T.green : T.orange },
+            { label: "Lending Climate", val: \`\${regionalEconomy.lendingEconomyMult.toFixed(2)}×\`, color: regionalEconomy.lendingEconomyMult >= 1 ? T.green : T.orange },
+          ].map((row) => (
+            <View key={row.label} style={[styles.finRow, { borderBottomColor: T.border }]}>
+              <Text style={[styles.sub, col]}>{row.label}</Text>
+              <Text style={[styles.sub, { color: row.color, fontWeight: "700" }]}>{row.val}</Text>
             </View>
           ))}
         </View>
