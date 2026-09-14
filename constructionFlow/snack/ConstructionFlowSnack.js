@@ -6209,6 +6209,7 @@ function freshState() {
     reputation: 0,
     creditScore: 600,
     companyName: "New Build Co.",
+    ownerName: "Owner",
     theme: "dark",
     marketState: "Normal",
     businessFrozen: false,
@@ -6426,6 +6427,7 @@ function migrateState(saved) {
   if (g._level10Celebrated === void 0) g._level10Celebrated = false;
   if (g._valuationMilestonesHit === void 0) g._valuationMilestonesHit = [];
   if (g.clientRelationships === void 0) g.clientRelationships = {};
+  if (typeof g.ownerName !== "string" || !g.ownerName.trim()) g.ownerName = "Owner";
   (g.activeSites || []).forEach((s) => {
     if (!s._clientCheckins) s._clientCheckins = [];
   });
@@ -7713,6 +7715,7 @@ function ConstructionFlowScreen({ onBackToHub }) {
   const appStateRef = useRef(AppState.currentState);
   const gameRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const [setupOwner, setSetupOwner] = useState("");
   const [setupName, setSetupName] = useState("New Build Co.");
   const [setupCityId, setSetupCityId] = useState("salem");
   const [savingsAmt, setSavingsAmt] = useState("");
@@ -9010,8 +9013,22 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       setupStep === 0 ? (
         /* Step 1 — Company name */
         /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.green, borderWidth: 2 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Step 1 \u2014 Name Your Company" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 12 }], children: "This will appear on your Home screen, bids, and company profile." }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Step 1 \u2014 Who Are You?" }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 12 }], children: "You're the owner. Your name and your company's name appear on your Home screen, your bids, and your company profile." }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 4 }], children: "Your name" }),
+          /* @__PURE__ */ jsx(
+            TextInput,
+            {
+              style: [styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }],
+              value: setupOwner,
+              onChangeText: setSetupOwner,
+              placeholder: "e.g. Sam Delgado",
+              placeholderTextColor: T.sub,
+              maxLength: 28,
+              autoFocus: true
+            }
+          ),
+          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 4 }], children: "Company name" }),
           /* @__PURE__ */ jsx(
             TextInput,
             {
@@ -9020,8 +9037,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
               onChangeText: setSetupName,
               placeholder: "e.g. Apex Build Co.",
               placeholderTextColor: T.sub,
-              maxLength: 36,
-              autoFocus: true
+              maxLength: 36
             }
           ),
           /* @__PURE__ */ jsx(
@@ -9152,6 +9168,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
                   const competitionToCityId = { Low: "salem", Medium: "portland", High: "phoenix" };
                   const templateCityId = competitionToCityId[setupCompetition] || "salem";
                   update((g) => {
+                    g.ownerName = setupOwner.trim() || "Owner";
                     g.companyName = setupName.trim() || "New Build Co.";
                     g.startingCityId = templateCityId;
                     g.homeCityName = setupHomeCityText.trim();
@@ -9159,7 +9176,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
                     g.homeStateName = setupHomeStateName;
                     g.homeCompetition = setupCompetition;
                     g.setupDone = true;
-                    addLog2(g, `\u{1F3D7}\uFE0F Welcome to ${g.companyName}! Based in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
+                    addLog2(g, `\u{1F3D7}\uFE0F ${g.ownerName} founded ${g.companyName} in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
                   });
                 },
                 children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: setupHomeCityText.trim() ? "#000" : T.sub }], children: "\u{1F680} Start Building" })
@@ -9168,7 +9185,11 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
           ] })
         ] })
       ),
-      /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24 }, children: "You start with $75,000 \xB7 1 truck \xB7 3 crew members" })
+      /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }, children: [
+        "You start with $75,000 \xB7 1 truck \xB7 3 crew members",
+        "\n",
+        "You make money by winning bids, putting crew and machines on site, and finishing the job before the deadline."
+      ] })
     ] }) });
   }
   function renderHome() {
@@ -9243,6 +9264,174 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
             ]
           }
         );
+      })(),
+      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
+        /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
+          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+            /* @__PURE__ */ jsx(Text, { style: [styles.h2, col], numberOfLines: 1, children: game.companyName }),
+            (game.generation || 1) > 1 && /* @__PURE__ */ jsxs(Text, { style: { fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: [
+              "GEN ",
+              game.generation
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 1 }], numberOfLines: 1, children: [
+            "Owned by ",
+            game.ownerName || "Owner",
+            " \xB7 General contractor"
+          ] }),
+          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
+              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                repTier.badge,
+                " ",
+                repTier.label,
+                " \xB7 Day ",
+                game.day
+              ] }),
+              game.seasonEmoji && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11 }], children: [
+                game.seasonEmoji,
+                " ",
+                game.currentSeason
+              ] }),
+              (game.savings || 0) > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10 }], children: [
+                "\u{1F3E6} ",
+                money2(game.savings),
+                " saved"
+              ] })
+            ] }),
+            /* @__PURE__ */ jsx(
+              TouchableOpacity,
+              {
+                style: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 },
+                onPress: () => setSpeedMode((s) => !s),
+                children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }, children: speedMode ? "\u26A1 2\xD7" : "1\xD7" })
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end", minWidth: 0 }, children: [
+          /* @__PURE__ */ jsx(Text, { style: [styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }], numberOfLines: 1, children: money2(game.cash) }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: office.name }),
+          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], numberOfLines: 1, children: [
+            "\u{1F4CD} ",
+            displayCityName,
+            ", ",
+            displayStateCode
+          ] })
+        ] })
+      ] }) }),
+      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }], children: [
+        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsxs(View, { children: [
+            /* @__PURE__ */ jsxs(Text, { style: [{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }], children: [
+              "LEVEL ",
+              companyLevel.level
+            ] }),
+            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: companyLevel.label })
+          ] }),
+          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
+            nextLevel && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+              "Next: ",
+              nextLevel.label
+            ] }),
+            !nextLevel && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow }], children: "MAX LEVEL" })
+          ] })
+        ] }),
+        nextLevel && /* @__PURE__ */ jsx(View, { style: { marginTop: 8, gap: 4 }, children: [
+          { label: "Rep", current: game.reputation || 0, target: nextLevel.repMin, color: T.purple, fmt: (v) => `${v}` },
+          { label: "Jobs", current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: (v) => `${v}` },
+          { label: "Value", current: valuation, target: nextLevel.valMin, color: T.cyan, fmt: (v) => money2(v) }
+        ].map((bar) => {
+          const pct = Math.min(100, Math.round(bar.current / Math.max(1, bar.target) * 100));
+          const done = bar.current >= bar.target;
+          return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 4 }, children: [
+            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }], children: [
+                done ? "\u2713 " : "",
+                bar.label
+              ] }),
+              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }], children: [
+                bar.fmt(bar.current),
+                " / ",
+                bar.fmt(bar.target)
+              ] })
+            ] }),
+            /* @__PURE__ */ jsx(View, { style: { height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 } }) })
+          ] }, bar.label);
+        }) })
+      ] }),
+      !game.tutorialDone && (() => {
+        const hasActiveSite = (game.activeSites || []).length > 0;
+        const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
+        const needsMaterials = hasActiveSite && (game.activeSites || []).some((s2) => {
+          const con = (game.contracts || []).find((c) => c.id === s2.contractId);
+          const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
+          return def?.materials && Object.entries(def.materials).some(([id, qty]) => ((s2.materialsFulfilled || {})[id] || 0) < qty);
+        });
+        let step = 0;
+        if (hasActiveSite && !needsMaterials) step = 3;
+        else if (hasActiveSite && needsMaterials) step = 2;
+        else if (hasBid) step = 1;
+        const steps = [
+          {
+            num: "1 of 4",
+            title: "Accept Your First Contract",
+            body: `You start with ${money2(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.
+
+Go to Bids \u2192 accept the Fence Installation \u2014 your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+            cta: "Go to Bids \u2192",
+            action: () => setTab("Bids")
+          },
+          {
+            num: "2 of 4",
+            title: "Buy Materials & Mobilise Crew",
+            body: `Your contract is accepted. Now:
+\u2022 Go to Sites \u2192 open the job
+\u2022 Tap Buy Materials to purchase what the job needs
+\u2022 Assign crew and your truck, then tap Mobilise`,
+            cta: "Go to Sites \u2192",
+            action: () => setTab("Sites")
+          },
+          {
+            num: "3 of 4",
+            title: "Buy Missing Materials",
+            body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.
+
+Your daily costs: ${money2((game.crew || []).reduce((s2, w) => s2 + (w.wagePerDay || 0), 0))} crew + ${money2(game.equipment.reduce((s2, e) => s2 + e.dailyCost, 0))} equipment.`,
+            cta: "Go to Sites \u2192",
+            action: () => setTab("Sites")
+          },
+          {
+            num: "4 of 4",
+            title: "Watch Your Site Progress",
+            body: `Crew and equipment are working! Check the Sites tab to see phase progress.
+
+When all phases complete, cash lands automatically.
+
+Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
+            cta: "Go to Sites \u2192",
+            action: () => setTab("Sites")
+          }
+        ];
+        const s = steps[step];
+        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }], children: [
+          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
+            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan }], children: "\u{1F680} Getting Started" }),
+            /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 11 }, children: [
+              "Step ",
+              s.num
+            ] })
+          ] }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 6 }], children: s.title }),
+          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col, { lineHeight: 20, marginBottom: 10 }], children: s.body }),
+          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
+            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }], onPress: s.action, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#000" }], children: s.cta }) }),
+            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }], onPress: () => update((g) => {
+              g.tutorialDone = true;
+              addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green");
+            }), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, subCol], children: "Skip" }) })
+          ] })
+        ] });
       })(),
       game.tutorialDone && (() => {
         const hs = computeHealthScore(game);
@@ -9432,169 +9621,6 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
           })
         ] });
       })(),
-      !game.tutorialDone && (() => {
-        const hasActiveSite = (game.activeSites || []).length > 0;
-        const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
-        const needsMaterials = hasActiveSite && (game.activeSites || []).some((s2) => {
-          const con = (game.contracts || []).find((c) => c.id === s2.contractId);
-          const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
-          return def?.materials && Object.entries(def.materials).some(([id, qty]) => ((s2.materialsFulfilled || {})[id] || 0) < qty);
-        });
-        let step = 0;
-        if (hasActiveSite && !needsMaterials) step = 3;
-        else if (hasActiveSite && needsMaterials) step = 2;
-        else if (hasBid) step = 1;
-        const steps = [
-          {
-            num: "1 of 4",
-            title: "Accept Your First Contract",
-            body: `You start with ${money2(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.
-
-Go to Bids \u2192 accept the Fence Installation \u2014 your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
-            cta: "Go to Bids \u2192",
-            action: () => setTab("Bids")
-          },
-          {
-            num: "2 of 4",
-            title: "Buy Materials & Mobilise Crew",
-            body: `Your contract is accepted. Now:
-\u2022 Go to Sites \u2192 open the job
-\u2022 Tap Buy Materials to purchase what the job needs
-\u2022 Assign crew and your truck, then tap Mobilise`,
-            cta: "Go to Sites \u2192",
-            action: () => setTab("Sites")
-          },
-          {
-            num: "3 of 4",
-            title: "Buy Missing Materials",
-            body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.
-
-Your daily costs: ${money2((game.crew || []).reduce((s2, w) => s2 + (w.wagePerDay || 0), 0))} crew + ${money2(game.equipment.reduce((s2, e) => s2 + e.dailyCost, 0))} equipment.`,
-            cta: "Go to Sites \u2192",
-            action: () => setTab("Sites")
-          },
-          {
-            num: "4 of 4",
-            title: "Watch Your Site Progress",
-            body: `Crew and equipment are working! Check the Sites tab to see phase progress.
-
-When all phases complete, cash lands automatically.
-
-Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
-            cta: "Go to Sites \u2192",
-            action: () => setTab("Sites")
-          }
-        ];
-        const s = steps[step];
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan }], children: "\u{1F680} Getting Started" }),
-            /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 11 }, children: [
-              "Step ",
-              s.num
-            ] })
-          ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 6 }], children: s.title }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col, { lineHeight: 20, marginBottom: 10 }], children: s.body }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }], onPress: s.action, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#000" }], children: s.cta }) }),
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }], onPress: () => update((g) => {
-              g.tutorialDone = true;
-              addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green");
-            }), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, subCol], children: "Skip" }) })
-          ] })
-        ] });
-      })(),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsxs(View, { children: [
-            /* @__PURE__ */ jsxs(Text, { style: [{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }], children: [
-              "LEVEL ",
-              companyLevel.level
-            ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: companyLevel.label })
-          ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            nextLevel && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
-              "Next: ",
-              nextLevel.label
-            ] }),
-            !nextLevel && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow }], children: "MAX LEVEL" })
-          ] })
-        ] }),
-        nextLevel && /* @__PURE__ */ jsx(View, { style: { marginTop: 8, gap: 4 }, children: [
-          { label: "Rep", current: game.reputation || 0, target: nextLevel.repMin, color: T.purple, fmt: (v) => `${v}` },
-          { label: "Jobs", current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: (v) => `${v}` },
-          { label: "Value", current: valuation, target: nextLevel.valMin, color: T.cyan, fmt: (v) => money2(v) }
-        ].map((bar) => {
-          const pct = Math.min(100, Math.round(bar.current / Math.max(1, bar.target) * 100));
-          const done = bar.current >= bar.target;
-          return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 4 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }], children: [
-                done ? "\u2713 " : "",
-                bar.label
-              ] }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }], children: [
-                bar.fmt(bar.current),
-                " / ",
-                bar.fmt(bar.target)
-              ] })
-            ] }),
-            /* @__PURE__ */ jsx(View, { style: { height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 } }) })
-          ] }, bar.label);
-        }) })
-      ] }),
-      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-        /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.h2, col], numberOfLines: 1, children: game.companyName }),
-            (game.generation || 1) > 1 && /* @__PURE__ */ jsxs(Text, { style: { fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: [
-              "GEN ",
-              game.generation
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
-                repTier.badge,
-                " ",
-                repTier.label,
-                " \xB7 Day ",
-                game.day
-              ] }),
-              game.seasonEmoji && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11 }], children: [
-                game.seasonEmoji,
-                " ",
-                game.currentSeason
-              ] }),
-              (game.savings || 0) > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10 }], children: [
-                "\u{1F3E6} ",
-                money2(game.savings),
-                " saved"
-              ] })
-            ] }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
-              {
-                style: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 },
-                onPress: () => setSpeedMode((s) => !s),
-                children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }, children: speedMode ? "\u26A1 2\xD7" : "1\xD7" })
-              }
-            )
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end", minWidth: 0 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }], numberOfLines: 1, children: money2(game.cash) }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: office.name }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], numberOfLines: 1, children: [
-            "\u{1F4CD} ",
-            displayCityName,
-            ", ",
-            displayStateCode
-          ] })
-        ] })
-      ] }) }),
       /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
         /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Today's Priorities" }),
         sitesNeedingMats.length > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
@@ -10021,7 +10047,13 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           const contract = game.contracts.find((c) => c.id === site.contractId);
           const def = CONTRACT_DEFS.find((d) => d.id === contract?.defId);
           const daysLate = Math.max(0, game.day - site.deadlineDay);
-          const projectedProfit = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+          const valueAfterPenalty = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+          const liveEconomics = buildProjectEconomics({
+            contractValue: site.totalValue,
+            depositPaid: site.depositPaid || 0,
+            penalty: daysLate * site.penaltyPerDay,
+            costs: ensureProjectCostLedger(site)
+          });
           const isOverdue = game.day > site.deadlineDay;
           const missingMats = getSiteMissingMaterials(site, def, game);
           const _renegCost = Math.round((def?.baseValue || site.totalValue || 1e4) * 0.08);
@@ -10362,7 +10394,18 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700", fontSize: 11 }], children: money2(site.totalValue) }),
                 daysLate > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, fontSize: 10 }], children: [
                   "\u2192 ",
-                  money2(projectedProfit)
+                  money2(valueAfterPenalty)
+                ] })
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
+              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Spent so far" }),
+              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, alignItems: "center" }, children: [
+                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }], children: money2(liveEconomics.directCosts) }),
+                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }], children: [
+                  liveEconomics.netProfit >= 0 ? "+" : "\u2212",
+                  money2(Math.abs(liveEconomics.netProfit)),
+                  " if it finishes now"
                 ] })
               ] })
             ] }),
@@ -10380,9 +10423,9 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                   daysLate > 5 ? " (1.5\xD7 escalated)" : ""
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.max(0, Math.round(projectedProfit / site.totalValue * 100))}%`, backgroundColor: projectedProfit > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 } }) }),
+              /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.max(0, Math.round(valueAfterPenalty / site.totalValue * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 } }) }),
               /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }], children: [
-                money2(projectedProfit),
+                money2(valueAfterPenalty),
                 " of ",
                 money2(site.totalValue),
                 " remaining"
@@ -10601,11 +10644,23 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const _filteredCrew = crewFilter === "All" ? game.crew || [] : (game.crew || []).filter(
           (w) => crewFilter === "Active" ? w.status === "Active" : crewFilter === "Idle" ? w.status === "Idle" : crewFilter === "Resting" ? w.status === "Resting" : crewFilter === "Training" ? !!(game.trainingQueue || []).find((t) => t.workerId === w.id) : crewFilter === "Low Stamina" ? (w.stamina ?? 50) < 30 : true
         );
-        if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew || []).length > 0) return /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center" }], children: [
-          "No ",
-          crewFilter.toLowerCase(),
-          " crew members right now."
-        ] }) });
+        if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew || []).length > 0) return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }], children: [
+          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
+            "None of your ",
+            (game.crew || []).length,
+            " crew are ",
+            crewFilter.toLowerCase(),
+            " right now."
+          ] }),
+          /* @__PURE__ */ jsx(
+            TouchableOpacity,
+            {
+              style: [styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }],
+              onPress: () => setCrewFilter("All"),
+              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Crew" })
+            }
+          )
+        ] });
         return null;
       })(),
       /* @__PURE__ */ jsx(
@@ -10719,11 +10774,23 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const _filteredEquip = equipFilter === "All" ? game.equipment || [] : (game.equipment || []).filter(
           (e) => equipFilter === "Active" ? e.status === "Active" : equipFilter === "Idle" ? e.status === "Idle" : equipFilter === "Maintenance" ? e.status === "Maintenance" : equipFilter === "Broken" ? e.status === "Broken" : equipFilter === "Low Condition" ? (e.condition ?? 100) < 40 : true
         );
-        if (_filteredEquip.length === 0 && equipFilter !== "All") return /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center" }], children: [
-          "No ",
-          equipFilter.toLowerCase(),
-          " equipment right now."
-        ] }) });
+        if (_filteredEquip.length === 0 && equipFilter !== "All") return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }], children: [
+          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
+            "None of your ",
+            (game.equipment || []).length,
+            " machines are ",
+            equipFilter.toLowerCase(),
+            " right now."
+          ] }),
+          /* @__PURE__ */ jsx(
+            TouchableOpacity,
+            {
+              style: [styles.btn, { backgroundColor: T.orange, borderColor: T.orange }],
+              onPress: () => setEquipFilter("All"),
+              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Equipment" })
+            }
+          )
+        ] });
         return _filteredEquip.map((equip) => {
           const cond = Math.round(equip.condition ?? 100);
           const cc = conditionColor(cond);
@@ -11773,7 +11840,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
               money2(Math.abs(entry.amount))
             ] })
           ] }, entry.id || `${entry.day}-${index}`))
-        ] }) : /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 12 }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center" }], children: "No ledger activity yet. New income and expenses will appear here automatically." }) })
+        ] }) : /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 12 }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center" }], children: "Nothing recorded yet. Every contract payment, wage, material order and repair lands here automatically \u2014 start a job and the ledger fills itself." }) })
       ] }),
       /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1, marginBottom: 8 }], children: [
         /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
@@ -11969,7 +12036,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           }
         )
       ] }, product.id)),
-      loanOffers.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }], children: "No financing available \u2014 improve credit score to unlock loans." }),
+      loanOffers.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }], children: "No lender will underwrite you yet. Credit score rises when you finish contracts on time and stay out of overdraft \u2014 the first loan products unlock as it climbs." }),
       /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 10 }], children: [
         /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col], children: [
           "Reputation: ",
@@ -12711,7 +12778,15 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
       openContracts.length === 0 && /* @__PURE__ */ jsxs(View, { style: { alignItems: "center", padding: 24 }, children: [
         /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F4CB}" }),
         /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 6 }], children: categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center" }], children: "New contracts arrive daily. Come back tomorrow or improve your reputation for better offers." })
+        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: categoryFilter !== "All" ? `Nothing in ${categoryFilter} right now \u2014 other categories may still have work.` : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones." }),
+        categoryFilter !== "All" && /* @__PURE__ */ jsx(
+          TouchableOpacity,
+          {
+            style: [styles.btn, { backgroundColor: T.orange, borderColor: T.orange }],
+            onPress: () => onSetFilter("All"),
+            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Contracts" })
+          }
+        )
       ] }),
       openContracts.map((c) => {
         const isSelected = selectedContract === c.id;
@@ -13168,7 +13243,11 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.cyan }], children: "\u{1F634} Rest All Tired Workers (stamina < 40)" })
       }
     ),
-    game.crew.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", padding: 16 }], children: "No crew yet \u2014 post a job ad to find workers." }),
+    game.crew.length === 0 && /* @__PURE__ */ jsxs(View, { style: { alignItems: "center", padding: 16 }, children: [
+      /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }], children: "No crew on the books" }),
+      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: "A site can't start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for." }),
+      /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }], onPress: onPostJob, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Post a Job Ad" }) })
+    ] }),
     game.crew.map((w) => {
       const trait = w.trait || {};
       const traitEffects = [];
@@ -13608,6 +13687,7 @@ export {
   freshState,
   gameTick,
   generateWeeklyChallenge,
+  getNextBestAction,
   getPredictiveWarnings,
   migrateState,
   money2 as money,

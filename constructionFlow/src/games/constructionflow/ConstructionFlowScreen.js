@@ -2237,7 +2237,7 @@ function getSiteMissingMaterials(site, contractDef, game) {
   }, []);
 }
 
-function getNextBestAction(s) {
+export function getNextBestAction(s) {
   // Priority 1: Business frozen / deep cash crisis
   if (s.businessFrozen) return { title: "Business Frozen", body: "Overdue taxes suspended operations. Pay now in Finance.", tone: "red", tab: "Finance" };
   if ((s.cash || 0) < -1000) return { title: "Cash Crisis", body: "Account is deep in the red. Win and complete jobs urgently.", tone: "red", tab: "Finance" };
@@ -3018,6 +3018,7 @@ export function freshState() {
     cash: 75000, day: 1, gameMinutes: 480,
     reputation: 0, creditScore: 600,
     companyName: "New Build Co.",
+    ownerName: "Owner",
     theme: "dark",
     marketState: "Normal",
     businessFrozen: false,
@@ -3244,6 +3245,9 @@ export function migrateState(saved) {
   if (g._level10Celebrated  === undefined) g._level10Celebrated  = false;
   if (g._valuationMilestonesHit === undefined) g._valuationMilestonesHit = [];
   if (g.clientRelationships === undefined) g.clientRelationships = {};
+  // Company identity. Saves made before the owner was asked for keep playing with the
+  // neutral default rather than being sent back through setup.
+  if (typeof g.ownerName !== "string" || !g.ownerName.trim()) g.ownerName = "Owner";
   // Migrate active sites
   (g.activeSites || []).forEach(s => {
     if (!s._clientCheckins) s._clientCheckins = [];
@@ -4749,6 +4753,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const appStateRef = useRef(AppState.currentState);
   const gameRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const [setupOwner, setSetupOwner] = useState("");
   const [setupName, setSetupName] = useState("New Build Co.");
   const [setupCityId, setSetupCityId] = useState("salem");
   const [savingsAmt, setSavingsAmt] = useState("");
@@ -5951,8 +5956,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           {setupStep === 0 ? (
             /* Step 1 — Company name */
             <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.green, borderWidth: 2 }]}>
-              <Text style={[styles.label, col, { marginBottom: 4 }]}>Step 1 — Name Your Company</Text>
-              <Text style={[styles.sub, subCol, { marginBottom: 12 }]}>This will appear on your Home screen, bids, and company profile.</Text>
+              <Text style={[styles.label, col, { marginBottom: 4 }]}>Step 1 — Who Are You?</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 12 }]}>You&apos;re the owner. Your name and your company&apos;s name appear on your Home screen, your bids, and your company profile.</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 4 }]}>Your name</Text>
+              <TextInput
+                style={[styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }]}
+                value={setupOwner}
+                onChangeText={setSetupOwner}
+                placeholder="e.g. Sam Delgado"
+                placeholderTextColor={T.sub}
+                maxLength={28}
+                autoFocus
+              />
+              <Text style={[styles.sub, subCol, { marginBottom: 4 }]}>Company name</Text>
               <TextInput
                 style={[styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }]}
                 value={setupName}
@@ -5960,7 +5976,6 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 placeholder="e.g. Apex Build Co."
                 placeholderTextColor={T.sub}
                 maxLength={36}
-                autoFocus
               />
               <TouchableOpacity
                 style={[styles.btn, { backgroundColor: setupName.trim().length > 0 ? T.green : T.panel2, borderColor: T.green }]}
@@ -6071,6 +6086,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     const competitionToCityId = { Low: "salem", Medium: "portland", High: "phoenix" };
                     const templateCityId = competitionToCityId[setupCompetition] || "salem";
                     update(g => {
+                      g.ownerName = setupOwner.trim() || "Owner";
                       g.companyName = setupName.trim() || "New Build Co.";
                       g.startingCityId = templateCityId;
                       g.homeCityName = setupHomeCityText.trim();
@@ -6078,7 +6094,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       g.homeStateName = setupHomeStateName;
                       g.homeCompetition = setupCompetition;
                       g.setupDone = true;
-                      addLog(g, `🏗️ Welcome to ${g.companyName}! Based in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
+                      addLog(g, `🏗️ ${g.ownerName} founded ${g.companyName} in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
                     });
                   }}
                 >
@@ -6088,8 +6104,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
           )}
 
-          <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24 }}>
-            You start with $75,000 · 1 truck · 3 crew members
+          <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }}>
+            You start with $75,000 · 1 truck · 3 crew members{"\n"}
+            You make money by winning bids, putting crew and machines on site, and finishing the job before the deadline.
           </Text>
         </ScrollView>
       </SafeAreaView>
@@ -6169,6 +6186,151 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
+        {/* Company Header */}
+        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <Text style={[styles.h2, col]} numberOfLines={1}>{game.companyName}</Text>
+                {(game.generation||1) > 1 && (
+                  <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
+                )}
+              </View>
+              {/* The WildBear first-minute rule requires "who am I / what do I own" to be
+                  answerable on the screen the player lands on, not buried in a settings tab. */}
+              <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 1 }]} numberOfLines={1}>
+                Owned by {game.ownerName || "Owner"} · General contractor
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={[styles.sub, subCol]}>{repTier.badge} {repTier.label} · Day {game.day}</Text>
+                  {game.seasonEmoji && (
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 11 }]}>{game.seasonEmoji} {game.currentSeason}</Text>
+                  )}
+                  {(game.savings || 0) > 0 && (
+                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>🏦 {money(game.savings)} saved</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 }}
+                  onPress={() => setSpeedMode(s => !s)}
+                >
+                  <Text style={{ fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }}>
+                    {speedMode ? "⚡ 2×" : "1×"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={{ alignItems: "flex-end", minWidth: 0 }}>
+              <Text style={[styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }]} numberOfLines={1}>{money(game.cash)}</Text>
+              <Text style={[styles.sub, subCol]} numberOfLines={1}>{office.name}</Text>
+              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]} numberOfLines={1}>📍 {displayCityName}, {displayStateCode}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Company Level */}
+        <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View>
+              <Text style={[{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }]}>LEVEL {companyLevel.level}</Text>
+              <Text style={[styles.label, col]}>{companyLevel.label}</Text>
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              {nextLevel && <Text style={[styles.sub, { color: T.sub }]}>Next: {nextLevel.label}</Text>}
+              {!nextLevel && <Text style={[styles.sub, { color: T.yellow }]}>MAX LEVEL</Text>}
+            </View>
+          </View>
+          {nextLevel && (
+            <View style={{ marginTop: 8, gap: 4 }}>
+              {[
+                { label: "Rep",   current: game.reputation || 0,    target: nextLevel.repMin,  color: T.purple, fmt: v => `${v}` },
+                { label: "Jobs",  current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: v => `${v}` },
+                { label: "Value", current: valuation,               target: nextLevel.valMin,  color: T.cyan,   fmt: v => money(v) },
+              ].map(bar => {
+                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
+                const done = bar.current >= bar.target;
+                return (
+                  <View key={bar.label} style={{ marginBottom: 4 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={[styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }]}>{done ? "✓ " : ""}{bar.label}</Text>
+                      <Text style={[styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }]}>
+                        {bar.fmt(bar.current)} / {bar.fmt(bar.target)}
+                      </Text>
+                    </View>
+                    <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
+                      <View style={{ height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 }} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        {/* Tutorial — step-by-step, auto-advances with game state */}
+        {!game.tutorialDone && (() => {
+          const hasActiveSite  = (game.activeSites||[]).length > 0;
+          const hasBid         = (game.contracts||[]).some(c => c.status === "Active" || c.status === "Awarded");
+          const needsMaterials = hasActiveSite && (game.activeSites||[]).some(s => {
+            const con = (game.contracts||[]).find(c => c.id === s.contractId);
+            const def = CONTRACT_DEFS.find(d => d.id === con?.defId);
+            return def?.materials && Object.entries(def.materials).some(([id,qty]) => ((s.materialsFulfilled||{})[id]||0) < qty);
+          });
+
+          // Determine current step
+          let step = 0;
+          if (hasActiveSite && !needsMaterials)  step = 3;
+          else if (hasActiveSite && needsMaterials) step = 2;
+          else if (hasBid)                        step = 1;
+
+          const steps = [
+            {
+              num: "1 of 4", title: "Accept Your First Contract",
+              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              cta: "Go to Bids →", action: () => setTab("Bids"),
+            },
+            {
+              num: "2 of 4", title: "Buy Materials & Mobilise Crew",
+              body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+            {
+              num: "3 of 4", title: "Buy Missing Materials",
+              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+            {
+              num: "4 of 4", title: "Watch Your Site Progress",
+              body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+          ];
+
+          const s = steps[step];
+          return (
+            <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }]}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <Text style={[styles.label, { color: T.cyan }]}>🚀 Getting Started</Text>
+                <Text style={{ color: T.sub, fontSize: 11 }}>Step {s.num}</Text>
+              </View>
+              <Text style={[styles.label, col, { marginBottom: 6 }]}>{s.title}</Text>
+              <Text style={[styles.sub, col, { lineHeight: 20, marginBottom: 10 }]}>{s.body}</Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
+                  <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
+                  <Text style={[styles.btnText, subCol]}>Skip</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Reordered for the WildBear first-minute rule: company identity and the next
+            action come before dashboards. Critical alerts stay above this; the rest of
+            Home keeps its existing order below. */}
         {/* ── Company Health Score ─────────────────────────────────────────── */}
         {game.tutorialDone && (() => {
           const hs = computeHealthScore(game);
@@ -6368,143 +6530,6 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
           );
         })()}
-
-        {/* Tutorial — step-by-step, auto-advances with game state */}
-        {!game.tutorialDone && (() => {
-          const hasActiveSite  = (game.activeSites||[]).length > 0;
-          const hasBid         = (game.contracts||[]).some(c => c.status === "Active" || c.status === "Awarded");
-          const needsMaterials = hasActiveSite && (game.activeSites||[]).some(s => {
-            const con = (game.contracts||[]).find(c => c.id === s.contractId);
-            const def = CONTRACT_DEFS.find(d => d.id === con?.defId);
-            return def?.materials && Object.entries(def.materials).some(([id,qty]) => ((s.materialsFulfilled||{})[id]||0) < qty);
-          });
-
-          // Determine current step
-          let step = 0;
-          if (hasActiveSite && !needsMaterials)  step = 3;
-          else if (hasActiveSite && needsMaterials) step = 2;
-          else if (hasBid)                        step = 1;
-
-          const steps = [
-            {
-              num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
-              cta: "Go to Bids →", action: () => setTab("Bids"),
-            },
-            {
-              num: "2 of 4", title: "Buy Materials & Mobilise Crew",
-              body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-            {
-              num: "3 of 4", title: "Buy Missing Materials",
-              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-            {
-              num: "4 of 4", title: "Watch Your Site Progress",
-              body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-          ];
-
-          const s = steps[step];
-          return (
-            <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <Text style={[styles.label, { color: T.cyan }]}>🚀 Getting Started</Text>
-                <Text style={{ color: T.sub, fontSize: 11 }}>Step {s.num}</Text>
-              </View>
-              <Text style={[styles.label, col, { marginBottom: 6 }]}>{s.title}</Text>
-              <Text style={[styles.sub, col, { lineHeight: 20, marginBottom: 10 }]}>{s.body}</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
-                  <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
-                  <Text style={[styles.btnText, subCol]}>Skip</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })()}
-
-        {/* Company Level */}
-        <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View>
-              <Text style={[{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }]}>LEVEL {companyLevel.level}</Text>
-              <Text style={[styles.label, col]}>{companyLevel.label}</Text>
-            </View>
-            <View style={{ alignItems: "flex-end" }}>
-              {nextLevel && <Text style={[styles.sub, { color: T.sub }]}>Next: {nextLevel.label}</Text>}
-              {!nextLevel && <Text style={[styles.sub, { color: T.yellow }]}>MAX LEVEL</Text>}
-            </View>
-          </View>
-          {nextLevel && (
-            <View style={{ marginTop: 8, gap: 4 }}>
-              {[
-                { label: "Rep",   current: game.reputation || 0,    target: nextLevel.repMin,  color: T.purple, fmt: v => `${v}` },
-                { label: "Jobs",  current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: v => `${v}` },
-                { label: "Value", current: valuation,               target: nextLevel.valMin,  color: T.cyan,   fmt: v => money(v) },
-              ].map(bar => {
-                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
-                const done = bar.current >= bar.target;
-                return (
-                  <View key={bar.label} style={{ marginBottom: 4 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={[styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }]}>{done ? "✓ " : ""}{bar.label}</Text>
-                      <Text style={[styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }]}>
-                        {bar.fmt(bar.current)} / {bar.fmt(bar.target)}
-                      </Text>
-                    </View>
-                    <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
-                      <View style={{ height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 }} />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-        </View>
-
-        {/* Company Header */}
-        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <Text style={[styles.h2, col]} numberOfLines={1}>{game.companyName}</Text>
-                {(game.generation||1) > 1 && (
-                  <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
-                )}
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={[styles.sub, subCol]}>{repTier.badge} {repTier.label} · Day {game.day}</Text>
-                  {game.seasonEmoji && (
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 11 }]}>{game.seasonEmoji} {game.currentSeason}</Text>
-                  )}
-                  {(game.savings || 0) > 0 && (
-                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>🏦 {money(game.savings)} saved</Text>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 }}
-                  onPress={() => setSpeedMode(s => !s)}
-                >
-                  <Text style={{ fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }}>
-                    {speedMode ? "⚡ 2×" : "1×"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={{ alignItems: "flex-end", minWidth: 0 }}>
-              <Text style={[styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }]} numberOfLines={1}>{money(game.cash)}</Text>
-              <Text style={[styles.sub, subCol]} numberOfLines={1}>{office.name}</Text>
-              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]} numberOfLines={1}>📍 {displayCityName}, {displayStateCode}</Text>
-            </View>
-          </View>
-        </View>
 
         {/* Today's Priorities */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
@@ -6953,7 +6978,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               const contract = game.contracts.find(c => c.id === site.contractId);
               const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
               const daysLate = Math.max(0, game.day - site.deadlineDay);
-              const projectedProfit = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+              // Value the job will pay if it finished today — NOT profit, despite the old name.
+              const valueAfterPenalty = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+              // The real running P&L: what has been spent on this job so far against what it
+              // will pay. This is the number that teaches a player what a job actually costs.
+              const liveEconomics = buildProjectEconomics({
+                contractValue: site.totalValue,
+                depositPaid: site.depositPaid || 0,
+                penalty: daysLate * site.penaltyPerDay,
+                costs: ensureProjectCostLedger(site),
+              });
               const isOverdue = game.day > site.deadlineDay;
               const missingMats = getSiteMissingMaterials(site, def, game);
               const _renegCost = Math.round((def?.baseValue || site.totalValue || 10000) * 0.08);
@@ -7282,7 +7316,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Contract value</Text>
                     <View style={{ flexDirection: "row", gap: 8 }}>
                       <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 11 }]}>{money(site.totalValue)}</Text>
-                      {daysLate > 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>→ {money(projectedProfit)}</Text>}
+                      {daysLate > 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>→ {money(valueAfterPenalty)}</Text>}
+                    </View>
+                  </View>
+                  {/* Running cost — so the player watches margin move during the job rather
+                      than only meeting it on the completion screen. */}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Spent so far</Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <Text style={[styles.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }]}>{money(liveEconomics.directCosts)}</Text>
+                      <Text style={[styles.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }]}>
+                        {liveEconomics.netProfit >= 0 ? "+" : "−"}{money(Math.abs(liveEconomics.netProfit))} if it finishes now
+                      </Text>
                     </View>
                   </View>
                   {(site.depositPaid || 0) > 0 && !isOverdue && (
@@ -7299,10 +7344,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         </Text>
                       </View>
                       <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
-                        <View style={{ height: 4, width: `${Math.max(0, Math.round((projectedProfit / site.totalValue) * 100))}%`, backgroundColor: projectedProfit > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 }} />
+                        <View style={{ height: 4, width: `${Math.max(0, Math.round((valueAfterPenalty / site.totalValue) * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 }} />
                       </View>
                       <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }]}>
-                        {money(projectedProfit)} of {money(site.totalValue)} remaining
+                        {money(valueAfterPenalty)} of {money(site.totalValue)} remaining
                       </Text>
                     </View>
                   )}
@@ -7512,7 +7557,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
           if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew||[]).length > 0) return (
             <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }]}>
-              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>No {crewFilter.toLowerCase()} crew members right now.</Text>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }]}>
+                None of your {(game.crew||[]).length} crew are {crewFilter.toLowerCase()} right now.
+              </Text>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]}
+                onPress={() => setCrewFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Crew</Text>
+              </TouchableOpacity>
             </View>
           );
           return null;
@@ -7644,7 +7697,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
           if (_filteredEquip.length === 0 && equipFilter !== "All") return (
             <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }]}>
-              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>No {equipFilter.toLowerCase()} equipment right now.</Text>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }]}>
+                None of your {(game.equipment||[]).length} machines are {equipFilter.toLowerCase()} right now.
+              </Text>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
+                onPress={() => setEquipFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Equipment</Text>
+              </TouchableOpacity>
             </View>
           );
           return _filteredEquip.map((equip) => {
@@ -8591,7 +8652,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </>
           ) : (
             <View style={{ backgroundColor: T.panel2, borderRadius: 8, padding: 12 }}>
-              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>No ledger activity yet. New income and expenses will appear here automatically.</Text>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>
+                Nothing recorded yet. Every contract payment, wage, material order and repair lands here automatically — start a job and the ledger fills itself.
+              </Text>
             </View>
           )}
         </View>
@@ -8775,7 +8838,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           </View>
         ))}
         {loanOffers.length === 0 && (
-          <Text style={[styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }]}>No financing available — improve credit score to unlock loans.</Text>
+          <Text style={[styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }]}>
+            No lender will underwrite you yet. Credit score rises when you finish contracts on time and stay out of overdraft — the first loan products unlock as it climbs.
+          </Text>
         )}
 
         {/* Materials Inventory */}
@@ -9578,9 +9643,19 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
             <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 6 }]}>
               {categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available"}
             </Text>
-            <Text style={[styles.sub, subCol, { textAlign: "center" }]}>
-              New contracts arrive daily. Come back tomorrow or improve your reputation for better offers.
+            <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
+              {categoryFilter !== "All"
+                ? `Nothing in ${categoryFilter} right now — other categories may still have work.`
+                : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones."}
             </Text>
+            {categoryFilter !== "All" && (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
+                onPress={() => onSetFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Contracts</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -10012,7 +10087,15 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         </TouchableOpacity>
       )}
       {game.crew.length === 0 && (
-        <Text style={[styles.sub, subCol, { textAlign: "center", padding: 16 }]}>No crew yet — post a job ad to find workers.</Text>
+        <View style={{ alignItems: "center", padding: 16 }}>
+          <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }]}>No crew on the books</Text>
+          <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
+            A site can&apos;t start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for.
+          </Text>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={onPostJob}>
+            <Text style={[styles.btnText, { color: "#fff" }]}>Post a Job Ad</Text>
+          </TouchableOpacity>
+        </View>
       )}
       {game.crew.map((w) => {
         const trait = w.trait || {};
