@@ -35,6 +35,16 @@ import {
   tickEquipmentWear,
   scheduleMaintenance,
 } from "../../systems/equipmentWear.js";
+import {
+  OVERHEAD_NOTE,
+  createProjectCostLedger,
+  ensureProjectCostLedger,
+  accrueProjectCost,
+  accrueProjectCrewDay,
+  buildProjectEconomics,
+  getProjectReinvestmentHint,
+  buildProjectProfitLines,
+} from "../../systems/projectEconomics.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -2193,6 +2203,17 @@ function getAssignBlockReason(contract, crewIds, equipIds, state) {
   return null;
 }
 
+// The price one unit of a material costs right now, after regional pricing and the
+// player's bulk discount. Shared so that what a project is *charged* for a material and
+// what the shop *quotes* for it can never drift apart (WildBear standard: "displayed price
+// and charged price must use the same calculation path").
+function getMaterialUnitPrice(game, matId) {
+  const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+  const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+  const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
+  return Math.round(basePrice * (1 - (game ? getMaterialDiscount(game) : 0)));
+}
+
 // Returns array of { matId, label, icon, unit, needed, fulfilled, missing, pricePerUnit, costNormal, costEmergency }
 function getSiteMissingMaterials(site, contractDef, game) {
   if (!contractDef?.materials) return [];
@@ -3232,6 +3253,11 @@ export function migrateState(saved) {
     if (s.depositPaid      === undefined) s.depositPaid      = 0;
     if (s.completionBonus  === undefined) s.completionBonus  = 0;
     if (s.rushQualityPenalty === undefined) s.rushQualityPenalty = 0;
+    // Per-project P&L. A site that was already running before cost tracking existed gets an
+    // empty ledger and a `costsPartial` flag — it will accrue from today onward, and the
+    // completion screen says the breakdown covers only part of the job rather than
+    // presenting a too-good margin as fact.
+    ensureProjectCostLedger(s);
   });
   // Ensure crew have certifications field
   g.crew = (g.crew || []).map(w => w.certifications ? w : { ...w, certifications: [] });
@@ -3503,6 +3529,8 @@ export function gameTick(prev) {
           g.reputation = Math.max(0, (g.reputation || 0) - 3);
           addLog(g, `❌ ${site.label}: Major inspection failure — ${money(inspPenalty)} cost, site paused.`);
         }
+        // Remediation is a cost this project caused — it belongs in this project's P&L.
+        accrueProjectCost(site, "incidents", inspPenalty);
         g.pendingInspection = { siteId: site.id, siteLabel: site.label, phaseName: completedPhaseName, outcome: inspOutcome, penaltyApplied: inspPenalty };
       }
 
@@ -3542,6 +3570,18 @@ export function gameTick(prev) {
           g.cash += qualityBonus;
           g.revenue += qualityBonus;
         }
+        // What the project actually made, not just what it paid out. `site.costs` has been
+        // accumulating materials, crew-days, machine-days and on-site problems since
+        // mobilisation; none of it moves cash here, it is only being totalled.
+        const economics = buildProjectEconomics({
+          contractValue: site.totalValue,
+          depositPaid: site.depositPaid || 0,
+          penalty,
+          qualityBonus,
+          costs: ensureProjectCostLedger(site),
+        });
+        site.finalEconomics = economics;
+
         // Story triggers
         if (!g.pendingCelebration) {
           g.pendingCelebration = {
@@ -3549,6 +3589,13 @@ export function gameTick(prev) {
             earned: earned + qualityBonus, penalty, repGained,
             isOnTime: daysLate === 0, isMajor: (siteDef?.baseValue || 0) >= 100000,
             qualityBonus, day: g.day,
+            economics,
+            // The first completed project is the one moment a new player has a concrete
+            // example to learn the unit economics from, so it gets the full breakdown.
+            isFirstProject: (g.completedJobs || 0) === 1,
+            // Old saves have no cost history for projects already running, so the
+            // breakdown would be misleadingly rosy. Say so rather than quietly lying.
+            costsPartial: Boolean(site.costsPartial),
           };
         }
         // Company story milestones
@@ -3881,6 +3928,35 @@ export function gameTick(prev) {
     g.cash -= totalOverhead;
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
+
+    // Attribute today's crew and machine cost to the projects those people and machines
+    // are actually standing on. Attribution only — the cash already left in the sweep
+    // above; this just records which job it belonged to, so completion can show a margin.
+    // Idle crew and parked equipment are deliberately unattributed: they are company
+    // overhead, and charging them to whichever project happens to be open would make a
+    // profitable job look like it lost money.
+    for (const _site of (g.activeSites || [])) {
+      if (_site.status === "Complete") continue;
+      let _siteWages = 0;
+      let _siteCrewCount = 0;
+      for (const _id of (_site.assignedCrewIds || [])) {
+        const _w = g.crew.find((w) => w.id === _id);
+        if (!_w || _w.onShift === false) continue;
+        _siteWages += (_w.wagePerDay || 0) * (1 + crewWageMod);
+        _siteCrewCount += 1;
+      }
+      let _siteEquip = 0;
+      let _siteEquipCount = 0;
+      for (const _id of (_site.assignedEquipmentIds || [])) {
+        const _e = g.equipment.find((e) => e.id === _id);
+        if (!_e) continue;
+        _siteEquip += _e.dailyCost || 0;
+        _siteEquipCount += 1;
+      }
+      accrueProjectCost(_site, "labor", Math.round(_siteWages));
+      accrueProjectCost(_site, "equipment", Math.round(_siteEquip));
+      accrueProjectCrewDay(_site, _siteCrewCount, _siteEquipCount);
+    }
 
     // Crew stamina recovery
     for (const w of g.crew) {
@@ -4481,6 +4557,7 @@ export function gameTick(prev) {
             g.weeklyStats.expenses = (g.weeklyStats.expenses || 0) + cost;
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[matId] = needed;
+            accrueProjectCost(site, "materials", cost);
             addLog(g, `⚡ Auto-purchased ${shortage} ${matId} for "${site.label}" — ${money(cost)}.`);
           }
         }
@@ -5045,12 +5122,14 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + canBuy;
             budget -= cost;
+            accrueProjectCost(site, "materials", cost);
             addLog(g, `📦 Partial buy: ${canBuy} ${m.unit} of ${m.label} for ${money(cost)}.`);
           }
         }
       } else {
         g.cash -= totalCost;
         g.expenses += totalCost;
+        accrueProjectCost(site, "materials", totalCost);
         for (const m of missing) {
           if (!site.materialsFulfilled) site.materialsFulfilled = {};
           site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -5085,6 +5164,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         g.cash -= totalCost;
       }
       g.expenses += totalCost;
+      // Emergency premium is a cost this project caused, so it lands on this project.
+      accrueProjectCost(site, "materials", totalCost);
       for (const m of missing) {
         if (!site.materialsFulfilled) site.materialsFulfilled = {};
         site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -5106,14 +5187,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const bidMult = BID_MULTIPLIERS[bidStyle] ?? 1.0;
       const effectiveValue = Math.round(c.value * bidMult);
 
-      // Consume materials — track exactly what was fulfilled, never go negative
+      // Consume materials — track exactly what was fulfilled, never go negative.
+      // Stock drawn from inventory was paid for earlier, at the supplier. Valuing it at
+      // today's price is what lets the completion P&L show a real margin instead of
+      // pretending warehoused material was free.
       const materialsFulfilled = {};
+      let materialsFromStockCost = 0;
       for (const matId of Object.keys(c.materials || {})) {
         const needed = c.materials[matId];
         const available = Math.max(0, g.materials[matId] || 0);
         const consumed = Math.min(needed, available);
         g.materials[matId] = available - consumed;
         materialsFulfilled[matId] = consumed;
+        materialsFromStockCost += consumed * getMaterialUnitPrice(g, matId);
       }
 
       // Mark crew and equipment as active
@@ -5142,6 +5228,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         cityId: c.cityId || "salem", siteMode: "normal",
         materialsFulfilled,
         depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
+        costs: createProjectCostLedger(),
       });
 
       // R14-2: 25% deposit received on mobilise
@@ -5151,6 +5238,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.weeklyStats.revenue += _deposit;
       const _newSite = g.activeSites[g.activeSites.length - 1];
       _newSite.depositPaid = _deposit;
+      // Attribution only — this cash left the balance when the material was bought.
+      accrueProjectCost(_newSite, "materials", materialsFromStockCost);
 
       const bidNote = bidStyle !== "standard" ? ` [${bidStyle} bid]` : "";
       addLog(g, `🏗️ Site started: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
@@ -8871,7 +8960,51 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={[styles.h2, col, { textAlign: "center", marginBottom: 4 }]}>{game.pendingCelebration.isMajor ? "MAJOR CONTRACT COMPLETE!" : "Job Complete!"}</Text>
               <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 12 }]}>{game.pendingCelebration.label}</Text>
               <Text style={{ fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }}>{money(game.pendingCelebration.earned)}</Text>
-              <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>for {game.pendingCelebration.client}</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>paid by {game.pendingCelebration.client}</Text>
+
+              {/* ── Project P&L ──────────────────────────────────────────────
+                  A payout is not a profit. This is the one screen where the player can
+                  learn what a construction job actually costs to run, so it itemises the
+                  money this project spent and lands on a single net number. */}
+              {game.pendingCelebration.economics && (() => {
+                const ec = game.pendingCelebration.economics;
+                const profitable = ec.netProfit >= 0;
+                const toneColor = { positive: T.green, negative: T.red, neutral: T.text };
+                return (
+                  <View style={{ width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }}>
+                    <Text style={{ fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }}>WHAT THIS JOB MADE</Text>
+                    {buildProjectProfitLines(ec, money).map((line, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                        <Text style={[styles.sub, { color: T.sub, flex: 1 }]} numberOfLines={1}>{line.label}</Text>
+                        <Text style={[styles.sub, { color: toneColor[line.tone] || T.text, fontWeight: "700" }]}>{line.value}</Text>
+                      </View>
+                    ))}
+                    <View style={{ height: 1, backgroundColor: T.border, marginVertical: 8 }} />
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={[styles.label, col]}>Net profit</Text>
+                      <Text style={{ color: profitable ? T.green : T.red, fontSize: 20, fontWeight: "900" }}>
+                        {profitable ? "" : "−"}{money(Math.abs(ec.netProfit))}
+                      </Text>
+                    </View>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 2 }]}>
+                      {ec.marginPercent}% margin{ec.depositPaid > 0 ? ` · ${money(ec.depositPaid)} of this arrived as the deposit at mobilisation` : ""}
+                    </Text>
+                    {game.pendingCelebration.costsPartial && (
+                      <Text style={[styles.sub, { color: T.orange, fontSize: 11, marginTop: 6 }]}>
+                        ⚠ This job was already running before cost tracking started — the costs above cover only part of it.
+                      </Text>
+                    )}
+                    {/* Spelling out what is deliberately NOT charged here is the difference
+                        between an honest breakdown and one the player later feels tricked by. */}
+                    {game.pendingCelebration.isFirstProject && (
+                      <>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 8, fontStyle: "italic" }]}>{OVERHEAD_NOTE}</Text>
+                        <Text style={[styles.sub, { color: T.cyan, fontSize: 12, marginTop: 8 }]}>{getProjectReinvestmentHint(ec.netProfit)}</Text>
+                      </>
+                    )}
+                  </View>
+                );
+              })()}
               <View style={{ flexDirection: "row", gap: 12, marginBottom: 16 }}>
                 {game.pendingCelebration.isOnTime && (
                   <View style={[styles.statusPill, { backgroundColor: T.green + "22" }]}>

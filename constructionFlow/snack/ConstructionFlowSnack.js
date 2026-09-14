@@ -2083,6 +2083,134 @@ function tickEquipmentWear(game) {
   });
 }
 
+// src/systems/projectEconomics.js
+var PROJECT_COST_CATEGORIES = {
+  materials: { label: "Materials", icon: "cube" },
+  labor: { label: "Crew wages", icon: "people" },
+  equipment: { label: "Equipment", icon: "construct" },
+  incidents: { label: "Problems on site", icon: "warning" }
+};
+function createProjectCostLedger() {
+  return { materials: 0, labor: 0, equipment: 0, incidents: 0, crewDays: 0, equipmentDays: 0 };
+}
+function ensureProjectCostLedger(site) {
+  if (!site || typeof site !== "object") return createProjectCostLedger();
+  if (!site.costs || typeof site.costs !== "object" || Array.isArray(site.costs)) {
+    site.costs = createProjectCostLedger();
+    site.costsPartial = true;
+  } else {
+    const base = createProjectCostLedger();
+    for (const key of Object.keys(base)) {
+      const value = Number(site.costs[key]);
+      site.costs[key] = Number.isFinite(value) && value > 0 ? value : 0;
+    }
+  }
+  return site.costs;
+}
+function accrueProjectCost(site, category, amount) {
+  const value = Number(amount);
+  if (!site || !Number.isFinite(value) || value <= 0) return;
+  if (!Object.prototype.hasOwnProperty.call(PROJECT_COST_CATEGORIES, category)) return;
+  const costs = ensureProjectCostLedger(site);
+  costs[category] = (costs[category] || 0) + value;
+}
+function accrueProjectCrewDay(site, crewCount, equipmentCount) {
+  if (!site) return;
+  const costs = ensureProjectCostLedger(site);
+  const crew = Number(crewCount);
+  const equip = Number(equipmentCount);
+  if (Number.isFinite(crew) && crew > 0) costs.crewDays = (costs.crewDays || 0) + crew;
+  if (Number.isFinite(equip) && equip > 0) costs.equipmentDays = (costs.equipmentDays || 0) + equip;
+}
+function buildProjectEconomics({
+  contractValue = 0,
+  depositPaid = 0,
+  penalty = 0,
+  qualityBonus = 0,
+  costs = null
+} = {}) {
+  const value = Math.max(0, Math.round(Number(contractValue) || 0));
+  const deposit = Math.max(0, Math.round(Number(depositPaid) || 0));
+  const latePenalty = Math.max(0, Math.round(Number(penalty) || 0));
+  const bonus = Math.max(0, Math.round(Number(qualityBonus) || 0));
+  const ledger = costs && typeof costs === "object" ? costs : createProjectCostLedger();
+  const materials = Math.max(0, Math.round(Number(ledger.materials) || 0));
+  const labor = Math.max(0, Math.round(Number(ledger.labor) || 0));
+  const equipment = Math.max(0, Math.round(Number(ledger.equipment) || 0));
+  const incidents = Math.max(0, Math.round(Number(ledger.incidents) || 0));
+  const directCosts = materials + labor + equipment + incidents;
+  const grossRevenue = Math.max(0, value + bonus - latePenalty);
+  const finalPayment = Math.max(0, grossRevenue - deposit);
+  const netProfit = grossRevenue - directCosts;
+  return {
+    contractValue: value,
+    depositPaid: deposit,
+    penalty: latePenalty,
+    qualityBonus: bonus,
+    materials,
+    labor,
+    equipment,
+    incidents,
+    directCosts,
+    grossRevenue,
+    finalPayment,
+    netProfit,
+    // Only reported when there is revenue to divide by — a forfeited project must not
+    // produce NaN or Infinity in player-facing copy.
+    marginPercent: grossRevenue > 0 ? Math.round(netProfit / grossRevenue * 100) : 0,
+    crewDays: Math.max(0, Math.round(Number(ledger.crewDays) || 0)),
+    equipmentDays: Math.max(0, Math.round(Number(ledger.equipmentDays) || 0))
+  };
+}
+var OVERHEAD_NOTE = "Office rent, insurance and loan payments are company overhead \u2014 they're paid daily whether or not this job runs, so they're not charged against it.";
+function getProjectReinvestmentHint(netProfit) {
+  const net = Math.round(Number(netProfit) || 0);
+  if (net <= 0) {
+    return "This one didn't clear its costs. Bid closer to the estimate, buy materials before prices move, and don't leave crew on a stalled site.";
+  }
+  if (net < 5e3) {
+    return "Reinvest it: keep materials stocked and take the next bid. A few jobs like this covers your first extra labourer.";
+  }
+  if (net < 2e4) {
+    return "Reinvest it: another crew member in Crew lets you run a second site at once \u2014 that's the fastest way to double this number.";
+  }
+  if (net < 75e3) {
+    return "Reinvest it: a bigger machine in Vehicles unlocks higher-tier contracts that pay far more per crew-day.";
+  }
+  return "Reinvest it: a second city office in Empire opens larger contracts, or clear debt in Finance to cut your daily burn.";
+}
+function buildProjectProfitLines(economics, formatMoney) {
+  const fmt = typeof formatMoney === "function" ? formatMoney : (n) => `$${Math.round(n).toLocaleString()}`;
+  const lines = [{ label: "Contract value", value: fmt(economics.contractValue), tone: "neutral" }];
+  if (economics.qualityBonus > 0) {
+    lines.push({ label: "Quality bonus", value: `+${fmt(economics.qualityBonus)}`, tone: "positive" });
+  }
+  if (economics.penalty > 0) {
+    lines.push({ label: "Late penalty", value: `\u2212${fmt(economics.penalty)}`, tone: "negative" });
+  }
+  if (economics.materials > 0) {
+    lines.push({ label: "Materials", value: `\u2212${fmt(economics.materials)}`, tone: "negative" });
+  }
+  if (economics.labor > 0) {
+    lines.push({
+      label: economics.crewDays > 0 ? `Crew wages (${economics.crewDays} crew-days)` : "Crew wages",
+      value: `\u2212${fmt(economics.labor)}`,
+      tone: "negative"
+    });
+  }
+  if (economics.equipment > 0) {
+    lines.push({
+      label: economics.equipmentDays > 0 ? `Equipment (${economics.equipmentDays} machine-days)` : "Equipment",
+      value: `\u2212${fmt(economics.equipment)}`,
+      tone: "negative"
+    });
+  }
+  if (economics.incidents > 0) {
+    lines.push({ label: "Problems on site", value: `\u2212${fmt(economics.incidents)}`, tone: "negative" });
+  }
+  return lines;
+}
+
 // src/games/constructionflow/.ConstructionFlowSnackEntry.js
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 var STORAGE_KEY = "constructionflow_v1_save";
@@ -5379,6 +5507,12 @@ function getAssignBlockReason(contract, crewIds, equipIds, state) {
   }
   return null;
 }
+function getMaterialUnitPrice(game, matId) {
+  const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+  const rawBasePrice = game?.materialPrices?.[matId] || mat?.basePrice || 100;
+  const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
+  return Math.round(basePrice * (1 - (game ? getMaterialDiscount(game) : 0)));
+}
 function getSiteMissingMaterials(site, contractDef, game) {
   if (!contractDef?.materials) return [];
   const disc = game ? getMaterialDiscount(game) : 0;
@@ -6299,6 +6433,7 @@ function migrateState(saved) {
     if (s.depositPaid === void 0) s.depositPaid = 0;
     if (s.completionBonus === void 0) s.completionBonus = 0;
     if (s.rushQualityPenalty === void 0) s.rushQualityPenalty = 0;
+    ensureProjectCostLedger(s);
   });
   g.crew = (g.crew || []).map((w) => w.certifications ? w : { ...w, certifications: [] });
   g.crew = (g.crew || []).map((w) => ({ specialty: pick2(CREW_SPECIALTIES), ...w }));
@@ -6517,6 +6652,7 @@ function gameTick(prev) {
           g.reputation = Math.max(0, (g.reputation || 0) - 3);
           addLog2(g, `\u274C ${site.label}: Major inspection failure \u2014 ${money2(inspPenalty)} cost, site paused.`);
         }
+        accrueProjectCost(site, "incidents", inspPenalty);
         g.pendingInspection = { siteId: site.id, siteLabel: site.label, phaseName: completedPhaseName, outcome: inspOutcome, penaltyApplied: inspPenalty };
       }
       if (site.currentPhaseIdx >= site.phases.length) {
@@ -6551,6 +6687,14 @@ function gameTick(prev) {
           g.cash += qualityBonus;
           g.revenue += qualityBonus;
         }
+        const economics = buildProjectEconomics({
+          contractValue: site.totalValue,
+          depositPaid: site.depositPaid || 0,
+          penalty,
+          qualityBonus,
+          costs: ensureProjectCostLedger(site)
+        });
+        site.finalEconomics = economics;
         if (!g.pendingCelebration) {
           g.pendingCelebration = {
             label: site.label,
@@ -6561,7 +6705,14 @@ function gameTick(prev) {
             isOnTime: daysLate === 0,
             isMajor: (siteDef?.baseValue || 0) >= 1e5,
             qualityBonus,
-            day: g.day
+            day: g.day,
+            economics,
+            // The first completed project is the one moment a new player has a concrete
+            // example to learn the unit economics from, so it gets the full breakdown.
+            isFirstProject: (g.completedJobs || 0) === 1,
+            // Old saves have no cost history for projects already running, so the
+            // breakdown would be misleadingly rosy. Say so rather than quietly lying.
+            costsPartial: Boolean(site.costsPartial)
           };
         }
         if (earned >= 1e5 && !(g._stories || []).includes("first_100k")) {
@@ -6877,6 +7028,28 @@ function gameTick(prev) {
     g.cash -= totalOverhead;
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
+    for (const _site of g.activeSites || []) {
+      if (_site.status === "Complete") continue;
+      let _siteWages = 0;
+      let _siteCrewCount = 0;
+      for (const _id of _site.assignedCrewIds || []) {
+        const _w = g.crew.find((w) => w.id === _id);
+        if (!_w || _w.onShift === false) continue;
+        _siteWages += (_w.wagePerDay || 0) * (1 + crewWageMod);
+        _siteCrewCount += 1;
+      }
+      let _siteEquip = 0;
+      let _siteEquipCount = 0;
+      for (const _id of _site.assignedEquipmentIds || []) {
+        const _e = g.equipment.find((e) => e.id === _id);
+        if (!_e) continue;
+        _siteEquip += _e.dailyCost || 0;
+        _siteEquipCount += 1;
+      }
+      accrueProjectCost(_site, "labor", Math.round(_siteWages));
+      accrueProjectCost(_site, "equipment", Math.round(_siteEquip));
+      accrueProjectCrewDay(_site, _siteCrewCount, _siteEquipCount);
+    }
     for (const w of g.crew) {
       if (w.status === "Idle") {
         w.stamina = Math.min(100, w.stamina + rand2(15, 25));
@@ -7382,6 +7555,7 @@ function gameTick(prev) {
             g.weeklyStats.expenses = (g.weeklyStats.expenses || 0) + cost;
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[matId] = needed;
+            accrueProjectCost(site, "materials", cost);
             addLog2(g, `\u26A1 Auto-purchased ${shortage} ${matId} for "${site.label}" \u2014 ${money2(cost)}.`);
           }
         }
@@ -7909,12 +8083,14 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + canBuy;
             budget -= cost;
+            accrueProjectCost(site, "materials", cost);
             addLog2(g, `\u{1F4E6} Partial buy: ${canBuy} ${m.unit} of ${m.label} for ${money2(cost)}.`);
           }
         }
       } else {
         g.cash -= totalCost;
         g.expenses += totalCost;
+        accrueProjectCost(site, "materials", totalCost);
         for (const m of missing) {
           if (!site.materialsFulfilled) site.materialsFulfilled = {};
           site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -7947,6 +8123,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         g.cash -= totalCost;
       }
       g.expenses += totalCost;
+      accrueProjectCost(site, "materials", totalCost);
       for (const m of missing) {
         if (!site.materialsFulfilled) site.materialsFulfilled = {};
         site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -7971,12 +8148,14 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const bidMult = BID_MULTIPLIERS[bidStyle] ?? 1;
       const effectiveValue = Math.round(c.value * bidMult);
       const materialsFulfilled = {};
+      let materialsFromStockCost = 0;
       for (const matId of Object.keys(c.materials || {})) {
         const needed = c.materials[matId];
         const available = Math.max(0, g.materials[matId] || 0);
         const consumed = Math.min(needed, available);
         g.materials[matId] = available - consumed;
         materialsFulfilled[matId] = consumed;
+        materialsFromStockCost += consumed * getMaterialUnitPrice(g, matId);
       }
       for (const id of crewIds) {
         const w = g.crew.find((w2) => w2.id === id);
@@ -8019,7 +8198,8 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         materialsFulfilled,
         depositPaid: 0,
         completionBonus: 0,
-        rushQualityPenalty: 0
+        rushQualityPenalty: 0,
+        costs: createProjectCostLedger()
       });
       const _deposit = Math.round(effectiveValue * 0.25);
       g.cash += _deposit;
@@ -8027,6 +8207,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       g.weeklyStats.revenue += _deposit;
       const _newSite = g.activeSites[g.activeSites.length - 1];
       _newSite.depositPaid = _deposit;
+      accrueProjectCost(_newSite, "materials", materialsFromStockCost);
       const bidNote = bidStyle !== "standard" ? ` [${bidStyle} bid]` : "";
       addLog2(g, `\u{1F3D7}\uFE0F Site started: "${c.label}" for ${c.client} \u2014 ${money2(effectiveValue)} contract${bidNote}. \u{1F4B0} 25% deposit: ${money2(_deposit)}.`);
     });
@@ -11951,9 +12132,39 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
       /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: game.pendingCelebration.label }),
       /* @__PURE__ */ jsx(Text, { style: { fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }, children: money2(game.pendingCelebration.earned) }),
       /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: [
-        "for ",
+        "paid by ",
         game.pendingCelebration.client
       ] }),
+      game.pendingCelebration.economics && (() => {
+        const ec = game.pendingCelebration.economics;
+        const profitable = ec.netProfit >= 0;
+        const toneColor = { positive: T.green, negative: T.red, neutral: T.text };
+        return /* @__PURE__ */ jsxs(View, { style: { width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }, children: [
+          /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }, children: "WHAT THIS JOB MADE" }),
+          buildProjectProfitLines(ec, money2).map((line, i) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, flex: 1 }], numberOfLines: 1, children: line.label }),
+            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: toneColor[line.tone] || T.text, fontWeight: "700" }], children: line.value })
+          ] }, i)),
+          /* @__PURE__ */ jsx(View, { style: { height: 1, backgroundColor: T.border, marginVertical: 8 } }),
+          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "Net profit" }),
+            /* @__PURE__ */ jsxs(Text, { style: { color: profitable ? T.green : T.red, fontSize: 20, fontWeight: "900" }, children: [
+              profitable ? "" : "\u2212",
+              money2(Math.abs(ec.netProfit))
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 2 }], children: [
+            ec.marginPercent,
+            "% margin",
+            ec.depositPaid > 0 ? ` \xB7 ${money2(ec.depositPaid)} of this arrived as the deposit at mobilisation` : ""
+          ] }),
+          game.pendingCelebration.costsPartial && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange, fontSize: 11, marginTop: 6 }], children: "\u26A0 This job was already running before cost tracking started \u2014 the costs above cover only part of it." }),
+          game.pendingCelebration.isFirstProject && /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 8, fontStyle: "italic" }], children: OVERHEAD_NOTE }),
+            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan, fontSize: 12, marginTop: 8 }], children: getProjectReinvestmentHint(ec.netProfit) })
+          ] })
+        ] });
+      })(),
       /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 12, marginBottom: 16 }, children: [
         game.pendingCelebration.isOnTime && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.green + "22" }], children: /* @__PURE__ */ jsx(Text, { style: [styles.statusPillText, { color: T.green }], children: "\u2705 On Time" }) }),
         game.pendingCelebration.repGained > 0 && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.purple + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: T.purple }], children: [
