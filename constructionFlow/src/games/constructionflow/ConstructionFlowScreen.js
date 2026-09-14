@@ -37,6 +37,12 @@ import {
   scheduleMaintenance,
 } from "../../systems/equipmentWear.js";
 import {
+  buildInsufficientFundsAlert,
+  buildAssignBlockAlert,
+  buildCreditTooLowAlert,
+  buildCapacityAlert,
+} from "../../systems/recoveryGuidance.js";
+import {
   OVERHEAD_NOTE,
   estimateProjectCosts,
   createProjectCostLedger,
@@ -2183,6 +2189,43 @@ function createLoanFromProduct(product, state) {
   };
 }
 
+// Shows the shared "not enough cash" alert, with the recovery routes that are actually open
+// to this company right now. Every affordability check in the game funnels through here so
+// the advice can never drift between screens.
+function alertInsufficientFunds(state, cost, purchase) {
+  const { title, body } = buildInsufficientFundsAlert({
+    cost,
+    purchase,
+    cash: state?.cash || 0,
+    savings: state?.savings || 0,
+    hasActiveSites: (state?.activeSites || []).length > 0,
+    creditScore: state?.creditScore || 600,
+    // Three concurrent loans is the game's own ceiling — do not advise borrowing at it.
+    canBorrow: (state?.loans || []).length < 3,
+    formatMoney: money,
+  });
+  Alert.alert(title, body);
+}
+
+// Classifies a block reason so the alert can name the route to fixing it. Kept next to the
+// reason strings themselves so the two cannot fall out of sync.
+function getAssignBlockKind(contract, crewIds, equipIds, state) {
+  if (!contract) return "none";
+  if (state.businessFrozen) return "frozen";
+  const def = CONTRACT_DEFS.find((d) => d.id === contract.defId) || {};
+  const bestTier = Math.max(0, ...equipIds.map((id) => {
+    const e = state.equipment.find((eq) => eq.id === id);
+    return e ? e.tier : 0;
+  }));
+  if (equipIds.length < (def.equipMin || 1)) return "equipment";
+  if (crewIds.length < (def.crewMin || 1)) return "crew";
+  if (bestTier < (def.minTier || 1)) return "tier";
+  for (const matId of Object.keys(contract.materials || {})) {
+    if ((state.materials[matId] || 0) < contract.materials[matId]) return "materials";
+  }
+  return "none";
+}
+
 function getAssignBlockReason(contract, crewIds, equipIds, state) {
   if (!contract) return "No contract selected.";
   if (state.businessFrozen) return "Business is frozen — resolve overdue taxes.";
@@ -2237,6 +2280,37 @@ function getSiteMissingMaterials(site, contractDef, game) {
     });
     return acc;
   }, []);
+}
+
+// Which Getting Started step the player is on, derived purely from game state — there is no
+// stored tutorial cursor, so the card can never get out of step with what the player has
+// actually done. Extracted from renderHome so the bottom nav can mark the same tab the card
+// is pointing at, which is how FleetFlow guides its own first sixty seconds.
+export function getTutorialStepIndex(game) {
+  if (!game || game.tutorialDone) return -1;
+  const sites = game.activeSites || [];
+  const hasActiveSite = sites.length > 0;
+  const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
+  const needsMaterials = hasActiveSite && sites.some((site) => {
+    const con = (game.contracts || []).find((c) => c.id === site.contractId);
+    const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
+    return def?.materials && Object.entries(def.materials).some(
+      ([id, qty]) => ((site.materialsFulfilled || {})[id] || 0) < qty,
+    );
+  });
+
+  if (hasActiveSite && !needsMaterials) return 3;
+  if (hasActiveSite && needsMaterials) return 2;
+  if (hasBid) return 1;
+  return 0;
+}
+
+// The tab the tutorial is currently sending the player to, or null when the tutorial is
+// done or the player is already looking at the right tab.
+export function getTutorialTargetTab(game) {
+  const step = getTutorialStepIndex(game);
+  if (step < 0) return null;
+  return step === 0 ? "Bids" : "Sites";
 }
 
 export function getNextBestAction(s) {
@@ -4933,10 +5007,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const discount = (g._equipDiscount || 0);
       const basePrice = Math.round(item.price * (1 - discount));
       const effectivePrice = isUsed ? Math.round(basePrice * 0.58) : basePrice;
-      if (g.cash < effectivePrice) { Alert.alert("Insufficient Funds", `Need ${money(effectivePrice)}.`); return; }
+      if (g.cash < effectivePrice) { alertInsufficientFunds(g, effectivePrice, item?.name || "This machine"); return; }
       const office = OFFICES[g.officeIndex];
       const totalEquipCap = office.equipCap + getEquipCapBonus(g);
-      if (g.equipment.length >= totalEquipCap) { Alert.alert("Vehicles Cap", `Upgrade your office to add more vehicles to your fleet.`); return; }
+      if (g.equipment.length >= totalEquipCap) { const a = buildCapacityAlert({ kind: "equipment", current: g.equipment.length, cap: totalEquipCap }); Alert.alert(a.title, a.body); return; }
       g.cash -= effectivePrice;
       g.expenses += effectivePrice;
       const equip = createEquipment(item);
@@ -4963,7 +5037,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const uses = cur.speedUpUses || 0;
     const cost = Math.round(1000 * Math.pow(2, uses));
     if (cur.cash < cost) {
-      Alert.alert("Insufficient Funds", `You need ${money(cost)} to speed up time.\nSave up and try again.`);
+      alertInsufficientFunds(cur, cost, "Skipping ahead");
       return;
     }
     Alert.alert(
@@ -4994,7 +5068,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const e = g.equipment.find((eq) => eq.id === equipId);
       if (!e) return;
       const cost = Math.round((100 - e.condition) * 25);
-      if (g.cash < cost) { Alert.alert("Insufficient Funds", `Repair costs ${money(cost)}.`); return; }
+      if (g.cash < cost) { alertInsufficientFunds(g, cost, "This repair"); return; }
       g.cash -= cost;
       g.expenses += cost;
       e.condition = 100;
@@ -5021,9 +5095,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleHireCrew = useCallback((applicant) => {
     update((g) => {
       const totalCrewCap = getTotalCrewCap(g);
-      if (g.crew.length >= totalCrewCap) { Alert.alert("Crew Cap", "Upgrade your office or open a Regional Office in a new city."); return; }
+      if (g.crew.length >= totalCrewCap) { const a = buildCapacityAlert({ kind: "crew", current: g.crew.length, cap: totalCrewCap }); Alert.alert(a.title, a.body); return; }
       const bonus = applicant.signingBonus || 0;
-      if (g.cash < bonus) { Alert.alert("Insufficient Funds", `Signing bonus requires ${money(bonus)}.`); return; }
+      if (g.cash < bonus) { alertInsufficientFunds(g, bonus, "This hire's signing bonus"); return; }
       g.cash -= bonus;
       g.expenses += bonus;
       g.applicants = g.applicants.filter((a) => a.id !== applicant.id);
@@ -5063,7 +5137,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const w = g.crew.find(w => w.id === workerId);
       if (!w) return;
-      if (g.cash < 500) { Alert.alert("Insufficient Funds", "Promotion costs $500."); return; }
+      if (g.cash < 500) { alertInsufficientFunds(g, 500, "This promotion"); return; }
       if ((w.level||1) < 3 || (w.skill||0) < 70) { Alert.alert("Not Eligible", "Worker needs level 3+ and skill 70+."); return; }
       g.cash -= 500;
       g.expenses += 500;
@@ -5078,7 +5152,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handlePostJob = useCallback((posting) => {
     update((g) => {
-      if (g.cash < posting.cost) { Alert.alert("Insufficient Funds", `Posting costs ${money(posting.cost)}.`); return; }
+      if (g.cash < posting.cost) { alertInsufficientFunds(g, posting.cost, "This job ad"); return; }
       g.cash -= posting.cost;
       g.expenses += posting.cost;
       for (let i = 0; i < posting.count; i++) {
@@ -5097,7 +5171,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
       const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
       const totalCost = price * qty;
-      if (g.cash < totalCost) { Alert.alert("Insufficient Funds", `Costs ${money(totalCost)}.`); return; }
+      if (g.cash < totalCost) { alertInsufficientFunds(g, totalCost, "These materials"); return; }
       g.cash -= totalCost;
       g.expenses += totalCost;
       g.materials[matId] = (g.materials[matId] || 0) + qty;
@@ -5186,7 +5260,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const c = g.contracts.find((c) => c.id === contract.id);
       if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
       const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
-      if (blockReason) { Alert.alert("Cannot Start", blockReason); return; }
+      if (blockReason) {
+        const { title, body } = buildAssignBlockAlert(blockReason, getAssignBlockKind(c, crewIds, equipIds, g));
+        Alert.alert(title, body);
+        return;
+      }
 
       // Apply bid style multiplier
       const BID_MULTIPLIERS = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
@@ -5257,7 +5335,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const def = SUBCONTRACTOR_TYPES.find((t) => t.id === typeId);
       if (!def) return;
-      if (g.cash < def.hireCost) { Alert.alert("Insufficient Funds", `Hire cost: ${money(def.hireCost)}`); return; }
+      if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, "This subcontractor"); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
       if (!g.subcontractors) g.subcontractors = [];
@@ -5319,7 +5397,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handlePayTax = useCallback(() => {
     update((g) => {
       if ((g.taxDue || 0) <= 0) return;
-      if (g.cash < g.taxDue) { Alert.alert("Insufficient Funds", `Tax bill is ${money(g.taxDue)}.`); return; }
+      if (g.cash < g.taxDue) { alertInsufficientFunds(g, g.taxDue, "This tax bill"); return; }
       g.cash -= g.taxDue;
       g.expenses += g.taxDue;
       addLog(g, `✅ Tax bill of ${money(g.taxDue)} paid.`);
@@ -5334,7 +5412,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const amt = Math.round(amount);
       if (!amt || amt <= 0) { Alert.alert("Invalid Amount", "Enter a positive amount."); return; }
-      if (g.cash < amt) { Alert.alert("Insufficient Funds", `Need ${money(amt)} in operating cash.`); return; }
+      if (g.cash < amt) {
+        Alert.alert("Not Enough Operating Cash", `You have ${money(g.cash)} in operating cash, less than the ${money(amt)} you're moving to savings.\n\nMove a smaller amount, or wait for a job to pay out.`);
+        return;
+      }
       g.cash -= amt;
       g.savings = (g.savings || 0) + amt;
       addLog(g, `🏦 Deposited ${money(amt)} into savings. Reserve: ${money(g.savings)}.`);
@@ -5345,7 +5426,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const amt = Math.round(amount);
       if (!amt || amt <= 0) { Alert.alert("Invalid Amount", "Enter a positive amount."); return; }
-      if ((g.savings || 0) < amt) { Alert.alert("Insufficient Reserve", `Only ${money(g.savings || 0)} in savings.`); return; }
+      if ((g.savings || 0) < amt) {
+        Alert.alert("Not Enough In Savings", `Your reserve holds ${money(g.savings || 0)}, less than the ${money(amt)} you're withdrawing.\n\nWithdraw a smaller amount.`);
+        return;
+      }
       g.savings -= amt;
       g.cash += amt;
       addLog(g, `🏦 Withdrew ${money(amt)} from savings. Reserve: ${money(g.savings)}.`);
@@ -5357,7 +5441,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const loan = (g.loans || []).find(l => l.id === loanId);
       if (!loan) return;
-      if (g.cash < payoffAmount) { Alert.alert("Insufficient Funds", `Need ${money(payoffAmount)} to pay off this loan early.`); return; }
+      if (g.cash < payoffAmount) {
+        const a = buildInsufficientFundsAlert({
+          cost: payoffAmount, purchase: "Paying this loan off early", cash: g.cash,
+          savings: g.savings || 0, hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false, formatMoney: money,
+        });
+        Alert.alert(a.title, a.body);
+        return;
+      }
       g.cash -= payoffAmount;
       g.expenses += payoffAmount;
       g.loans = g.loans.filter(l => l.id !== loanId);
@@ -5370,7 +5462,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const loan = (g.loans || []).find(l => l.id === loanId);
       const amt = Math.round(amount);
-      if (!loan || amt <= 0 || g.cash < amt) { Alert.alert("Insufficient Funds", `Need ${money(amt)} in cash.`); return; }
+      if (!loan || amt <= 0 || g.cash < amt) {
+        const a = buildInsufficientFundsAlert({
+          cost: amt, purchase: "This loan payment", cash: g.cash,
+          savings: g.savings || 0, hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false, formatMoney: money,
+        });
+        Alert.alert(a.title, a.body);
+        return;
+      }
       const actualAmt = Math.min(amt, loan.remainingBalance);
       g.cash -= actualAmt;
       g.expenses += actualAmt;
@@ -5390,7 +5490,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // R16-4: Business Line of Credit handlers
   const handleOpenCreditLine = useCallback(() => {
     update((g) => {
-      if ((g.creditScore || 600) < 680) { Alert.alert("Credit Too Low", "Need 680+ credit score to open a line of credit."); return; }
+      if ((g.creditScore || 600) < 680) { const a = buildCreditTooLowAlert({ creditScore: g.creditScore || 600, required: 680 }); Alert.alert(a.title, a.body); return; }
       if (g.creditLine) { Alert.alert("Already Active", "You already have an open line of credit."); return; }
       g.creditLine = { limit: 75000, drawn: 0, apr: 14, opened: g.day };
       g.creditScore = Math.max(300, (g.creditScore || 600) - 3);
@@ -5431,7 +5531,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const next = OFFICES[g.officeIndex + 1];
       if (!next) { Alert.alert("Max Office", "You're at the top tier already."); return; }
-      if (g.cash < next.cost) { Alert.alert("Insufficient Funds", `Need ${money(next.cost)}.`); return; }
+      if (g.cash < next.cost) { alertInsufficientFunds(g, next.cost, next.name || "This office upgrade"); return; }
       g.cash -= next.cost;
       g.expenses += next.cost;
       g.officeIndex += 1;
@@ -5459,7 +5559,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const def  = REGIONAL_OFFICE_TYPES.find(t => t.id === officeTypeId);
       if (!city || !def) return;
       if (g.reputation < city.unlockRep) { Alert.alert("Not Yet", `Need ${city.unlockRep}+ reputation to expand to ${city.name}.`); return; }
-      if (g.cash < city.unlockCost + def.cost) { Alert.alert("Insufficient Funds", `Expanding to ${city.name} and opening a ${def.name} costs ${money(city.unlockCost + def.cost)}.`); return; }
+      if (g.cash < city.unlockCost + def.cost) { alertInsufficientFunds(g, city.unlockCost + def.cost, `Expanding to ${city.name} with a ${def.name}`); return; }
       const alreadyInCity = (g.cityOffices||[]).some(o => o.cityId === cityId);
       const totalCost = def.cost + (alreadyInCity ? 0 : city.unlockCost);
       g.cash -= totalCost;
@@ -5474,7 +5574,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const def = PROPERTY_TYPES.find(t => t.id === typeId);
       if (!def) return;
-      if (g.cash < def.cost) { Alert.alert("Insufficient Funds", `${def.name} costs ${money(def.cost)}.`); return; }
+      if (g.cash < def.cost) { alertInsufficientFunds(g, def.cost, def.name); return; }
       g.cash -= def.cost;
       g.expenses += def.cost;
       if (!g.properties) g.properties = [];
@@ -5489,7 +5589,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!def) return;
       const already = (g.projectManagers||[]).some(pm => pm.typeId === pmTypeId);
       if (already) { Alert.alert("Already Hired", `You already have a ${def.name} on staff.`); return; }
-      if (g.cash < def.hireCost) { Alert.alert("Insufficient Funds", `Hiring costs ${money(def.hireCost)}.`); return; }
+      if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, `Hiring a ${def.name || "project manager"}`); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
       if (!g.projectManagers) g.projectManagers = [];
@@ -5522,7 +5622,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const w = g.crew.find((w) => w.id === workerId);
       const prog = TRAINING_PROGRAMS.find((p) => p.id === programId);
       if (!w || !prog) return;
-      if (g.cash < prog.cost) { Alert.alert("Insufficient Funds", `Training costs ${money(prog.cost)}.`); return; }
+      if (g.cash < prog.cost) { alertInsufficientFunds(g, prog.cost, prog.label || prog.name || "This training"); return; }
       if (w.status === "Active") { Alert.alert("On Site", "Can't enroll a worker currently assigned to a site."); return; }
       const alreadyEnrolled = (g.trainingQueue || []).some((t) => t.workerId === workerId);
       if (alreadyEnrolled) { Alert.alert("Already Training", "This worker is already enrolled in a program."); return; }
@@ -5542,7 +5642,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.reputation < 50) { Alert.alert("Reputation Too Low", "Need 50+ reputation to acquire rivals."); return; }
       // Acquisition cooldown: 30-day gap between acquisitions
       if (g.day - (g.lastAcquisitionDay||0) < 30) { Alert.alert("Acquisition Cooldown", `Must wait ${30 - (g.day - (g.lastAcquisitionDay||0))} more day(s) before next acquisition.`); return; }
-      if (g.cash < acquisitionCost) { Alert.alert("Insufficient Funds", `Acquiring ${rival.name} costs ${money(acquisitionCost)}.`); return; }
+      if (g.cash < acquisitionCost) { alertInsufficientFunds(g, acquisitionCost, `Acquiring ${rival.name}`); return; }
       g.cash -= acquisitionCost;
       g.expenses += acquisitionCost;
       g.cash += (rival.cash||0) * 0.7; // absorb 70% of rival cash
@@ -5756,7 +5856,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!_s || _s.renegotiated) return;
       const _def = CONTRACT_DEFS.find(c => c.id === (g.contracts||[]).find(cc => cc.id === _s.contractId)?.defId);
       const _cost = Math.round((_def?.baseValue || _s.totalValue || 10000) * 0.08);
-      if ((g.cash||0) < _cost) { addLog(g, `Need ${money(_cost)} to renegotiate.`); Alert.alert("Insufficient Funds", `Renegotiating costs ${money(_cost)}. You have ${money(g.cash||0)}.`); return; }
+      if ((g.cash||0) < _cost) { addLog(g, `Need ${money(_cost)} to renegotiate.`); alertInsufficientFunds(g, _cost, "Renegotiating this contract"); return; }
       g.cash -= _cost;
       g.expenses = (g.expenses||0) + _cost;
       g.reputation = Math.max(0, (g.reputation||0) - 2);
@@ -6272,19 +6372,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
         {/* Tutorial — step-by-step, auto-advances with game state */}
         {!game.tutorialDone && (() => {
-          const hasActiveSite  = (game.activeSites||[]).length > 0;
-          const hasBid         = (game.contracts||[]).some(c => c.status === "Active" || c.status === "Awarded");
-          const needsMaterials = hasActiveSite && (game.activeSites||[]).some(s => {
-            const con = (game.contracts||[]).find(c => c.id === s.contractId);
-            const def = CONTRACT_DEFS.find(d => d.id === con?.defId);
-            return def?.materials && Object.entries(def.materials).some(([id,qty]) => ((s.materialsFulfilled||{})[id]||0) < qty);
-          });
-
-          // Determine current step
-          let step = 0;
-          if (hasActiveSite && !needsMaterials)  step = 3;
-          else if (hasActiveSite && needsMaterials) step = 2;
-          else if (hasBid)                        step = 1;
+          const step = getTutorialStepIndex(game);
 
           const steps = [
             {
@@ -9394,7 +9482,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     style={[styles.btn, { marginBottom: 8, backgroundColor: _canAfford ? T.green : T.panel2, borderColor: _canAfford ? T.green : T.border, opacity: _canAfford ? 1 : 0.55 }]}
                     onPress={() => {
                       const ev = game.pendingVeteranEvent;
-                      if (!_canAfford) { Alert.alert("Insufficient Funds", `You need ${money(ev.retainCost)} to pay this bonus.`); return; }
+                      if (!_canAfford) { alertInsufficientFunds(game, ev.retainCost, "This retention bonus"); return; }
                       update(g => {
                         const _ev = g.pendingVeteranEvent;
                         const w = (g.crew||[]).find(c => c.id === _ev.workerId);
@@ -9541,8 +9629,32 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Empire:   { active: "trophy",         inactive: "trophy-outline"        },
           };
           const iconName = active ? TAB_ICONS[t]?.active : TAB_ICONS[t]?.inactive;
+          // During the tutorial, mark the tab the Getting Started card is sending the
+          // player to. Without this the card says "Go to Bids" and the tab itself gives no
+          // sign which one that is — the single cheapest fix available to the first minute.
+          const isTutorialTarget = !active && t === getTutorialTargetTab(game);
           return (
-            <TouchableOpacity key={t} style={styles.tabItem} onPress={() => setTab(t)} activeOpacity={0.75}>
+            <TouchableOpacity
+              key={t}
+              style={styles.tabItem}
+              onPress={() => setTab(t)}
+              activeOpacity={0.75}
+              accessibilityRole="tab"
+              // The marker dot is decorative, so the cue it carries has to reach screen
+              // readers through the label instead.
+              accessibilityLabel={isTutorialTarget ? `${t} — next tutorial step` : t}
+              accessibilityState={{ selected: active }}
+            >
+              {isTutorialTarget && (
+                <View
+                  style={{
+                    position: "absolute", top: 2, alignSelf: "center",
+                    width: 7, height: 7, borderRadius: 4, backgroundColor: T.cyan,
+                  }}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              )}
               {!!badgeVal && (
                 <View style={[styles.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }]}>
                   <Text style={styles.badgeText}>{badgeVal}</Text>

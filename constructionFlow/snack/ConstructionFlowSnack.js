@@ -2218,6 +2218,88 @@ function tickEquipmentWear(game) {
   });
 }
 
+// src/systems/recoveryGuidance.js
+function getCashRecoveryOptions({ cash = 0, shortfall = 0, hasActiveSites = false, creditScore = 600, canBorrow = true, savings = 0 } = {}) {
+  const options = [];
+  if (savings >= shortfall && shortfall > 0) {
+    options.push("move money out of savings in Finance");
+  }
+  if (hasActiveSites) {
+    options.push("finish an active job \u2014 payment lands on completion");
+  }
+  if (canBorrow && creditScore >= 600) {
+    options.push("take a loan in Finance");
+  }
+  if (!hasActiveSites) {
+    options.push("win a bid and get the 25% mobilisation deposit");
+  }
+  options.push("sell idle equipment in Vehicles");
+  return options;
+}
+function joinOptions(options) {
+  if (options.length === 0) return "";
+  if (options.length === 1) return options[0];
+  return `${options.slice(0, -1).join(", ")}, or ${options[options.length - 1]}`;
+}
+function buildInsufficientFundsAlert({
+  cost = 0,
+  purchase = "this",
+  cash = 0,
+  savings = 0,
+  hasActiveSites = false,
+  creditScore = 600,
+  canBorrow = true,
+  formatMoney
+} = {}) {
+  const fmt = typeof formatMoney === "function" ? formatMoney : (n) => `$${Math.round(n).toLocaleString()}`;
+  const price = Math.max(0, Math.round(Number(cost) || 0));
+  const balance = Math.round(Number(cash) || 0);
+  const shortfall = Math.max(0, price - balance);
+  const options = getCashRecoveryOptions({ cash: balance, shortfall, hasActiveSites, creditScore, canBorrow, savings });
+  const body = `${purchase} costs ${fmt(price)}. You have ${fmt(balance)} \u2014 ${fmt(shortfall)} short.
+
+To close the gap: ${joinOptions(options)}.`;
+  return { title: "Not Enough Cash", body, shortfall };
+}
+var ASSIGN_RECOVERY_BY_KIND = {
+  equipment: "Buy or free up a machine in the Vehicles tab \u2014 equipment already on another site can't be double-booked.",
+  tier: "Higher-tier jobs need bigger machines. Buy one in Vehicles, or take a lower-tier contract until you can afford it.",
+  crew: "Hire in the Crew tab, or pull crew off another site. Resting and injured crew can't be assigned.",
+  materials: "Buy the shortfall from the Sites tab once the job is open, or stock up from Bids before you mobilise.",
+  frozen: "Pay the overdue tax bill in Finance to unfreeze the business. Nothing can start until it clears.",
+  none: ""
+};
+function getAssignBlockRecovery(kind) {
+  return ASSIGN_RECOVERY_BY_KIND[kind] || "";
+}
+function buildAssignBlockAlert(reason, kind) {
+  const recovery = getAssignBlockRecovery(kind);
+  return {
+    title: "Can't Start This Job Yet",
+    body: recovery ? `${reason}
+
+${recovery}` : reason
+  };
+}
+function buildCreditTooLowAlert({ creditScore = 600, required = 680 } = {}) {
+  const gap = Math.max(0, Math.round(required - creditScore));
+  return {
+    title: "Credit Score Too Low",
+    body: `This needs a credit score of ${required}. Yours is ${Math.round(creditScore)} \u2014 ${gap} short.
+
+Credit rises when you finish contracts on time and repay loans on schedule. It falls with late jobs, missed payments, and time spent overdrawn.`
+  };
+}
+function buildCapacityAlert({ kind = "crew", current = 0, cap = 0 } = {}) {
+  const noun = kind === "crew" ? "crew members" : "machines";
+  return {
+    title: kind === "crew" ? "Crew At Capacity" : "Fleet At Capacity",
+    body: `You're at ${current} of ${cap} ${noun}. Your office tier sets this limit.
+
+Upgrade your office in Empire, or open a regional office in a new city, to raise it.`
+  };
+}
+
 // src/systems/projectEconomics.js
 var PROJECT_COST_CATEGORIES = {
   materials: { label: "Materials", icon: "cube" },
@@ -5651,6 +5733,36 @@ function createSubcontractor(typeId) {
     assignedSiteId: null
   };
 }
+function alertInsufficientFunds(state, cost, purchase) {
+  const { title, body } = buildInsufficientFundsAlert({
+    cost,
+    purchase,
+    cash: state?.cash || 0,
+    savings: state?.savings || 0,
+    hasActiveSites: (state?.activeSites || []).length > 0,
+    creditScore: state?.creditScore || 600,
+    // Three concurrent loans is the game's own ceiling — do not advise borrowing at it.
+    canBorrow: (state?.loans || []).length < 3,
+    formatMoney: money2
+  });
+  Alert.alert(title, body);
+}
+function getAssignBlockKind(contract, crewIds, equipIds, state) {
+  if (!contract) return "none";
+  if (state.businessFrozen) return "frozen";
+  const def = CONTRACT_DEFS.find((d) => d.id === contract.defId) || {};
+  const bestTier = Math.max(0, ...equipIds.map((id) => {
+    const e = state.equipment.find((eq) => eq.id === id);
+    return e ? e.tier : 0;
+  }));
+  if (equipIds.length < (def.equipMin || 1)) return "equipment";
+  if (crewIds.length < (def.crewMin || 1)) return "crew";
+  if (bestTier < (def.minTier || 1)) return "tier";
+  for (const matId of Object.keys(contract.materials || {})) {
+    if ((state.materials[matId] || 0) < contract.materials[matId]) return "materials";
+  }
+  return "none";
+}
 function getAssignBlockReason(contract, crewIds, equipIds, state) {
   if (!contract) return "No contract selected.";
   if (state.businessFrozen) return "Business is frozen \u2014 resolve overdue taxes.";
@@ -5703,6 +5815,28 @@ function getSiteMissingMaterials(site, contractDef, game) {
     });
     return acc;
   }, []);
+}
+function getTutorialStepIndex(game) {
+  if (!game || game.tutorialDone) return -1;
+  const sites = game.activeSites || [];
+  const hasActiveSite = sites.length > 0;
+  const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
+  const needsMaterials = hasActiveSite && sites.some((site) => {
+    const con = (game.contracts || []).find((c) => c.id === site.contractId);
+    const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
+    return def?.materials && Object.entries(def.materials).some(
+      ([id, qty]) => ((site.materialsFulfilled || {})[id] || 0) < qty
+    );
+  });
+  if (hasActiveSite && !needsMaterials) return 3;
+  if (hasActiveSite && needsMaterials) return 2;
+  if (hasBid) return 1;
+  return 0;
+}
+function getTutorialTargetTab(game) {
+  const step = getTutorialStepIndex(game);
+  if (step < 0) return null;
+  return step === 0 ? "Bids" : "Sites";
 }
 function getNextBestAction(s) {
   if (s.businessFrozen) return { title: "Business Frozen", body: "Overdue taxes suspended operations. Pay now in Finance.", tone: "red", tab: "Finance" };
@@ -8029,13 +8163,14 @@ function ConstructionFlowScreen({ onBackToHub }) {
       const basePrice = Math.round(item.price * (1 - discount));
       const effectivePrice = isUsed ? Math.round(basePrice * 0.58) : basePrice;
       if (g.cash < effectivePrice) {
-        Alert.alert("Insufficient Funds", `Need ${money2(effectivePrice)}.`);
+        alertInsufficientFunds(g, effectivePrice, item?.name || "This machine");
         return;
       }
       const office2 = OFFICES[g.officeIndex];
       const totalEquipCap = office2.equipCap + getEquipCapBonus(g);
       if (g.equipment.length >= totalEquipCap) {
-        Alert.alert("Vehicles Cap", `Upgrade your office to add more vehicles to your fleet.`);
+        const a = buildCapacityAlert({ kind: "equipment", current: g.equipment.length, cap: totalEquipCap });
+        Alert.alert(a.title, a.body);
         return;
       }
       g.cash -= effectivePrice;
@@ -8063,8 +8198,7 @@ function ConstructionFlowScreen({ onBackToHub }) {
     const uses = cur.speedUpUses || 0;
     const cost = Math.round(1e3 * Math.pow(2, uses));
     if (cur.cash < cost) {
-      Alert.alert("Insufficient Funds", `You need ${money2(cost)} to speed up time.
-Save up and try again.`);
+      alertInsufficientFunds(cur, cost, "Skipping ahead");
       return;
     }
     Alert.alert(
@@ -8097,7 +8231,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       if (!e) return;
       const cost = Math.round((100 - e.condition) * 25);
       if (g.cash < cost) {
-        Alert.alert("Insufficient Funds", `Repair costs ${money2(cost)}.`);
+        alertInsufficientFunds(g, cost, "This repair");
         return;
       }
       g.cash -= cost;
@@ -8128,12 +8262,13 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
     update((g) => {
       const totalCrewCap = getTotalCrewCap(g);
       if (g.crew.length >= totalCrewCap) {
-        Alert.alert("Crew Cap", "Upgrade your office or open a Regional Office in a new city.");
+        const a = buildCapacityAlert({ kind: "crew", current: g.crew.length, cap: totalCrewCap });
+        Alert.alert(a.title, a.body);
         return;
       }
       const bonus = applicant.signingBonus || 0;
       if (g.cash < bonus) {
-        Alert.alert("Insufficient Funds", `Signing bonus requires ${money2(bonus)}.`);
+        alertInsufficientFunds(g, bonus, "This hire's signing bonus");
         return;
       }
       g.cash -= bonus;
@@ -8180,7 +8315,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const w = g.crew.find((w2) => w2.id === workerId);
       if (!w) return;
       if (g.cash < 500) {
-        Alert.alert("Insufficient Funds", "Promotion costs $500.");
+        alertInsufficientFunds(g, 500, "This promotion");
         return;
       }
       if ((w.level || 1) < 3 || (w.skill || 0) < 70) {
@@ -8200,7 +8335,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
   const handlePostJob = useCallback((posting) => {
     update((g) => {
       if (g.cash < posting.cost) {
-        Alert.alert("Insufficient Funds", `Posting costs ${money2(posting.cost)}.`);
+        alertInsufficientFunds(g, posting.cost, "This job ad");
         return;
       }
       g.cash -= posting.cost;
@@ -8220,7 +8355,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
       const totalCost = price * qty;
       if (g.cash < totalCost) {
-        Alert.alert("Insufficient Funds", `Costs ${money2(totalCost)}.`);
+        alertInsufficientFunds(g, totalCost, "These materials");
         return;
       }
       g.cash -= totalCost;
@@ -8308,7 +8443,8 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       }
       const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
       if (blockReason) {
-        Alert.alert("Cannot Start", blockReason);
+        const { title, body } = buildAssignBlockAlert(blockReason, getAssignBlockKind(c, crewIds, equipIds, g));
+        Alert.alert(title, body);
         return;
       }
       const BID_MULTIPLIERS = { aggressive: 0.82, standard: 1, premium: 1.28 };
@@ -8385,7 +8521,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const def = SUBCONTRACTOR_TYPES.find((t) => t.id === typeId);
       if (!def) return;
       if (g.cash < def.hireCost) {
-        Alert.alert("Insufficient Funds", `Hire cost: ${money2(def.hireCost)}`);
+        alertInsufficientFunds(g, def.hireCost, "This subcontractor");
         return;
       }
       g.cash -= def.hireCost;
@@ -8443,7 +8579,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
     update((g) => {
       if ((g.taxDue || 0) <= 0) return;
       if (g.cash < g.taxDue) {
-        Alert.alert("Insufficient Funds", `Tax bill is ${money2(g.taxDue)}.`);
+        alertInsufficientFunds(g, g.taxDue, "This tax bill");
         return;
       }
       g.cash -= g.taxDue;
@@ -8462,7 +8598,9 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if (g.cash < amt) {
-        Alert.alert("Insufficient Funds", `Need ${money2(amt)} in operating cash.`);
+        Alert.alert("Not Enough Operating Cash", `You have ${money2(g.cash)} in operating cash, less than the ${money2(amt)} you're moving to savings.
+
+Move a smaller amount, or wait for a job to pay out.`);
         return;
       }
       g.cash -= amt;
@@ -8478,7 +8616,9 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if ((g.savings || 0) < amt) {
-        Alert.alert("Insufficient Reserve", `Only ${money2(g.savings || 0)} in savings.`);
+        Alert.alert("Not Enough In Savings", `Your reserve holds ${money2(g.savings || 0)}, less than the ${money2(amt)} you're withdrawing.
+
+Withdraw a smaller amount.`);
         return;
       }
       g.savings -= amt;
@@ -8491,7 +8631,16 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const loan = (g.loans || []).find((l) => l.id === loanId);
       if (!loan) return;
       if (g.cash < payoffAmount) {
-        Alert.alert("Insufficient Funds", `Need ${money2(payoffAmount)} to pay off this loan early.`);
+        const a = buildInsufficientFundsAlert({
+          cost: payoffAmount,
+          purchase: "Paying this loan off early",
+          cash: g.cash,
+          savings: g.savings || 0,
+          hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false,
+          formatMoney: money2
+        });
+        Alert.alert(a.title, a.body);
         return;
       }
       g.cash -= payoffAmount;
@@ -8506,7 +8655,16 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const loan = (g.loans || []).find((l) => l.id === loanId);
       const amt = Math.round(amount);
       if (!loan || amt <= 0 || g.cash < amt) {
-        Alert.alert("Insufficient Funds", `Need ${money2(amt)} in cash.`);
+        const a = buildInsufficientFundsAlert({
+          cost: amt,
+          purchase: "This loan payment",
+          cash: g.cash,
+          savings: g.savings || 0,
+          hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false,
+          formatMoney: money2
+        });
+        Alert.alert(a.title, a.body);
         return;
       }
       const actualAmt = Math.min(amt, loan.remainingBalance);
@@ -8527,7 +8685,8 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
   const handleOpenCreditLine = useCallback(() => {
     update((g) => {
       if ((g.creditScore || 600) < 680) {
-        Alert.alert("Credit Too Low", "Need 680+ credit score to open a line of credit.");
+        const a = buildCreditTooLowAlert({ creditScore: g.creditScore || 600, required: 680 });
+        Alert.alert(a.title, a.body);
         return;
       }
       if (g.creditLine) {
@@ -8580,7 +8739,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if (g.cash < next.cost) {
-        Alert.alert("Insufficient Funds", `Need ${money2(next.cost)}.`);
+        alertInsufficientFunds(g, next.cost, next.name || "This office upgrade");
         return;
       }
       g.cash -= next.cost;
@@ -8614,7 +8773,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if (g.cash < city.unlockCost + def.cost) {
-        Alert.alert("Insufficient Funds", `Expanding to ${city.name} and opening a ${def.name} costs ${money2(city.unlockCost + def.cost)}.`);
+        alertInsufficientFunds(g, city.unlockCost + def.cost, `Expanding to ${city.name} with a ${def.name}`);
         return;
       }
       const alreadyInCity = (g.cityOffices || []).some((o) => o.cityId === cityId);
@@ -8631,7 +8790,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const def = PROPERTY_TYPES.find((t) => t.id === typeId);
       if (!def) return;
       if (g.cash < def.cost) {
-        Alert.alert("Insufficient Funds", `${def.name} costs ${money2(def.cost)}.`);
+        alertInsufficientFunds(g, def.cost, def.name);
         return;
       }
       g.cash -= def.cost;
@@ -8651,7 +8810,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if (g.cash < def.hireCost) {
-        Alert.alert("Insufficient Funds", `Hiring costs ${money2(def.hireCost)}.`);
+        alertInsufficientFunds(g, def.hireCost, `Hiring a ${def.name || "project manager"}`);
         return;
       }
       g.cash -= def.hireCost;
@@ -8685,7 +8844,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const prog = TRAINING_PROGRAMS2.find((p) => p.id === programId);
       if (!w || !prog) return;
       if (g.cash < prog.cost) {
-        Alert.alert("Insufficient Funds", `Training costs ${money2(prog.cost)}.`);
+        alertInsufficientFunds(g, prog.cost, prog.label || prog.name || "This training");
         return;
       }
       if (w.status === "Active") {
@@ -8718,7 +8877,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         return;
       }
       if (g.cash < acquisitionCost) {
-        Alert.alert("Insufficient Funds", `Acquiring ${rival.name} costs ${money2(acquisitionCost)}.`);
+        alertInsufficientFunds(g, acquisitionCost, `Acquiring ${rival.name}`);
         return;
       }
       g.cash -= acquisitionCost;
@@ -8956,7 +9115,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       const _cost = Math.round((_def?.baseValue || _s.totalValue || 1e4) * 0.08);
       if ((g.cash || 0) < _cost) {
         addLog2(g, `Need ${money2(_cost)} to renegotiate.`);
-        Alert.alert("Insufficient Funds", `Renegotiating costs ${money2(_cost)}. You have ${money2(g.cash || 0)}.`);
+        alertInsufficientFunds(g, _cost, "Renegotiating this contract");
         return;
       }
       g.cash -= _cost;
@@ -9526,17 +9685,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         }) })
       ] }),
       !game.tutorialDone && (() => {
-        const hasActiveSite = (game.activeSites || []).length > 0;
-        const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
-        const needsMaterials = hasActiveSite && (game.activeSites || []).some((s2) => {
-          const con = (game.contracts || []).find((c) => c.id === s2.contractId);
-          const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
-          return def?.materials && Object.entries(def.materials).some(([id, qty]) => ((s2.materialsFulfilled || {})[id] || 0) < qty);
-        });
-        let step = 0;
-        if (hasActiveSite && !needsMaterials) step = 3;
-        else if (hasActiveSite && needsMaterials) step = 2;
-        else if (hasBid) step = 1;
+        const step = getTutorialStepIndex(game);
         const steps = [
           {
             num: "1 of 4",
@@ -12707,7 +12856,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             onPress: () => {
               const ev = game.pendingVeteranEvent;
               if (!_canAfford) {
-                Alert.alert("Insufficient Funds", `You need ${money2(ev.retainCost)} to pay this bonus.`);
+                alertInsufficientFunds(game, ev.retainCost, "This retention bonus");
                 return;
               }
               update((g) => {
@@ -12863,12 +13012,41 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         Empire: { active: "trophy", inactive: "trophy-outline" }
       };
       const iconName = active ? TAB_ICONS[t]?.active : TAB_ICONS[t]?.inactive;
-      return /* @__PURE__ */ jsxs2(TouchableOpacity2, { style: styles2.tabItem, onPress: () => setTab(t), activeOpacity: 0.75, children: [
-        !!badgeVal && /* @__PURE__ */ jsx2(View2, { style: [styles2.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }], children: /* @__PURE__ */ jsx2(Text2, { style: styles2.badgeText, children: badgeVal }) }),
-        /* @__PURE__ */ jsx2(Ionicons, { name: iconName, size: 20, color: active ? T.green : T.sub }),
-        /* @__PURE__ */ jsx2(Text2, { style: [styles2.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }], children: t }),
-        active ? /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: T.green }] }) : /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: "transparent" }] })
-      ] }, t);
+      const isTutorialTarget = !active && t === getTutorialTargetTab(game);
+      return /* @__PURE__ */ jsxs2(
+        TouchableOpacity2,
+        {
+          style: styles2.tabItem,
+          onPress: () => setTab(t),
+          activeOpacity: 0.75,
+          accessibilityRole: "tab",
+          accessibilityLabel: isTutorialTarget ? `${t} \u2014 next tutorial step` : t,
+          accessibilityState: { selected: active },
+          children: [
+            isTutorialTarget && /* @__PURE__ */ jsx2(
+              View2,
+              {
+                style: {
+                  position: "absolute",
+                  top: 2,
+                  alignSelf: "center",
+                  width: 7,
+                  height: 7,
+                  borderRadius: 4,
+                  backgroundColor: T.cyan
+                },
+                accessibilityElementsHidden: true,
+                importantForAccessibility: "no"
+              }
+            ),
+            !!badgeVal && /* @__PURE__ */ jsx2(View2, { style: [styles2.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }], children: /* @__PURE__ */ jsx2(Text2, { style: styles2.badgeText, children: badgeVal }) }),
+            /* @__PURE__ */ jsx2(Ionicons, { name: iconName, size: 20, color: active ? T.green : T.sub }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }], children: t }),
+            active ? /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: T.green }] }) : /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: "transparent" }] })
+          ]
+        },
+        t
+      );
     }) })
   ] });
 }
@@ -13891,6 +14069,8 @@ export {
   generateWeeklyChallenge,
   getNextBestAction,
   getPredictiveWarnings,
+  getTutorialStepIndex,
+  getTutorialTargetTab,
   migrateState,
   money2 as money,
   startNewGeneration

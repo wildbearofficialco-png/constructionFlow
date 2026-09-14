@@ -9,6 +9,8 @@ import {
   freshState,
   migrateState,
   getNextBestAction,
+  getTutorialStepIndex,
+  getTutorialTargetTab,
 } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 
 describe("company identity", () => {
@@ -92,5 +94,45 @@ describe("where do I tap next", () => {
     const nba = getNextBestAction(g);
     expect(nba.tab).toBeTruthy();
     expect(nba.body.length).toBeGreaterThan(0);
+  });
+});
+
+describe("the tutorial points somewhere", () => {
+  test("a brand new player is on step 1, pointed at Bids", () => {
+    const g = migrateState(freshState());
+    expect(getTutorialStepIndex(g)).toBe(0);
+    expect(getTutorialTargetTab(g)).toBe("Bids");
+  });
+
+  test("once a site is running the tutorial points at Sites", () => {
+    const g = migrateState(freshState());
+    g.activeSites.push({
+      id: "s1", contractId: g.contracts[0].id, label: "Job", client: "C",
+      totalValue: 10000, phases: [], currentPhaseIdx: 0, phaseProgress: 0,
+      assignedCrewIds: [], assignedEquipmentIds: [], status: "Active",
+      startDay: 1, durationDays: 5, deadlineDay: 6, penaltyPerDay: 100,
+      materialsFulfilled: {}, chaosHistory: [],
+    });
+    expect(getTutorialStepIndex(g)).toBeGreaterThan(0);
+    expect(getTutorialTargetTab(g)).toBe("Sites");
+  });
+
+  test("a finished tutorial points nowhere, so the nav marker disappears", () => {
+    const g = migrateState(freshState());
+    g.tutorialDone = true;
+    expect(getTutorialStepIndex(g)).toBe(-1);
+    expect(getTutorialTargetTab(g)).toBeNull();
+  });
+
+  test("the step is derived from state, so it cannot desync from what the player did", () => {
+    const g = migrateState(freshState());
+    // Same state in, same step out — there is no stored cursor to drift.
+    expect(getTutorialStepIndex(g)).toBe(getTutorialStepIndex(migrateState(JSON.parse(JSON.stringify(g)))));
+  });
+
+  test("a malformed save does not throw on the nav path", () => {
+    expect(() => getTutorialTargetTab(null)).not.toThrow();
+    expect(() => getTutorialTargetTab({})).not.toThrow();
+    expect(getTutorialTargetTab(null)).toBeNull();
   });
 });

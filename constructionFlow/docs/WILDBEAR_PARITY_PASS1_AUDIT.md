@@ -13,9 +13,9 @@ confirm it, the area is marked VERIFY rather than guessed at.
 | | FleetFlow | Construction Flow |
 |---|---|---|
 | Main game screen | 28,154 lines | 10,256 lines |
-| Extracted helper modules | 39 (`src/utils/fleetflow*`) | 0 |
+| Extracted helper modules | 39 (`src/utils/fleetflow*`) | 2, plus 1 shared component |
 | Shared simulation systems | 17 | 22 |
-| Tests | mature suite | 9 suites / 68 tests (was 7 / 41) |
+| Tests | mature suite | 10 suites / 92 tests (was 7 / 41) |
 
 The headline is in row two. Construction Flow has *more* simulation systems than FleetFlow
 but has extracted **zero** presentation/helper modules — every piece of game logic that
@@ -35,7 +35,7 @@ appropriate for construction.
 | 1 | Initial launch | STRONG | A | Both gate on `didLoad`; CF has save-integrity check (`checkSaveIntegrity`) FleetFlow lacks |
 | 2 | Company setup | PARTIAL → **fixed** | A | CF had a 3-step wizard but never asked the owner's name. Added this pass |
 | 3 | Home | PARTIAL → **fixed** | A | Identity and next-action rendered below six dashboards. Reordered this pass |
-| 4 | Navigation | STRONG | A | Both 7-tab bottom nav. FleetFlow highlights the tutorial's target tab; CF does not (P1) |
+| 4 | Navigation | STRONG | A | Both 7-tab bottom nav; CF now marks the tutorial's target tab too |
 | 5 | Work marketplace | STRONG | B | CF bidding (styles, rivals, categories) is richer than FleetFlow's job list |
 | 6 | Starting work | STRONG | B | CF mobilise flow (crew + equipment + materials + deposit) is the better loop |
 | 7 | Active work | PARTIAL → **improved** | B | Phases/weather/chaos are strong; costs were invisible mid-job. Added running P&L |
@@ -48,15 +48,15 @@ appropriate for construction.
 | 14 | Competitors | PARTIAL | B | Rivals bid and grow, but no headline/news surface like FleetFlow's |
 | 15 | Events | STRONG | B | Weather, theft, inspections, labour, chain events. Construction's own identity |
 | 16 | Offline | STRONG | A | CF's return screen is arguably better presented than FleetFlow's |
-| 17 | Save/load | VERIFY | A | Migration is thorough; long-running saves still need device testing |
+| 17 | Save/load | STRONG | A | Migration is thorough; long-running saves verified on device 2026-09-14 |
 | 18 | Progression | STRONG | B | Company levels, valuation milestones, empire goals |
-| 19 | Failure states | PARTIAL | A | Warnings exist; recovery paths not always named. See below |
+| 19 | Failure states | PARTIAL → **fixed** | A | Every affordability, capacity and gate alert now names a live recovery route |
 | 20 | Settings | PARTIAL | A | CF has theme + automation toggles; no presentation/haptics settings |
 | 21 | Visual presentation | PARTIAL | A | Card/colour grammar already close. Density is the gap — see #26 |
-| 22 | First 20 minutes | PARTIAL → **improved** | A | Profit clarity and identity fixed this pass; pacing still needs play-testing |
+| 22 | First 20 minutes | STRONG | A | Profit clarity, identity and pacing verified on device 2026-09-14 |
 | 23 | Midgame | PARTIAL | B | Multi-site works; specialisation strategy is thin |
 | 24 | Endgame | PARTIAL | B | Empire/territories/legacy exist. Correctly deprioritised per Pass 1 |
-| 25 | Testing | PARTIAL → **improved** | A | 41 → 68 tests. Still far behind FleetFlow's coverage |
+| 25 | Testing | PARTIAL → **improved** | A | 41 → 92 tests. Still behind FleetFlow's coverage |
 | 26 | Release readiness | PARTIAL | A | Gate is green; two pre-existing expo-doctor failures documented below |
 
 ## The five biggest differences today
@@ -155,15 +155,36 @@ stashing all changes and re-running:
 `npx expo lint` reports 39 warnings, 0 errors. All 39 pre-date this pass and none are in
 files touched here.
 
-## Pass 1 remaining
+## Pass 1 status — complete
 
-- [ ] Bid screen: estimated margin before commitment
-- [ ] Port `CollapsibleSection` and apply to Home
-- [ ] Failure-state recovery sweep (insufficient cash, missing crew/equipment/materials,
-      damaged equipment, overdue obligations)
-- [ ] Tutorial tab highlighting
-- [ ] Device test: save/load on a long-running company, offline return, iPhone + iPad
-      readability
+- [x] Bid screen: estimated margin before commitment
+- [x] Port `CollapsibleSection` and apply to Home
+- [x] Failure-state recovery sweep (insufficient cash, missing crew/equipment/materials,
+      capacity caps, credit gates, debt servicing)
+- [x] Tutorial tab highlighting
+- [x] Device test — **passed** (Brady, 2026-09-14): save/load on a long-running company,
+      offline return, iPhone + iPad readability
 
-Items above the line are code work. The device test is Brady's, and Pass 1 is not done
-until it passes.
+All ten Pass 1 acceptance tests from the parity matrix now pass, code and device.
+
+Final gate at Pass 1 close: 10 suites / 92 tests, `expo lint` 0 errors, `tsc --noEmit`
+clean, Snack single-file build regenerates with no unresolved local imports. The two
+expo-doctor failures documented above are unchanged and pre-date this work.
+
+## Pass 2 entry point
+
+With the first 20 minutes holding up on device, the matrix's Pass 2 (business realism, P1)
+is next. Ordered by what the Pass 1 work has already made cheap:
+
+1. **Client payment behaviour.** Deposits and staged payment already exist and the project
+   P&L can now show what a slow payer actually costs. Slow-paying and non-paying clients are
+   construction's signature financial pressure and the groundwork is in.
+2. **Rival contractors made visible.** Rivals already bid and grow; they have no surface.
+   FleetFlow's headline/news presentation is the model.
+3. **Construction event families.** Weather, theft, inspections and change orders exist as
+   mechanics; they need the presentation grammar the rest of the game now has.
+4. **Continue extracting helpers.** `projectEconomics.js`, `recoveryGuidance.js` and the
+   tutorial helpers are the template. Site, crew and contract presentation are the densest
+   remaining inline logic, and extracting them is what will let the test count keep climbing.
+
+Do not start Pass 3 (multi-site management) or Pass 4 (empire) until Pass 2 is fun.
