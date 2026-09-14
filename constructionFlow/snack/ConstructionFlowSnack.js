@@ -2210,6 +2210,36 @@ function buildProjectProfitLines(economics, formatMoney) {
   }
   return lines;
 }
+function estimateProjectCosts({
+  contractValue = 0,
+  durationDays = 1,
+  crewMin = 1,
+  equipMin = 0,
+  materialUnitCost = 0,
+  avgCrewWagePerDay = 0,
+  avgEquipmentCostPerDay = 0
+} = {}) {
+  const days = Math.max(1, Math.round(Number(durationDays) || 1));
+  const crew = Math.max(0, Math.round(Number(crewMin) || 0));
+  const machines = Math.max(0, Math.round(Number(equipMin) || 0));
+  const materials = Math.max(0, Math.round(Number(materialUnitCost) || 0));
+  const labor = Math.max(0, Math.round(crew * (Number(avgCrewWagePerDay) || 0) * days));
+  const equipment = Math.max(0, Math.round(machines * (Number(avgEquipmentCostPerDay) || 0) * days));
+  const directCosts = materials + labor + equipment;
+  const value = Math.max(0, Math.round(Number(contractValue) || 0));
+  const netProfit = value - directCosts;
+  return {
+    contractValue: value,
+    materials,
+    labor,
+    equipment,
+    directCosts,
+    netProfit,
+    marginPercent: value > 0 ? Math.round(netProfit / value * 100) : 0,
+    crewDays: crew * days,
+    equipmentDays: machines * days
+  };
+}
 
 // src/games/constructionflow/.ConstructionFlowSnackEntry.js
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
@@ -12882,27 +12912,51 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
               isSelected && /* @__PURE__ */ jsxs(View, { style: { marginTop: 14 }, children: [
                 /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: c.desc }),
                 (() => {
-                  const estMatCost = Object.entries(c.materials || {}).reduce((s, [matId, qty]) => {
-                    const price = game.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
-                    return s + qty * price;
-                  }, 0);
-                  const estLaborCost = (c.crewMin || 1) * 220 * (c.durationDays || 1);
-                  const estProfit = c.value - estMatCost - estLaborCost;
                   const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
                   const BID_MULT = { aggressive: 0.82, standard: 1, premium: 1.28 };
                   const effectiveValue = Math.round(c.value * (BID_MULT[bidStyle] ?? 1));
+                  const estMatCost = Object.entries(c.materials || {}).reduce(
+                    (sum, [matId, qty]) => sum + qty * getMaterialUnitPrice(game, matId),
+                    0
+                  );
+                  const _crewPool = game.crew || [];
+                  const avgCrewWage = _crewPool.length ? _crewPool.reduce((sum, w) => sum + (w.wagePerDay || 0), 0) / _crewPool.length : 220;
+                  const _equipPool = game.equipment || [];
+                  const avgEquipCost = _equipPool.length ? _equipPool.reduce((sum, e) => sum + (e.dailyCost || 0), 0) / _equipPool.length : 0;
+                  const est = estimateProjectCosts({
+                    contractValue: effectiveValue,
+                    durationDays: c.durationDays,
+                    crewMin: c.crewMin,
+                    equipMin: Math.max(1, c.equipMin || 1),
+                    materialUnitCost: estMatCost,
+                    avgCrewWagePerDay: avgCrewWage,
+                    avgEquipmentCostPerDay: avgEquipCost
+                  });
+                  const estProfit = est.netProfit;
                   return /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }, children: [
                     /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
                       /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Contract value" }),
                       /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700" }], children: money2(effectiveValue) })
                     ] }),
                     /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Est. material cost" }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(estMatCost) })
+                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Est. materials" }),
+                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.materials) })
                     ] }),
                     /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Est. labor cost" }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(estLaborCost) })
+                      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                        "Est. crew wages (",
+                        est.crewDays,
+                        " crew-days)"
+                      ] }),
+                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.labor) })
+                    ] }),
+                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                        "Est. equipment (",
+                        est.equipmentDays,
+                        " machine-days)"
+                      ] }),
+                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.equipment) })
                     ] }),
                     /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
                       /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.text, fontWeight: "700" }], children: "Est. profit" }),
@@ -12915,9 +12969,9 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                         "/day late"
                       ] })
                     ] }),
-                    estProfit > 0 && (() => {
-                      const marginPct = Math.round(estProfit / Math.max(1, effectiveValue) * 100);
-                      const barColor = marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
+                    (() => {
+                      const marginPct = est.marginPercent;
+                      const barColor = marginPct < 0 ? T.red : marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
                       return /* @__PURE__ */ jsxs(View, { style: { marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
                         /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
                           /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Profit margin" }),
@@ -12926,7 +12980,13 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                             "%"
                           ] })
                         ] }),
-                        /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.min(100, marginPct * 2)}%`, backgroundColor: barColor, borderRadius: 2 } }) })
+                        /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 } }) }),
+                        marginPct < 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, fontSize: 10, marginTop: 4 }], children: "\u26A0 At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation." }),
+                        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }], children: [
+                          "Estimate assumes ",
+                          c.durationDays,
+                          "d at minimum crew. Delays, weather and repairs come out of this margin."
+                        ] })
                       ] });
                     })()
                   ] });

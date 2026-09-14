@@ -37,6 +37,7 @@ import {
 } from "../../systems/equipmentWear.js";
 import {
   OVERHEAD_NOTE,
+  estimateProjectCosts,
   createProjectCostLedger,
   ensureProjectCostLedger,
   accrueProjectCost,
@@ -9749,15 +9750,45 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>{c.desc}</Text>
                   {/* Profit estimate */}
                   {(() => {
-                    const estMatCost = Object.entries(c.materials || {}).reduce((s, [matId, qty]) => {
-                      const price = game.materialPrices[matId] || MATERIAL_DEFS.find(m => m.id === matId)?.basePrice || 100;
-                      return s + qty * price;
-                    }, 0);
-                    const estLaborCost = (c.crewMin || 1) * 220 * (c.durationDays || 1);
-                    const estProfit = c.value - estMatCost - estLaborCost;
                     const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
                     const BID_MULT = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
                     const effectiveValue = Math.round(c.value * (BID_MULT[bidStyle] ?? 1.0));
+
+                    // Every input below is resolved the same way the real charge resolves it:
+                    // materials through getMaterialUnitPrice (regional pricing + bulk
+                    // discount), labour from the player's own crew wages, equipment from the
+                    // day rate of the machines they actually own. The old estimate priced
+                    // materials off the raw table, hardcoded labour at $220/crew/day, ignored
+                    // equipment entirely, and estimated against the pre-bid-style value — so
+                    // switching to an aggressive bid lowered the headline number while the
+                    // "est. profit" underneath it did not move.
+                    // Stock on hand still cost the business money to buy, so the estimate
+                    // prices the whole requirement rather than only the shortfall — otherwise
+                    // a job looks cheaper purely because materials were bought earlier.
+                    const estMatCost = Object.entries(c.materials || {}).reduce(
+                      (sum, [matId, qty]) => sum + qty * getMaterialUnitPrice(game, matId),
+                      0,
+                    );
+
+                    const _crewPool = game.crew || [];
+                    const avgCrewWage = _crewPool.length
+                      ? _crewPool.reduce((sum, w) => sum + (w.wagePerDay || 0), 0) / _crewPool.length
+                      : 220;
+                    const _equipPool = game.equipment || [];
+                    const avgEquipCost = _equipPool.length
+                      ? _equipPool.reduce((sum, e) => sum + (e.dailyCost || 0), 0) / _equipPool.length
+                      : 0;
+
+                    const est = estimateProjectCosts({
+                      contractValue: effectiveValue,
+                      durationDays: c.durationDays,
+                      crewMin: c.crewMin,
+                      equipMin: Math.max(1, c.equipMin || 1),
+                      materialUnitCost: estMatCost,
+                      avgCrewWagePerDay: avgCrewWage,
+                      avgEquipmentCostPerDay: avgEquipCost,
+                    });
+                    const estProfit = est.netProfit;
                     return (
                       <View style={{ backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }}>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
@@ -9765,12 +9796,16 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                           <Text style={[styles.sub, { color: T.green, fontWeight: "700" }]}>{money(effectiveValue)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-                          <Text style={[styles.sub, subCol]}>Est. material cost</Text>
-                          <Text style={[styles.sub, { color: T.orange }]}>{money(estMatCost)}</Text>
+                          <Text style={[styles.sub, subCol]}>Est. materials</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.materials)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-                          <Text style={[styles.sub, subCol]}>Est. labor cost</Text>
-                          <Text style={[styles.sub, { color: T.orange }]}>{money(estLaborCost)}</Text>
+                          <Text style={[styles.sub, subCol]}>Est. crew wages ({est.crewDays} crew-days)</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.labor)}</Text>
+                        </View>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+                          <Text style={[styles.sub, subCol]}>Est. equipment ({est.equipmentDays} machine-days)</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.equipment)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                           <Text style={[styles.sub, { color: T.text, fontWeight: "700" }]}>Est. profit</Text>
@@ -9780,9 +9815,9 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                           <Text style={[styles.sub, subCol]}>Deadline penalty</Text>
                           <Text style={[styles.sub, { color: T.red }]}>{money(c.penaltyPerDay)}/day late</Text>
                         </View>
-                        {estProfit > 0 && (() => {
-                          const marginPct = Math.round((estProfit / Math.max(1, effectiveValue)) * 100);
-                          const barColor = marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
+                        {(() => {
+                          const marginPct = est.marginPercent;
+                          const barColor = marginPct < 0 ? T.red : marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
                           return (
                             <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
@@ -9790,8 +9825,16 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                                 <Text style={[styles.sub, { color: barColor, fontSize: 10, fontWeight: "600" }]}>{marginPct}%</Text>
                               </View>
                               <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
-                                <View style={{ height: 4, width: `${Math.min(100, marginPct * 2)}%`, backgroundColor: barColor, borderRadius: 2 }} />
+                                <View style={{ height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 }} />
                               </View>
+                              {marginPct < 0 && (
+                                <Text style={[styles.sub, { color: T.red, fontSize: 10, marginTop: 4 }]}>
+                                  ⚠ At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation.
+                                </Text>
+                              )}
+                              <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }]}>
+                                Estimate assumes {c.durationDays}d at minimum crew. Delays, weather and repairs come out of this margin.
+                              </Text>
                             </View>
                           );
                         })()}

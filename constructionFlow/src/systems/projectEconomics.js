@@ -184,3 +184,48 @@ export function buildProjectProfitLines(economics, formatMoney) {
   }
   return lines;
 }
+
+// ─── Pre-bid estimate ─────────────────────────────────────────────────────────
+//
+// What a project is likely to cost BEFORE the player commits. The WildBear standard
+// requires that "displayed price and charged price must use the same calculation path",
+// so every input here is resolved by the caller using the same helpers the real charge
+// uses — regional material pricing, the player's bulk discount, the player's actual crew
+// wages and machine day rates. Nothing is hardcoded.
+//
+// This is an estimate, not a promise: it assumes the job runs to its target duration with
+// the minimum crew. Delays, weather and incidents make the real number worse, which is why
+// the completion P&L exists as the honest settlement.
+export function estimateProjectCosts({
+  contractValue = 0,
+  durationDays = 1,
+  crewMin = 1,
+  equipMin = 0,
+  materialUnitCost = 0,
+  avgCrewWagePerDay = 0,
+  avgEquipmentCostPerDay = 0,
+} = {}) {
+  const days = Math.max(1, Math.round(Number(durationDays) || 1));
+  const crew = Math.max(0, Math.round(Number(crewMin) || 0));
+  const machines = Math.max(0, Math.round(Number(equipMin) || 0));
+
+  const materials = Math.max(0, Math.round(Number(materialUnitCost) || 0));
+  const labor = Math.max(0, Math.round(crew * (Number(avgCrewWagePerDay) || 0) * days));
+  const equipment = Math.max(0, Math.round(machines * (Number(avgEquipmentCostPerDay) || 0) * days));
+  const directCosts = materials + labor + equipment;
+
+  const value = Math.max(0, Math.round(Number(contractValue) || 0));
+  const netProfit = value - directCosts;
+
+  return {
+    contractValue: value,
+    materials,
+    labor,
+    equipment,
+    directCosts,
+    netProfit,
+    marginPercent: value > 0 ? Math.round((netProfit / value) * 100) : 0,
+    crewDays: crew * days,
+    equipmentDays: machines * days,
+  };
+}

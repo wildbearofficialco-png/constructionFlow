@@ -14,6 +14,7 @@ import {
   buildProjectEconomics,
   getProjectReinvestmentHint,
   buildProjectProfitLines,
+  estimateProjectCosts,
 } from "../src/systems/projectEconomics.js";
 
 import { freshState, migrateState, gameTick, clone } from "../src/games/constructionflow/ConstructionFlowScreen.js";
@@ -229,5 +230,78 @@ describe("cost attribution does not move cash", () => {
     const legacy = migrated.activeSites.find((s) => s.id === "legacy");
     expect(legacy.costs).toBeDefined();
     expect(legacy.costsPartial).toBe(true);
+  });
+});
+
+describe("pre-bid estimate", () => {
+  test("costs scale with duration, crew size and machine count", () => {
+    const base = estimateProjectCosts({
+      contractValue: 100000, durationDays: 10, crewMin: 2, equipMin: 1,
+      materialUnitCost: 5000, avgCrewWagePerDay: 200, avgEquipmentCostPerDay: 100,
+    });
+    expect(base.labor).toBe(2 * 200 * 10);
+    expect(base.equipment).toBe(1 * 100 * 10);
+    expect(base.materials).toBe(5000);
+    expect(base.directCosts).toBe(4000 + 1000 + 5000);
+    expect(base.netProfit).toBe(100000 - 10000);
+
+    const longer = estimateProjectCosts({
+      contractValue: 100000, durationDays: 20, crewMin: 2, equipMin: 1,
+      materialUnitCost: 5000, avgCrewWagePerDay: 200, avgEquipmentCostPerDay: 100,
+    });
+    expect(longer.labor).toBe(base.labor * 2);
+    expect(longer.netProfit).toBeLessThan(base.netProfit);
+  });
+
+  test("a job that cannot clear its cost base reports a negative margin, not a floor", () => {
+    const est = estimateProjectCosts({
+      contractValue: 5000, durationDays: 10, crewMin: 4,
+      avgCrewWagePerDay: 300, materialUnitCost: 2000,
+    });
+    expect(est.netProfit).toBeLessThan(0);
+    expect(est.marginPercent).toBeLessThan(0);
+  });
+
+  test("a bid multiplier changes the estimate, because the estimate is built from the bid value", () => {
+    const inputs = {
+      durationDays: 5, crewMin: 2, equipMin: 1,
+      materialUnitCost: 1000, avgCrewWagePerDay: 200, avgEquipmentCostPerDay: 100,
+    };
+    const aggressive = estimateProjectCosts({ ...inputs, contractValue: Math.round(50000 * 0.82) });
+    const premium = estimateProjectCosts({ ...inputs, contractValue: Math.round(50000 * 1.28) });
+    // Same job, same costs — only the bid changes, and profit must follow it.
+    expect(aggressive.directCosts).toBe(premium.directCosts);
+    expect(premium.netProfit).toBeGreaterThan(aggressive.netProfit);
+    expect(premium.marginPercent).toBeGreaterThan(aggressive.marginPercent);
+  });
+
+  test("zero-value or missing input never produces NaN", () => {
+    const est = estimateProjectCosts();
+    expect(est.marginPercent).toBe(0);
+    expect(Number.isFinite(est.netProfit)).toBe(true);
+    expect(Number.isFinite(est.directCosts)).toBe(true);
+  });
+
+  test("the estimate and the settlement agree when the job runs exactly to plan", () => {
+    // A project that finishes on target, with the estimated costs actually incurred, should
+    // settle at the estimated profit. If these two ever diverge, the bid screen is lying.
+    const est = estimateProjectCosts({
+      contractValue: 60000, durationDays: 8, crewMin: 3, equipMin: 1,
+      materialUnitCost: 9000, avgCrewWagePerDay: 250, avgEquipmentCostPerDay: 400,
+    });
+    const settled = buildProjectEconomics({
+      contractValue: 60000,
+      depositPaid: 15000,
+      penalty: 0,
+      qualityBonus: 0,
+      costs: {
+        materials: est.materials,
+        labor: est.labor,
+        equipment: est.equipment,
+        incidents: 0,
+      },
+    });
+    expect(settled.netProfit).toBe(est.netProfit);
+    expect(settled.marginPercent).toBe(est.marginPercent);
   });
 });

@@ -149,4 +149,5 @@ export {
   buildProjectEconomics,
   getProjectReinvestmentHint,
   buildProjectProfitLines,
+  estimateProjectCosts,
 } from "./projectEconomics.js";
