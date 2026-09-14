@@ -17,10 +17,14 @@ confirm it, the area is marked VERIFY rather than guessed at.
 | Shared simulation systems | 17 | 22 |
 | Tests | mature suite | 10 suites / 92 tests (was 7 / 41) |
 
-The headline is in row two. Construction Flow has *more* simulation systems than FleetFlow
-but has extracted **zero** presentation/helper modules — every piece of game logic that
-FleetFlow keeps in a testable pure module lives inline in Construction Flow's screen. That
-is the single biggest structural difference between the two codebases.
+The headline is in row two. At the start of this pass Construction Flow had *more*
+simulation systems than FleetFlow but had extracted **zero** presentation/helper modules —
+every piece of game logic that FleetFlow keeps in a testable pure module lived inline in
+Construction Flow's screen. That was, and at 2-of-39 still is, the single biggest structural
+difference between the two codebases, and it is why the test count was so far behind: logic
+with no import surface cannot be tested. The three modules extracted this pass
+(`projectEconomics.js`, `recoveryGuidance.js`, the tutorial step helpers) took the count from
+41 to 92 largely on their own, which is the argument for continuing.
 
 ## Area-by-area
 
@@ -85,23 +89,21 @@ appropriate for construction.
    Construction Flow renders 24 always-expanded cards on Home. Construction Flow does not
    have less content than FleetFlow — it has less *organised* content.
 
-## The five highest-impact changes to make it feel like a WildBear sibling
+## The five highest-impact changes — all delivered in Pass 1
 
-1. **Project profit, everywhere money is shown.** Done for completion and the live site card
-   this pass. Next: the bid screen should estimate margin before the player commits, not
-   just show contract value.
-2. **Port `CollapsibleSection` as the first real WildBear Core component.** It is already
-   written game-agnostically in FleetFlow (colours and labels are props) and is the single
-   highest-leverage presentation fix available.
-3. **Extract the first Construction Flow helper modules.** `projectEconomics.js` (this pass)
-   is the template. Next candidates: site presentation, crew presentation, contract
-   presentation — the three places where inline logic is densest.
-4. **Name a recovery path in every failure state.** The warnings exist and are good; several
-   say what is wrong without saying what to do. Empty states got this treatment this pass;
-   failure states need the same sweep.
-5. **Tutorial tab highlighting.** FleetFlow puts a dot on the bottom-nav tab the tutorial is
-   pointing at. Construction Flow's tutorial says "Go to Bids" but the tab itself is
-   unmarked. Small change, disproportionate effect on the first 60 seconds.
+These were the five identified at the start of the pass. All five shipped; recorded here as
+the pass's own scorecard.
+
+1. **Project profit, everywhere money is shown.** ✅ Completion P&L, live site margin, and
+   a bid-time estimate that runs the same calculation path as the charge.
+2. **Port `CollapsibleSection` as the first real WildBear Core component.** ✅ Ported and
+   applied to Home's two reference cards, with critical alerts deliberately left outside it.
+3. **Extract the first Construction Flow helper modules.** ✅ Three so far. Next candidates
+   remain site, crew and contract presentation — the densest inline logic left.
+4. **Name a recovery path in every failure state.** ✅ Empty states and the full alert sweep.
+   Advice is derived from live state, so it never suggests an unavailable route.
+5. **Tutorial tab highlighting.** ✅ The bottom nav now marks the tab the Getting Started
+   card is pointing at, with the cue carried to screen readers via the accessibility label.
 
 ## What FleetFlow does that should become WildBear Core
 
