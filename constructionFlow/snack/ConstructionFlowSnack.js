@@ -5,15 +5,15 @@
  */
 
 // src/games/constructionflow/.ConstructionFlowSnackEntry.js
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React2, { useCallback, useEffect as useEffect2, useRef, useState as useState2 } from "react";
 import {
   SafeAreaView,
-  View,
-  Text,
+  View as View2,
+  Text as Text2,
   ScrollView,
-  TouchableOpacity,
+  TouchableOpacity as TouchableOpacity2,
   TextInput,
-  StyleSheet,
+  StyleSheet as StyleSheet2,
   Alert,
   AppState,
   Platform,
@@ -24,8 +24,143 @@ import {
   Switch,
   Image
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import AsyncStorage2 from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
+
+// src/components/CollapsibleSection.js
+import React, { useEffect, useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { jsx, jsxs } from "react/jsx-runtime";
+var STORAGE_PREFIX = "wildbear_collapsible_v1_";
+var DEFAULT_COLORS = {
+  background: "#141C2E",
+  border: "#26314A",
+  text: "#F4F6FB",
+  sub: "#8891A8",
+  accent: "#3B82F6"
+};
+function CollapsibleSection({
+  title,
+  summary,
+  badge,
+  children,
+  defaultExpanded = false,
+  persistKey,
+  colors,
+  style,
+  testID,
+  // Accepted for call-site parity with FleetFlow; Construction Flow has no haptics yet, so
+  // this is read and discarded rather than dropped from the signature.
+  hapticsEnabled = false
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [hydrated, setHydrated] = useState(!persistKey);
+  const c = { ...DEFAULT_COLORS, ...colors };
+  useEffect(() => {
+    let cancelled = false;
+    if (!persistKey) return void 0;
+    AsyncStorage.getItem(STORAGE_PREFIX + persistKey).then((raw) => {
+      if (cancelled || raw == null) return;
+      setExpanded(raw === "1");
+    }).catch(() => {
+    }).finally(() => {
+      if (!cancelled) setHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [persistKey]);
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (persistKey) {
+      AsyncStorage.setItem(STORAGE_PREFIX + persistKey, next ? "1" : "0").catch(() => {
+      });
+    }
+    if (hapticsEnabled) {
+    }
+  };
+  if (!hydrated) return null;
+  return /* @__PURE__ */ jsxs(
+    View,
+    {
+      testID,
+      style: [styles.container, { backgroundColor: c.background, borderColor: c.border }, style],
+      children: [
+        /* @__PURE__ */ jsxs(
+          TouchableOpacity,
+          {
+            onPress: toggle,
+            activeOpacity: 0.7,
+            style: styles.header,
+            accessibilityRole: "button",
+            accessibilityLabel: title,
+            accessibilityHint: expanded ? "Double tap to collapse" : "Double tap to expand",
+            accessibilityState: { expanded },
+            children: [
+              /* @__PURE__ */ jsxs(View, { style: styles.headerText, children: [
+                /* @__PURE__ */ jsx(Text, { style: [styles.title, { color: c.text }], numberOfLines: 1, children: title }),
+                summary ? /* @__PURE__ */ jsx(Text, { style: [styles.summary, { color: c.sub }], numberOfLines: expanded ? void 0 : 1, children: summary }) : null
+              ] }),
+              badge != null ? /* @__PURE__ */ jsx(View, { style: [styles.badge, { borderColor: c.accent }], children: /* @__PURE__ */ jsx(Text, { style: [styles.badgeText, { color: c.accent }], children: badge }) }) : null,
+              /* @__PURE__ */ jsx(Text, { style: [styles.chevron, { color: c.sub }], accessibilityElementsHidden: true, importantForAccessibility: "no", children: expanded ? "\u2303" : "\u2304" })
+            ]
+          }
+        ),
+        expanded ? /* @__PURE__ */ jsx(View, { style: styles.body, children }) : null
+      ]
+    }
+  );
+}
+var styles = StyleSheet.create({
+  container: {
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+    overflow: "hidden"
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 12
+  },
+  headerText: {
+    flex: 1,
+    marginRight: 8
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  summary: {
+    fontSize: 11,
+    marginTop: 2
+  },
+  badge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginRight: 8
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  chevron: {
+    fontSize: 18,
+    fontWeight: "700",
+    width: 20,
+    textAlign: "center"
+  },
+  body: {
+    paddingHorizontal: 12,
+    paddingBottom: 12
+  }
+});
 
 // src/systems/utils.js
 var uid = () => Math.random().toString(36).slice(2, 10);
@@ -2242,7 +2377,7 @@ function estimateProjectCosts({
 }
 
 // src/games/constructionflow/.ConstructionFlowSnackEntry.js
-import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
 var STORAGE_KEY = "constructionflow_v1_save";
 var TABS = ["Home", "Bids", "Sites", "Crew", "Vehicles", "Finance", "Empire"];
 var THEMES = {
@@ -7735,35 +7870,35 @@ function applyOfflineProgress(savedGame, ticksToRun) {
   return g;
 }
 function ConstructionFlowScreen({ onBackToHub }) {
-  const [game, setGame] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("Home");
-  const [theme, setTheme] = useState("dark");
+  const [game, setGame] = useState2(null);
+  const [loaded, setLoaded] = useState2(false);
+  const [tab, setTab] = useState2("Home");
+  const [theme, setTheme] = useState2("dark");
   const T = THEMES[theme] || THEMES.dark;
   const tickRef = useRef(null);
-  const [speedMode, setSpeedMode] = useState(false);
+  const [speedMode, setSpeedMode] = useState2(false);
   const appStateRef = useRef(AppState.currentState);
   const gameRef = useRef(null);
   const saveTimerRef = useRef(null);
-  const [setupOwner, setSetupOwner] = useState("");
-  const [setupName, setSetupName] = useState("New Build Co.");
-  const [setupCityId, setSetupCityId] = useState("salem");
-  const [savingsAmt, setSavingsAmt] = useState("");
-  const [creditLineAmt, setCreditLineAmt] = useState("");
-  const [loanPayAmts, setLoanPayAmts] = useState({});
-  const [setupStep, setSetupStep] = useState(0);
-  const [setupStateId, setSetupStateId] = useState(null);
-  const [setupHomeCityText, setSetupHomeCityText] = useState("");
-  const [setupHomeStateCode, setSetupHomeStateCode] = useState("");
-  const [setupHomeStateName, setSetupHomeStateName] = useState("");
-  const [setupCompetition, setSetupCompetition] = useState("Low");
-  const [setupStateSearch, setSetupStateSearch] = useState("");
-  const [crewFilter, setCrewFilter] = useState("All");
-  const [equipFilter, setEquipFilter] = useState("All");
-  useEffect(() => {
+  const [setupOwner, setSetupOwner] = useState2("");
+  const [setupName, setSetupName] = useState2("New Build Co.");
+  const [setupCityId, setSetupCityId] = useState2("salem");
+  const [savingsAmt, setSavingsAmt] = useState2("");
+  const [creditLineAmt, setCreditLineAmt] = useState2("");
+  const [loanPayAmts, setLoanPayAmts] = useState2({});
+  const [setupStep, setSetupStep] = useState2(0);
+  const [setupStateId, setSetupStateId] = useState2(null);
+  const [setupHomeCityText, setSetupHomeCityText] = useState2("");
+  const [setupHomeStateCode, setSetupHomeStateCode] = useState2("");
+  const [setupHomeStateName, setSetupHomeStateName] = useState2("");
+  const [setupCompetition, setSetupCompetition] = useState2("Low");
+  const [setupStateSearch, setSetupStateSearch] = useState2("");
+  const [crewFilter, setCrewFilter] = useState2("All");
+  const [equipFilter, setEquipFilter] = useState2("All");
+  useEffect2(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const raw = await AsyncStorage2.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
           const integrity = checkSaveIntegrity(parsed);
@@ -7795,10 +7930,10 @@ function ConstructionFlowScreen({ onBackToHub }) {
     })();
   }, []);
   const saveGame = useCallback((g) => {
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(g)).catch(() => {
+    AsyncStorage2.setItem(STORAGE_KEY, JSON.stringify(g)).catch(() => {
     });
   }, []);
-  useEffect(() => {
+  useEffect2(() => {
     if (!game || !game.legacyMentor || (game.crew || []).length > 0) return;
     const timer = setTimeout(() => {
       setGame((prev) => {
@@ -7814,10 +7949,10 @@ function ConstructionFlowScreen({ onBackToHub }) {
     }, 0);
     return () => clearTimeout(timer);
   }, [game?.generation]);
-  useEffect(() => {
+  useEffect2(() => {
     gameRef.current = game;
   }, [game]);
-  useEffect(() => {
+  useEffect2(() => {
     if (!loaded || !game) return;
     if (saveTimerRef.current) return;
     saveTimerRef.current = setTimeout(() => {
@@ -7826,12 +7961,12 @@ function ConstructionFlowScreen({ onBackToHub }) {
       saveGame(gameRef.current);
     }, 2e3);
   }, [game, loaded, saveGame]);
-  useEffect(() => {
+  useEffect2(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, []);
-  useEffect(() => {
+  useEffect2(() => {
     if (!loaded) return;
     const tickMs = speedMode ? 1500 : 3e3;
     tickRef.current = setInterval(() => {
@@ -7850,7 +7985,7 @@ function ConstructionFlowScreen({ onBackToHub }) {
     }, tickMs);
     return () => clearInterval(tickRef.current);
   }, [loaded, speedMode]);
-  useEffect(() => {
+  useEffect2(() => {
     const sub = AppState.addEventListener("change", (next) => {
       const prev = appStateRef.current;
       if (prev === "active" && next.match(/inactive|background/)) {
@@ -8462,9 +8597,9 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         fresh.lastRealTimestamp = Date.now();
         setGame(fresh);
         setTheme("dark");
-        AsyncStorage.removeItem(STORAGE_KEY).catch(() => {
+        AsyncStorage2.removeItem(STORAGE_KEY).catch(() => {
         });
-        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {
+        AsyncStorage2.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {
         });
       } }
     ]);
@@ -8916,7 +9051,7 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
     });
   }, [update]);
   if (!loaded || !game) {
-    return /* @__PURE__ */ jsx(SafeAreaView, { style: { flex: 1, backgroundColor: THEMES.dark.bg, alignItems: "center", justifyContent: "center" }, children: /* @__PURE__ */ jsx(Text, { style: { color: THEMES.dark.text, fontSize: 18 }, children: "Loading ConstructionFlow\u2026" }) });
+    return /* @__PURE__ */ jsx2(SafeAreaView, { style: { flex: 1, backgroundColor: THEMES.dark.bg, alignItems: "center", justifyContent: "center" }, children: /* @__PURE__ */ jsx2(Text2, { style: { color: THEMES.dark.text, fontSize: 18 }, children: "Loading ConstructionFlow\u2026" }) });
   }
   const col = { color: T.text };
   const subCol = { color: T.sub };
@@ -8924,49 +9059,49 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
     return renderSetup();
   }
   if (game.gameOver) {
-    return /* @__PURE__ */ jsxs(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: [
-      /* @__PURE__ */ jsx(StatusBar, { barStyle: "light-content", backgroundColor: T.bg }),
-      /* @__PURE__ */ jsxs(ScrollView, { contentContainerStyle: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 52, marginBottom: 8 }, children: "\u{1F4B8}" }),
-        /* @__PURE__ */ jsxs(Text, { style: { color: T.red, fontSize: 24, fontWeight: "900", textAlign: "center", marginBottom: 8 }, children: [
+    return /* @__PURE__ */ jsxs2(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: [
+      /* @__PURE__ */ jsx2(StatusBar, { barStyle: "light-content", backgroundColor: T.bg }),
+      /* @__PURE__ */ jsxs2(ScrollView, { contentContainerStyle: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 52, marginBottom: 8 }, children: "\u{1F4B8}" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: { color: T.red, fontSize: 24, fontWeight: "900", textAlign: "center", marginBottom: 8 }, children: [
           game.companyName,
           " is Bankrupt"
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 13, textAlign: "center", marginBottom: 24, lineHeight: 20 }, children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: { color: T.sub, fontSize: 13, textAlign: "center", marginBottom: 24, lineHeight: 20 }, children: [
           "Cash fell below \u2212$10,000 for 5 consecutive days.",
           "\n",
           "Your creditors have moved in."
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { width: "100%", backgroundColor: T.panel, borderRadius: 16, padding: 18, borderWidth: 1, borderColor: T.border, marginBottom: 20 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 10, fontWeight: "700", letterSpacing: 1.5, marginBottom: 10 }, children: "FINAL STATS" }),
+        /* @__PURE__ */ jsxs2(View2, { style: { width: "100%", backgroundColor: T.panel, borderRadius: 16, padding: 18, borderWidth: 1, borderColor: T.border, marginBottom: 20 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 10, fontWeight: "700", letterSpacing: 1.5, marginBottom: 10 }, children: "FINAL STATS" }),
           [
             ["Days in Business", String(game.day || 1)],
             ["Jobs Completed", String(game.completedJobs || 0)],
             ["Crew at Close", String((game.crew || []).length)],
             ["Peak Reputation", String(game.hallOfFame?.highestRep || game.reputation || 0)],
             ["Peak Valuation", money2(game.hallOfFame?.highestValuation || game.companyValuation || 0)]
-          ].map(([label, value]) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: T.border }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 13 }, children: label }),
-            /* @__PURE__ */ jsx(Text, { style: { color: T.text, fontSize: 13, fontWeight: "700" }, children: value })
+          ].map(([label, value]) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: T.border }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 13 }, children: label }),
+            /* @__PURE__ */ jsx2(Text2, { style: { color: T.text, fontSize: 13, fontWeight: "700" }, children: value })
           ] }, label))
         ] }),
-        /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 12, fontStyle: "italic", textAlign: "center", marginBottom: 28, lineHeight: 18 }, children: '"Every failed company is just a blueprint for the next one."' }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 12, fontStyle: "italic", textAlign: "center", marginBottom: 28, lineHeight: 18 }, children: '"Every failed company is just a blueprint for the next one."' }),
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
             style: { backgroundColor: T.green, paddingVertical: 16, borderRadius: 14, width: "100%", alignItems: "center", marginBottom: 12 },
             onPress: handleResetGame,
             activeOpacity: 0.8,
-            children: /* @__PURE__ */ jsx(Text, { style: { color: "#000", fontSize: 16, fontWeight: "900" }, children: "Start Over \u2192" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: { color: "#000", fontSize: 16, fontWeight: "900" }, children: "Start Over \u2192" })
           }
         ),
-        onBackToHub && /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        onBackToHub && /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
             style: { paddingVertical: 14, width: "100%", alignItems: "center" },
             onPress: onBackToHub,
             activeOpacity: 0.8,
-            children: /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 14 }, children: "\u2190 Back to Hub" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 14 }, children: "\u2190 Back to Hub" })
           }
         )
       ] })
@@ -9035,21 +9170,21 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
       ["WY", "Wyoming"],
       ["DC", "Washington D.C."]
     ];
-    return /* @__PURE__ */ jsx(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: /* @__PURE__ */ jsxs(ScrollView, { contentContainerStyle: { padding: 24, paddingBottom: 60, flexGrow: 1, justifyContent: "center" }, children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 36, textAlign: "center", marginBottom: 4 }, children: "\u{1F3D7}\uFE0F" }),
-      /* @__PURE__ */ jsx(Text, { style: { color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }, children: "ConstructionFlow" }),
-      /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 14, textAlign: "center", marginBottom: 32 }, children: "Build a construction empire from the ground up." }),
-      /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 28 }, children: [0, 1, 2].map((s) => /* @__PURE__ */ jsx(View, { style: { width: 28, height: 4, borderRadius: 2, backgroundColor: setupStep >= s ? T.green : T.border } }, s)) }),
+    return /* @__PURE__ */ jsx2(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: /* @__PURE__ */ jsxs2(ScrollView, { contentContainerStyle: { padding: 24, paddingBottom: 60, flexGrow: 1, justifyContent: "center" }, children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 36, textAlign: "center", marginBottom: 4 }, children: "\u{1F3D7}\uFE0F" }),
+      /* @__PURE__ */ jsx2(Text2, { style: { color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }, children: "ConstructionFlow" }),
+      /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 14, textAlign: "center", marginBottom: 32 }, children: "Build a construction empire from the ground up." }),
+      /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 28 }, children: [0, 1, 2].map((s) => /* @__PURE__ */ jsx2(View2, { style: { width: 28, height: 4, borderRadius: 2, backgroundColor: setupStep >= s ? T.green : T.border } }, s)) }),
       setupStep === 0 ? (
         /* Step 1 — Company name */
-        /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.green, borderWidth: 2 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Step 1 \u2014 Who Are You?" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 12 }], children: "You're the owner. Your name and your company's name appear on your Home screen, your bids, and your company profile." }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 4 }], children: "Your name" }),
-          /* @__PURE__ */ jsx(
+        /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.green, borderWidth: 2 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: "Step 1 \u2014 Who Are You?" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 12 }], children: "You're the owner. Your name and your company's name appear on your Home screen, your bids, and your company profile." }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 4 }], children: "Your name" }),
+          /* @__PURE__ */ jsx2(
             TextInput,
             {
-              style: [styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }],
+              style: [styles2.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }],
               value: setupOwner,
               onChangeText: setSetupOwner,
               placeholder: "e.g. Sam Delgado",
@@ -9058,11 +9193,11 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
               autoFocus: true
             }
           ),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 4 }], children: "Company name" }),
-          /* @__PURE__ */ jsx(
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 4 }], children: "Company name" }),
+          /* @__PURE__ */ jsx2(
             TextInput,
             {
-              style: [styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }],
+              style: [styles2.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }],
               value: setupName,
               onChangeText: setSetupName,
               placeholder: "e.g. Apex Build Co.",
@@ -9070,40 +9205,40 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
               maxLength: 36
             }
           ),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { backgroundColor: setupName.trim().length > 0 ? T.green : T.panel2, borderColor: T.green }],
+              style: [styles2.btn, { backgroundColor: setupName.trim().length > 0 ? T.green : T.panel2, borderColor: T.green }],
               onPress: () => {
                 if (setupName.trim().length > 0) setSetupStep(1);
               },
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: setupName.trim().length > 0 ? "#000" : T.sub }], children: "Next \u2014 Choose Your State \u2192" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: setupName.trim().length > 0 ? "#000" : T.sub }], children: "Next \u2014 Choose Your State \u2192" })
             }
           )
         ] })
       ) : setupStep === 1 ? (
         /* Step 2 — State selection (all 50 states, searchable) */
-        /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 2 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Step 2 \u2014 Your State" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "Where are you building? Search by name or abbreviation." }),
-          setupHomeStateCode ? /* @__PURE__ */ jsxs(View, { style: [styles.rowItem, { borderColor: T.cyan, backgroundColor: T.panel2, marginBottom: 10, flexDirection: "row", alignItems: "center" }], children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.cyan, flex: 1 }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 2 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: "Step 2 \u2014 Your State" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "Where are you building? Search by name or abbreviation." }),
+          setupHomeStateCode ? /* @__PURE__ */ jsxs2(View2, { style: [styles2.rowItem, { borderColor: T.cyan, backgroundColor: T.panel2, marginBottom: 10, flexDirection: "row", alignItems: "center" }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.cyan, flex: 1 }], children: [
               "\u2713 ",
               setupHomeStateName,
               " (",
               setupHomeStateCode,
               ")"
             ] }),
-            /* @__PURE__ */ jsx(TouchableOpacity, { onPress: () => {
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { onPress: () => {
               setSetupHomeStateCode("");
               setSetupHomeStateName("");
               setSetupStateSearch("");
-            }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: "Change" }) })
-          ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsx(
+            }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: "Change" }) })
+          ] }) : /* @__PURE__ */ jsxs2(Fragment, { children: [
+            /* @__PURE__ */ jsx2(
               TextInput,
               {
-                style: [styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 8 }],
+                style: [styles2.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 8 }],
                 value: setupStateSearch,
                 onChangeText: (text) => {
                   setSetupStateSearch(text);
@@ -9113,49 +9248,49 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
                 autoCorrect: false
               }
             ),
-            /* @__PURE__ */ jsx(ScrollView, { style: { maxHeight: 220 }, keyboardShouldPersistTaps: "handled", children: US_STATES.filter(([code, name]) => {
+            /* @__PURE__ */ jsx2(ScrollView, { style: { maxHeight: 220 }, keyboardShouldPersistTaps: "handled", children: US_STATES.filter(([code, name]) => {
               const q = setupStateSearch.toLowerCase();
               return !q || name.toLowerCase().includes(q) || code.toLowerCase() === q;
-            }).map(([code, name]) => /* @__PURE__ */ jsxs(
-              TouchableOpacity,
+            }).map(([code, name]) => /* @__PURE__ */ jsxs2(
+              TouchableOpacity2,
               {
-                style: [styles.rowItem, { marginBottom: 4, paddingVertical: 8, flexDirection: "row", alignItems: "center" }],
+                style: [styles2.rowItem, { marginBottom: 4, paddingVertical: 8, flexDirection: "row", alignItems: "center" }],
                 onPress: () => {
                   setSetupHomeStateCode(code);
                   setSetupHomeStateName(name);
                   setSetupStateSearch(name);
                 },
                 children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, width: 32 }], children: code }),
-                  /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { flex: 1 }], children: name })
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, width: 32 }], children: code }),
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { flex: 1 }], children: name })
                 ]
               },
               code
             )) })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginTop: 8 }, children: [
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border }], onPress: () => setSetupStep(0), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, col], children: "\u2190 Back" }) }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginTop: 8 }, children: [
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border }], onPress: () => setSetupStep(0), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, col], children: "\u2190 Back" }) }),
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.btn, { flex: 2, backgroundColor: setupHomeStateCode ? T.green : T.panel2, borderColor: T.green }],
+                style: [styles2.btn, { flex: 2, backgroundColor: setupHomeStateCode ? T.green : T.panel2, borderColor: T.green }],
                 onPress: () => {
                   if (setupHomeStateCode) setSetupStep(2);
                 },
-                children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: setupHomeStateCode ? "#000" : T.sub }], children: "Next \u2014 Your City \u2192" })
+                children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: setupHomeStateCode ? "#000" : T.sub }], children: "Next \u2014 Your City \u2192" })
               }
             )
           ] })
         ] })
       ) : (
         /* Step 3 — City name + market size */
-        /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 2 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Step 3 \u2014 Your City" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "Type your city or town. This is where you'll pick up your first contracts." }),
-          /* @__PURE__ */ jsx(
+        /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 2 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: "Step 3 \u2014 Your City" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "Type your city or town. This is where you'll pick up your first contracts." }),
+          /* @__PURE__ */ jsx2(
             TextInput,
             {
-              style: [styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 14 }],
+              style: [styles2.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 14 }],
               value: setupHomeCityText,
               onChangeText: setSetupHomeCityText,
               placeholder: "e.g. Nashville",
@@ -9164,35 +9299,35 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
               autoFocus: true
             }
           ),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "What's the construction market like there?" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "What's the construction market like there?" }),
           [
             { key: "Low", label: "Small Market", desc: "Less competition, steady local work" },
             { key: "Medium", label: "Growing City", desc: "Mix of residential and commercial" },
             { key: "High", label: "Major Metro", desc: "High competition, bigger contracts" }
           ].map((opt) => {
             const sel = setupCompetition === opt.key;
-            return /* @__PURE__ */ jsxs(
-              TouchableOpacity,
+            return /* @__PURE__ */ jsxs2(
+              TouchableOpacity2,
               {
-                style: [styles.rowItem, { borderColor: sel ? T.cyan : T.border, backgroundColor: sel ? T.panel2 : "transparent", marginBottom: 6 }],
+                style: [styles2.rowItem, { borderColor: sel ? T.cyan : T.border, backgroundColor: sel ? T.panel2 : "transparent", marginBottom: 6 }],
                 onPress: () => setSetupCompetition(opt.key),
                 children: [
-                  /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                    /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: sel ? T.cyan : T.text }], children: opt.label }),
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: opt.desc })
+                  /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: sel ? T.cyan : T.text }], children: opt.label }),
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: opt.desc })
                   ] }),
-                  /* @__PURE__ */ jsx(View, { style: [styles.selDot, { backgroundColor: sel ? T.cyan : T.border }] })
+                  /* @__PURE__ */ jsx2(View2, { style: [styles2.selDot, { backgroundColor: sel ? T.cyan : T.border }] })
                 ]
               },
               opt.key
             );
           }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginTop: 10 }, children: [
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border }], onPress: () => setSetupStep(1), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, col], children: "\u2190 Back" }) }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginTop: 10 }, children: [
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border }], onPress: () => setSetupStep(1), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, col], children: "\u2190 Back" }) }),
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.btn, { flex: 2, backgroundColor: setupHomeCityText.trim() ? T.green : T.panel2, borderColor: T.green }],
+                style: [styles2.btn, { flex: 2, backgroundColor: setupHomeCityText.trim() ? T.green : T.panel2, borderColor: T.green }],
                 onPress: () => {
                   if (!setupHomeCityText.trim()) return;
                   const competitionToCityId = { Low: "salem", Medium: "portland", High: "phoenix" };
@@ -9209,13 +9344,13 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
                     addLog2(g, `\u{1F3D7}\uFE0F ${g.ownerName} founded ${g.companyName} in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
                   });
                 },
-                children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: setupHomeCityText.trim() ? "#000" : T.sub }], children: "\u{1F680} Start Building" })
+                children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: setupHomeCityText.trim() ? "#000" : T.sub }], children: "\u{1F680} Start Building" })
               }
             )
           ] })
         ] })
       ),
-      /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }, children: [
+      /* @__PURE__ */ jsxs2(Text2, { style: { color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }, children: [
         "You start with $75,000 \xB7 1 truck \xB7 3 crew members",
         "\n",
         "You make money by winning bids, putting crew and machines on site, and finishing the job before the deadline."
@@ -9240,13 +9375,13 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
     });
     const topRivalByRep = [...game.rivals || []].filter((r) => r.status !== "Bankrupt" && !(game.acquiredRivals || []).includes(r.id)).sort((a, b) => (b.cash || 0) - (a.cash || 0))[0];
     const rivalOutpacing = topRivalByRep && (topRivalByRep.cash || 0) > (game.cash || 0);
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
       (() => {
         const dailyBurn = (game.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0) + (game.equipment || []).reduce((s, e) => s + e.dailyCost, 0) + (OFFICES[game.officeIndex || 0]?.dailyRent || 0);
         const daysLeft = dailyBurn > 0 ? Math.floor(game.cash / dailyBurn) : 999;
-        if (daysLeft < 5 && game.cash >= 0) return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.red, marginBottom: 4 }], children: "\u26A0\uFE0F Cash Running Low" }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, col], children: [
+        if (daysLeft < 5 && game.cash >= 0) return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.red, marginBottom: 4 }], children: "\u26A0\uFE0F Cash Running Low" }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, col], children: [
             "~",
             daysLeft,
             " day",
@@ -9258,91 +9393,91 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
         ] });
         return null;
       })(),
-      burningOutCrew.length > 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5, marginBottom: 8 }], children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.orange, marginBottom: 6 }], children: [
+      burningOutCrew.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5, marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.orange, marginBottom: 6 }], children: [
           "\u26A0\uFE0F Crew Burning Out (",
           burningOutCrew.length,
           ")"
         ] }),
-        burningOutCrew.slice(0, 3).map((w) => /* @__PURE__ */ jsxs(View, { style: { marginBottom: 6 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: w.name }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+        burningOutCrew.slice(0, 3).map((w) => /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 6 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: w.name }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
               "Stamina ",
               Math.round(w.stamina ?? 0),
               "%"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.round(w.stamina ?? 0)}%`, backgroundColor: T.red }] }) })
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.round(w.stamina ?? 0)}%`, backgroundColor: T.red }] }) })
         ] }, w.id)),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, fontStyle: "italic", marginTop: 2 }], children: "Low stamina slows site progress \u2014 remove from sites to recover." })
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, fontStyle: "italic", marginTop: 2 }], children: "Low stamina slows site progress \u2014 remove from sites to recover." })
       ] }),
       game.importantNotice && (() => {
         const noticeColors = { green: T.green, orange: T.orange, red: T.red, neutral: T.sub };
         const borderCol = noticeColors[game.importantNotice.tone] || T.cyan;
-        return /* @__PURE__ */ jsxs(
-          TouchableOpacity,
+        return /* @__PURE__ */ jsxs2(
+          TouchableOpacity2,
           {
             onPress: () => update((g) => {
               g.importantNotice = null;
             }),
-            style: [styles.card, { backgroundColor: T.panel, borderColor: borderCol, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }],
+            style: [styles2.card, { backgroundColor: T.panel, borderColor: borderCol, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }],
             children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: borderCol, marginBottom: 3 }], children: "\u{1F4E3} Update" }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: game.importantNotice.message }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 4, fontStyle: "italic" }], children: "Tap to dismiss" })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: borderCol, marginBottom: 3 }], children: "\u{1F4E3} Update" }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: game.importantNotice.message }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginTop: 4, fontStyle: "italic" }], children: "Tap to dismiss" })
             ]
           }
         );
       })(),
-      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-        /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.h2, col], numberOfLines: 1, children: game.companyName }),
-            (game.generation || 1) > 1 && /* @__PURE__ */ jsxs(Text, { style: { fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: [
+      /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, col], numberOfLines: 1, children: game.companyName }),
+            (game.generation || 1) > 1 && /* @__PURE__ */ jsxs2(Text2, { style: { fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: [
               "GEN ",
               game.generation
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 1 }], numberOfLines: 1, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 11, marginTop: 1 }], numberOfLines: 1, children: [
             "Owned by ",
             game.ownerName || "Owner",
             " \xB7 General contractor"
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 repTier.badge,
                 " ",
                 repTier.label,
                 " \xB7 Day ",
                 game.day
               ] }),
-              game.seasonEmoji && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11 }], children: [
+              game.seasonEmoji && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 11 }], children: [
                 game.seasonEmoji,
                 " ",
                 game.currentSeason
               ] }),
-              (game.savings || 0) > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10 }], children: [
+              (game.savings || 0) > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 10 }], children: [
                 "\u{1F3E6} ",
                 money2(game.savings),
                 " saved"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
                 style: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 },
                 onPress: () => setSpeedMode((s) => !s),
-                children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }, children: speedMode ? "\u26A1 2\xD7" : "1\xD7" })
+                children: /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }, children: speedMode ? "\u26A1 2\xD7" : "1\xD7" })
               }
             )
           ] })
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end", minWidth: 0 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }], numberOfLines: 1, children: money2(game.cash) }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: office.name }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], numberOfLines: 1, children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end", minWidth: 0 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.cashBig, { color: game.cash >= 0 ? T.green : T.red }], numberOfLines: 1, children: money2(game.cash) }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], numberOfLines: 1, children: office.name }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], numberOfLines: 1, children: [
             "\u{1F4CD} ",
             displayCityName,
             ", ",
@@ -9350,43 +9485,43 @@ ${uses > 0 ? `Cost doubles each use \u2014 next will cost ${money2(cost * 2)}.` 
           ] })
         ] })
       ] }) }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsxs(View, { children: [
-            /* @__PURE__ */ jsxs(Text, { style: [{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }], children: [
               "LEVEL ",
               companyLevel.level
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: companyLevel.label })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: companyLevel.label })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            nextLevel && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+            nextLevel && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub }], children: [
               "Next: ",
               nextLevel.label
             ] }),
-            !nextLevel && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow }], children: "MAX LEVEL" })
+            !nextLevel && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.yellow }], children: "MAX LEVEL" })
           ] })
         ] }),
-        nextLevel && /* @__PURE__ */ jsx(View, { style: { marginTop: 8, gap: 4 }, children: [
+        nextLevel && /* @__PURE__ */ jsx2(View2, { style: { marginTop: 8, gap: 4 }, children: [
           { label: "Rep", current: game.reputation || 0, target: nextLevel.repMin, color: T.purple, fmt: (v) => `${v}` },
           { label: "Jobs", current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: (v) => `${v}` },
           { label: "Value", current: valuation, target: nextLevel.valMin, color: T.cyan, fmt: (v) => money2(v) }
         ].map((bar) => {
           const pct = Math.min(100, Math.round(bar.current / Math.max(1, bar.target) * 100));
           const done = bar.current >= bar.target;
-          return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 4 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }], children: [
+          return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 4 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: done ? T.green : T.sub, fontSize: 10 }], children: [
                 done ? "\u2713 " : "",
                 bar.label
               ] }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }], children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: done ? T.green : bar.color, fontSize: 10 }], children: [
                 bar.fmt(bar.current),
                 " / ",
                 bar.fmt(bar.target)
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: { height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 } }) })
+            /* @__PURE__ */ jsx2(View2, { style: { height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 } }) })
           ] }, bar.label);
         }) })
       ] }),
@@ -9444,52 +9579,52 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           }
         ];
         const s = steps[step];
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan }], children: "\u{1F680} Getting Started" }),
-            /* @__PURE__ */ jsxs(Text, { style: { color: T.sub, fontSize: 11 }, children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.cyan }], children: "\u{1F680} Getting Started" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: { color: T.sub, fontSize: 11 }, children: [
               "Step ",
               s.num
             ] })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 6 }], children: s.title }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col, { lineHeight: 20, marginBottom: 10 }], children: s.body }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }], onPress: s.action, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#000" }], children: s.cta }) }),
-            /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }], onPress: () => update((g) => {
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 6 }], children: s.title }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col, { lineHeight: 20, marginBottom: 10 }], children: s.body }),
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8 }, children: [
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }], onPress: s.action, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#000" }], children: s.cta }) }),
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }], onPress: () => update((g) => {
               g.tutorialDone = true;
               addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green");
-            }), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, subCol], children: "Skip" }) })
+            }), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, subCol], children: "Skip" }) })
           ] })
         ] });
       })(),
       game.tutorialDone && (() => {
         const hs = computeHealthScore(game);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T[hs.colorKey], borderWidth: 1.5 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "\u{1F4CA} Company Health" }),
-            /* @__PURE__ */ jsx(View, { style: { backgroundColor: T[hs.colorKey] + "33", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3 }, children: /* @__PURE__ */ jsx(Text, { style: { color: T[hs.colorKey], fontWeight: "700", fontSize: 13 }, children: hs.label }) })
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T[hs.colorKey], borderWidth: 1.5 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "\u{1F4CA} Company Health" }),
+            /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T[hs.colorKey] + "33", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3 }, children: /* @__PURE__ */ jsx2(Text2, { style: { color: T[hs.colorKey], fontWeight: "700", fontSize: 13 }, children: hs.label }) })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", marginBottom: 6 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 30, fontWeight: "900", color: T[hs.colorKey], marginRight: 10 }, children: hs.score }),
-            /* @__PURE__ */ jsx(View, { style: { flex: 1 }, children: /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${hs.score}%`, backgroundColor: T[hs.colorKey] }] }) }) })
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", marginBottom: 6 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 30, fontWeight: "900", color: T[hs.colorKey], marginRight: 10 }, children: hs.score }),
+            /* @__PURE__ */ jsx2(View2, { style: { flex: 1 }, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${hs.score}%`, backgroundColor: T[hs.colorKey] }] }) }) })
           ] }),
-          hs.factors.map((f, i) => /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11 }], children: [
+          hs.factors.map((f, i) => /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 11 }], children: [
             "\u2022 ",
             f
           ] }, i)),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 6, fontStyle: "italic" }], children: "Safety recovers +0.5/day toward 70. Incidents, corner cuts, and violations lower it." })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginTop: 6, fontStyle: "italic" }], children: "Safety recovers +0.5/day toward 70. Incidents, corner cuts, and violations lower it." })
         ] });
       })(),
       game.tutorialDone && (() => {
         const warnings = getPredictiveWarnings(game);
         if (!warnings.length) return null;
         const sevColors = { high: T.red, medium: T.orange, low: T.sub };
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 8 }], children: "\u26A1 Early Warnings" }),
-          warnings.map((w, i) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
-            /* @__PURE__ */ jsx(View, { style: { width: 8, height: 8, borderRadius: 4, backgroundColor: sevColors[w.severity] || T.sub, marginRight: 8 } }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.text, flex: 1, fontSize: 12 }], children: w.text })
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 8 }], children: "\u26A1 Early Warnings" }),
+          warnings.map((w, i) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
+            /* @__PURE__ */ jsx2(View2, { style: { width: 8, height: 8, borderRadius: 4, backgroundColor: sevColors[w.severity] || T.sub, marginRight: 8 } }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.text, flex: 1, fontSize: 12 }], children: w.text })
           ] }, i))
         ] });
       })(),
@@ -9498,62 +9633,62 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const _isCritical = ["red", "orange"].includes(nba.tone);
         if (!game.tutorialDone && !_isCritical) return null;
         if (nba.tab === "Home") return null;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1.5 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "\u{1F3AF} Next Best Action" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col, { fontWeight: "600", marginBottom: 4 }], children: nba.title }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, marginBottom: 10 }], children: nba.body }),
-          /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }], onPress: () => setTab(nba.tab), children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: "#fff" }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1.5 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: "\u{1F3AF} Next Best Action" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col, { fontWeight: "600", marginBottom: 4 }], children: nba.title }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, marginBottom: 10 }], children: nba.body }),
+          /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { backgroundColor: T.cyan, borderColor: T.cyan }], onPress: () => setTab(nba.tab), children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: [
             "Go to ",
             nba.tab,
             " \u2192"
           ] }) })
         ] });
       })(),
-      ((game.onTimeStreak || 0) >= 1 || (game.bestStreak || 0) >= 3) && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5 }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "\u{1F525} On-Time Streak" }),
-          /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.orange + "33", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 }, children: /* @__PURE__ */ jsxs(Text, { style: { color: T.orange, fontWeight: "700", fontSize: 13 }, children: [
-            game.onTimeStreak || 0,
-            " in a row"
-          ] }) })
-        ] }),
-        (() => {
-          const milestones = [3, 5, 10, 20];
-          const streak = game.onTimeStreak || 0;
-          const nextMilestone = milestones.find((m) => m > streak) || 20;
-          const pct = Math.min(100, Math.round(streak / nextMilestone * 100));
-          return /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 8 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${pct}%`, backgroundColor: T.orange }] }) }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, marginTop: 3 }], children: [
-              streak,
-              "/",
-              nextMilestone,
-              " \u2192 ",
-              money2(nextMilestone * 300),
-              " bonus \xB7 Best: ",
-              game.bestStreak || 0
-            ] })
-          ] });
-        })()
-      ] }),
+      ((game.onTimeStreak || 0) >= 1 || (game.bestStreak || 0) >= 3) && /* @__PURE__ */ jsx2(
+        CollapsibleSection,
+        {
+          title: "\u{1F525} On-Time Streak",
+          summary: `${game.onTimeStreak || 0} in a row \xB7 best ${game.bestStreak || 0}`,
+          persistKey: "home_ontime_streak",
+          colors: { background: T.panel, border: T.orange, text: T.text, sub: T.sub, accent: T.orange },
+          children: (() => {
+            const milestones = [3, 5, 10, 20];
+            const streak = game.onTimeStreak || 0;
+            const nextMilestone = milestones.find((m) => m > streak) || 20;
+            const pct = Math.min(100, Math.round(streak / nextMilestone * 100));
+            return /* @__PURE__ */ jsxs2(Fragment, { children: [
+              /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 8 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${pct}%`, backgroundColor: T.orange }] }) }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, marginTop: 3 }], children: [
+                streak,
+                "/",
+                nextMilestone,
+                " \u2192 ",
+                money2(nextMilestone * 300),
+                " bonus \xB7 Best: ",
+                game.bestStreak || 0
+              ] })
+            ] });
+          })()
+        }
+      ),
       game.weeklyChallenge && (() => {
         const wc = game.weeklyChallenge;
         const pct = wc.progress < 0 ? 0 : Math.min(100, Math.round((wc.progress || 0) / wc.target * 100));
         const daysLeft = Math.max(0, 7 - (game.day - (wc.startDay || 0)) % 7);
         const failed = wc.progress < 0;
         const claimable = wc.completed && !wc.claimedDay;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: claimable ? T.green : failed ? T.red : T.purple, borderWidth: 1.5 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "\u{1F4CB} Weekly Challenge" }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: claimable ? T.green : failed ? T.red : T.purple, borderWidth: 1.5 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "\u{1F4CB} Weekly Challenge" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub }], children: [
               daysLeft,
               "d left"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col, { marginVertical: 4 }], children: wc.label }),
-          !failed && /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 4 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${pct}%`, backgroundColor: wc.completed ? T.green : T.purple }] }) }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, marginTop: 2 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col, { marginVertical: 4 }], children: wc.label }),
+          !failed && /* @__PURE__ */ jsxs2(Fragment, { children: [
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 4 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${pct}%`, backgroundColor: wc.completed ? T.green : T.purple }] }) }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, marginTop: 2 }], children: [
               pct,
               "% \xB7 Reward: ",
               money2(wc.reward),
@@ -9562,11 +9697,11 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
               " rep"
             ] })
           ] }),
-          failed && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, marginTop: 4 }], children: "Challenge failed \u2014 new one starts next week." }),
-          claimable && /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          failed && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red, marginTop: 4 }], children: "Challenge failed \u2014 new one starts next week." }),
+          claimable && /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { marginTop: 8, backgroundColor: T.green, borderColor: T.green }],
+              style: [styles2.btn, { marginTop: 8, backgroundColor: T.green, borderColor: T.green }],
               onPress: () => update((g) => {
                 const _wc = g.weeklyChallenge;
                 g.cash += _wc.reward;
@@ -9575,7 +9710,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 _wc.claimedDay = g.day;
                 addLog2(g, `\u{1F389} Weekly challenge reward claimed: ${money2(_wc.reward)} + ${_wc.repBonus} rep!`);
               }),
-              children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: "#fff" }], children: [
+              children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: [
                 "Claim Reward \u2014 ",
                 money2(wc.reward)
               ] })
@@ -9586,22 +9721,22 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
       game.weeklyReport && (() => {
         const wr = game.weeklyReport;
         const net = (wr.revenue || 0) - (wr.expenses || 0);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "\u{1F4C8} Last Week Report" }),
-            /* @__PURE__ */ jsx(TouchableOpacity, { onPress: () => update((g) => {
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "\u{1F4C8} Last Week Report" }),
+            /* @__PURE__ */ jsx2(TouchableOpacity2, { onPress: () => update((g) => {
               g.weeklyReport = null;
-            }), children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: "Dismiss" }) })
+            }), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: "Dismiss" }) })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 8, marginBottom: 6 }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 6 }, children: [
             { label: "Revenue", val: money2(wr.revenue || 0), color: T.green },
             { label: "Expenses", val: money2(wr.expenses || 0), color: T.red },
             { label: "Net", val: (net >= 0 ? "+" : "") + money2(net), color: net >= 0 ? T.green : T.red }
-          ].map((s) => /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { color: s.color, fontSize: 13, fontWeight: "800" }, children: s.val }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: s.label })
+          ].map((s) => /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { color: s.color, fontSize: 13, fontWeight: "800" }, children: s.val }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: s.label })
           ] }, s.label)) }),
-          (wr.jobsCompleted || 0) > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+          (wr.jobsCompleted || 0) > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub }], children: [
             wr.jobsCompleted,
             " contract",
             wr.jobsCompleted !== 1 ? "s" : "",
@@ -9615,70 +9750,77 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const rels = game.clientRelationships || {};
         const activeClients = CLIENT_ROSTER.filter((c) => rels[c.id]?.jobsDone > 0);
         if (activeClients.length === 0) return null;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "\u{1F91D} Client Relationships" }),
-          CLIENT_ROSTER.map((cl) => {
-            const rel = rels[cl.id] || { loyalty: 0, jobsDone: 0 };
-            if (rel.jobsDone === 0) return null;
-            const tier = getClientTier(rel.loyalty);
-            const pct = Math.min(100, Math.round(rel.loyalty / 100 * 100));
-            const tierColor = T[tier.color] || T.sub;
-            return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 10 }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }, children: [
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, col], children: [
-                  cl.icon,
-                  " ",
-                  cl.name
-                ] }),
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: tierColor, fontSize: 10, fontWeight: "700" }], children: tier.label }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
-                    rel.jobsDone,
-                    " job",
-                    rel.jobsDone !== 1 ? "s" : ""
+        const _loyalClients = activeClients.filter((c) => (rels[c.id]?.loyalty || 0) >= 40).length;
+        return /* @__PURE__ */ jsx2(
+          CollapsibleSection,
+          {
+            title: "\u{1F91D} Client Relationships",
+            summary: `${activeClients.length} client${activeClients.length !== 1 ? "s" : ""}${_loyalClients > 0 ? ` \xB7 ${_loyalClients} paying a loyalty bonus` : ""}`,
+            persistKey: "home_client_relationships",
+            colors: { background: T.panel, border: T.border, text: T.text, sub: T.sub, accent: T.cyan },
+            children: CLIENT_ROSTER.map((cl) => {
+              const rel = rels[cl.id] || { loyalty: 0, jobsDone: 0 };
+              if (rel.jobsDone === 0) return null;
+              const tier = getClientTier(rel.loyalty);
+              const pct = Math.min(100, Math.round(rel.loyalty / 100 * 100));
+              const tierColor = T[tier.color] || T.sub;
+              return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 10 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, col], children: [
+                    cl.icon,
+                    " ",
+                    cl.name
+                  ] }),
+                  /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: tierColor, fontSize: 10, fontWeight: "700" }], children: tier.label }),
+                    /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
+                      rel.jobsDone,
+                      " job",
+                      rel.jobsDone !== 1 ? "s" : ""
+                    ] })
                   ] })
+                ] }),
+                /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${pct}%`, backgroundColor: tierColor, borderRadius: 2 } }) }),
+                tier.valueMult > 1 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.green, fontSize: 10, marginTop: 2 }], children: [
+                  "\u2713 ",
+                  Math.round((tier.valueMult - 1) * 100),
+                  "% value bonus \xB7 +",
+                  tier.extraDays,
+                  "d deadline on their contracts"
                 ] })
-              ] }),
-              /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${pct}%`, backgroundColor: tierColor, borderRadius: 2 } }) }),
-              tier.valueMult > 1 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.green, fontSize: 10, marginTop: 2 }], children: [
-                "\u2713 ",
-                Math.round((tier.valueMult - 1) * 100),
-                "% value bonus \xB7 +",
-                tier.extraDays,
-                "d deadline on their contracts"
-              ] })
-            ] }, cl.id);
-          })
-        ] });
+              ] }, cl.id);
+            })
+          }
+        );
       })(),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Today's Priorities" }),
-        sitesNeedingMats.length > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Today's Priorities" }),
+        sitesNeedingMats.length > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
           "\u26A0 Materials needed on ",
           sitesNeedingMats.length,
           " site",
           sitesNeedingMats.length > 1 ? "s" : ""
         ] }),
-        burningOutCrew.length > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+        burningOutCrew.length > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
           "\u26A0 ",
           burningOutCrew.length,
           " crew member",
           burningOutCrew.length > 1 ? "s" : "",
           " burning out"
         ] }),
-        overdueSites.length > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+        overdueSites.length > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
           "\u{1F534} ",
           overdueSites.length,
           " site",
           overdueSites.length > 1 ? "s" : "",
           " overdue"
         ] }),
-        rivalOutpacing && topRivalByRep && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.yellow }], children: [
+        rivalOutpacing && topRivalByRep && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.yellow }], children: [
           "\u26A1 ",
           topRivalByRep.name.split(" ")[0],
           " is outpacing you"
         ] }),
-        sitesNeedingMats.length === 0 && burningOutCrew.length === 0 && overdueSites.length === 0 && !rivalOutpacing && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green }], children: "\u2705 Operations running smoothly" })
+        sitesNeedingMats.length === 0 && burningOutCrew.length === 0 && overdueSites.length === 0 && !rivalOutpacing && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green }], children: "\u2705 Operations running smoothly" })
       ] }),
       (() => {
         const equipVal = Math.round((game.equipment || []).reduce((s, e) => s + e.price * (e.condition / 100) * 0.6, 0));
@@ -9690,87 +9832,87 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const wkExp = game.weeklyStats?.expenses || 0;
         const wkProfit = wkRev - wkExp;
         const topRival = [...game.rivals || []].filter((r) => r.status !== "Bankrupt").sort((a, b) => (b.rep || 0) - (a.rep || 0))[0];
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }, children: [
-            /* @__PURE__ */ jsxs(View, { children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.purple }], children: "Executive Dashboard" }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.purple }], children: "Executive Dashboard" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 "CEO View \xB7 Day ",
                 game.day
               ] })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [{ fontSize: 20, fontWeight: "900", color: T.cyan }], children: money2(valuation) }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Company Value" })
+            /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [{ fontSize: 20, fontWeight: "900", color: T.cyan }], children: money2(valuation) }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Company Value" })
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
             { label: "National Rank", val: rank <= 3 ? `#${rank} \u{1F3C6}` : `#${rank}`, color: rank <= 3 ? T.yellow : rank <= 10 ? T.green : T.sub },
             { label: "Market Share", val: `${game.marketShare || 1}%`, color: T.blue },
             { label: "Cities Active", val: `${cityCount}`, color: T.orange }
-          ].map((k) => /* @__PURE__ */ jsxs(View, { style: [styles.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiVal, { color: k.color, fontSize: 13 }], children: k.val }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiLabel, subCol], children: k.label })
+          ].map((k) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiVal, { color: k.color, fontSize: 13 }], children: k.val }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiLabel, subCol], children: k.label })
           ] }, k.label)) }),
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
             { label: "Wk Revenue", val: money2(wkRev), color: T.green },
             { label: "Wk Expenses", val: money2(wkExp), color: T.red },
             { label: "Wk Profit", val: money2(wkProfit), color: wkProfit >= 0 ? T.green : T.red }
-          ].map((k) => /* @__PURE__ */ jsxs(View, { style: [styles.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiVal, { color: k.color, fontSize: 12 }], children: k.val }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiLabel, subCol], children: k.label })
+          ].map((k) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiVal, { color: k.color, fontSize: 12 }], children: k.val }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiLabel, subCol], children: k.label })
           ] }, k.label)) }),
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 6 }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 6 }, children: [
             { label: "Equip Fleet", val: money2(equipVal), color: T.orange },
             { label: "Real Estate", val: money2(realEstVal), color: T.purple },
             { label: "Top Rival", val: topRival ? topRival.name.split(" ")[0] : "None", color: T.red }
-          ].map((k) => /* @__PURE__ */ jsxs(View, { style: [styles.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiVal, { color: k.color, fontSize: 11 }], numberOfLines: 1, children: k.val }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.kpiLabel, subCol], children: k.label })
+          ].map((k) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.kpi, { flex: 1, backgroundColor: T.panel, borderColor: T.border }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiVal, { color: k.color, fontSize: 11 }], numberOfLines: 1, children: k.val }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiLabel, subCol], children: k.label })
           ] }, k.label)) }),
-          EMPIRE_GOALS.filter((g2) => !(game.empireGoalsCompleted || []).includes(g2.id)).slice(0, 2).map((goal) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.purple }], children: [
+          EMPIRE_GOALS.filter((g2) => !(game.empireGoalsCompleted || []).includes(g2.id)).slice(0, 2).map((goal) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet2.hairlineWidth, borderTopColor: T.border }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.purple }], children: [
               "\u{1F3AF} ",
               goal.title
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: goal.desc })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: goal.desc })
           ] }, goal.id))
         ] });
       })(),
-      nextBest && /* @__PURE__ */ jsxs(
-        TouchableOpacity,
+      nextBest && /* @__PURE__ */ jsxs2(
+        TouchableOpacity2,
         {
-          style: [styles.card, { backgroundColor: T.panel2, borderColor: T[nextBest.tone] || T.border, borderLeftWidth: 4 }],
+          style: [styles2.card, { backgroundColor: T.panel2, borderColor: T[nextBest.tone] || T.border, borderLeftWidth: 4 }],
           onPress: () => setTab(nextBest.tab || tab),
           activeOpacity: 0.8,
           children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T[nextBest.tone] || T.text }], children: nextBest.title }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.body, col], children: nextBest.body }),
-            nextBest.tab && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T[nextBest.tone] }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T[nextBest.tone] || T.text }], children: nextBest.title }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.body, col], children: nextBest.body }),
+            nextBest.tab && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T[nextBest.tone] }], children: [
               "\u2192 Go to ",
               nextBest.tab
             ] })
           ]
         }
       ),
-      (game.activeSites || []).length > 0 && /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      (game.activeSites || []).length > 0 && /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.card, { backgroundColor: T.panel2, borderColor: T.purple, borderLeftWidth: 4 }],
+          style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.purple, borderLeftWidth: 4 }],
           onPress: handleSpeedUp,
           activeOpacity: 0.85,
-          children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.purple }], children: "\u26A1 Speed Up Time" }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Advance 2 game hours instantly \u2014 costs in-game cash." }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.purple }], children: [
+          children: /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.purple }], children: "\u26A1 Speed Up Time" }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Advance 2 game hours instantly \u2014 costs in-game cash." }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.purple }], children: [
                 "Cost: ",
                 money2(Math.round(1e3 * Math.pow(2, game.speedUpUses || 0))),
                 " ",
                 (game.speedUpUses || 0) > 0 ? `(doubles each use)` : ""
               ] })
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: { color: T.purple, fontSize: 22 }, children: "\u2192" })
+            /* @__PURE__ */ jsx2(Text2, { style: { color: T.purple, fontSize: 22 }, children: "\u2192" })
           ] })
         }
       ),
@@ -9784,25 +9926,25 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           { min: 0, label: "Local Builder", icon: "hammer" }
         ];
         const nextTier = nextTiers.slice().reverse().find((t) => t.min > legacy.score);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.purple, borderLeftWidth: 4, marginBottom: 8 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsxs(View, { children: [
-              /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: T.purple, fontWeight: "700", marginBottom: 2 }, children: "LEGACY SCORE" }),
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
-                /* @__PURE__ */ jsx(Ionicons, { name: legacy.icon, size: 20, color: T.purple }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 22, fontWeight: "900", color: T.text }, children: legacy.label })
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.purple, borderLeftWidth: 4, marginBottom: 8 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { children: [
+              /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, color: T.purple, fontWeight: "700", marginBottom: 2 }, children: "LEGACY SCORE" }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
+                /* @__PURE__ */ jsx2(Ionicons, { name: legacy.icon, size: 20, color: T.purple }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 22, fontWeight: "900", color: T.text }, children: legacy.label })
               ] })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-              /* @__PURE__ */ jsx(Text, { style: { fontSize: 28, fontWeight: "900", color: T.purple }, children: legacy.score }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: "/100" })
+            /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 28, fontWeight: "900", color: T.purple }, children: legacy.score }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: "/100" })
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { height: 5, backgroundColor: T.track, borderRadius: 3, marginTop: 8 }, children: /* @__PURE__ */ jsx(View, { style: { height: 5, width: `${legacy.score}%`, backgroundColor: T.purple, borderRadius: 3 } }) }),
-          nextTier && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Next:" }),
-            /* @__PURE__ */ jsx(Ionicons, { name: nextTier.icon, size: 10, color: T.sub }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+          /* @__PURE__ */ jsx2(View2, { style: { height: 5, backgroundColor: T.track, borderRadius: 3, marginTop: 8 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 5, width: `${legacy.score}%`, backgroundColor: T.purple, borderRadius: 3 } }) }),
+          nextTier && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Next:" }),
+            /* @__PURE__ */ jsx2(Ionicons, { name: nextTier.icon, size: 10, color: T.sub }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               nextTier.label,
               " at ",
               nextTier.min,
@@ -9811,27 +9953,27 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           ] })
         ] });
       })(),
-      /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
+      /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
         { label: "Active Sites", val: activeSites.length, color: T.orange },
         { label: "Crew Idle", val: idleCrew.length, color: T.cyan },
         { label: "Jobs Done", val: game.completedJobs, color: T.green },
         { label: "Reputation", val: `${game.reputation}`, color: T.purple }
-      ].map((k) => /* @__PURE__ */ jsxs(View, { style: [styles.kpi, { backgroundColor: T.panel, borderColor: T.border, flex: 1 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.kpiVal, { color: k.color }], children: k.val }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.kpiLabel, subCol], children: k.label })
+      ].map((k) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.kpi, { backgroundColor: T.panel, borderColor: T.border, flex: 1 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiVal, { color: k.color }], children: k.val }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.kpiLabel, subCol], children: k.label })
       ] }, k.label)) }),
       game.activeMarketEvent && (() => {
         const evt = MARKET_EVENTS.find((e) => e.id === game.activeMarketEvent);
         if (!evt) return null;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T[evt.tone] || T.border, borderWidth: 2 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
-            /* @__PURE__ */ jsx(Ionicons, { name: evt.ionicon, size: 14, color: T[evt.tone] || T.text }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T[evt.tone] || T.text }], children: evt.label })
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T[evt.tone] || T.border, borderWidth: 2 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6 }, children: [
+            /* @__PURE__ */ jsx2(Ionicons, { name: evt.ionicon, size: 14, color: T[evt.tone] || T.text }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T[evt.tone] || T.text }], children: evt.label })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: evt.desc }),
-          /* @__PURE__ */ jsxs(View, { style: { marginTop: 6 }, children: [
-            /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, overflow: "hidden" }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.round(game.marketEventDaysLeft / evt.duration * 100)}%`, backgroundColor: T[evt.tone] || T.text, borderRadius: 2 } }) }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T[evt.tone] || T.sub, marginTop: 2, fontSize: 10 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: evt.desc }),
+          /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 6 }, children: [
+            /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, overflow: "hidden" }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${Math.round(game.marketEventDaysLeft / evt.duration * 100)}%`, backgroundColor: T[evt.tone] || T.text, borderRadius: 2 } }) }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T[evt.tone] || T.sub, marginTop: 2, fontSize: 10 }], children: [
               game.marketEventDaysLeft,
               " of ",
               evt.duration,
@@ -9842,36 +9984,36 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           ] })
         ] });
       })(),
-      activeSites.length > 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Active Sites" }),
+      activeSites.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Active Sites" }),
         activeSites.map((site) => {
           const overallPct = (site.currentPhaseIdx / site.phases.length + site.phaseProgress / 100 / site.phases.length) * 100;
           const currentPhaseName = site.phases[site.currentPhaseIdx] || "Complete";
           const vis = PHASE_VISUALS[currentPhaseName] || { emoji: "\u{1F3D7}\uFE0F", desc: currentPhaseName };
-          return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 12 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", gap: 8 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { flex: 1 }], numberOfLines: 1, children: site.label }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: site.status === "Paused" ? T.orange : T.cyan }], numberOfLines: 1, children: site.status === "Paused" ? "\u23F8 Paused" : `${vis.emoji} ${currentPhaseName}` })
+          return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 12 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", gap: 8 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { flex: 1 }], numberOfLines: 1, children: site.label }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: site.status === "Paused" ? T.orange : T.cyan }], numberOfLines: 1, children: site.status === "Paused" ? "\u23F8 Paused" : `${vis.emoji} ${currentPhaseName}` })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 3, marginTop: 5, marginBottom: 3 }, children: site.phases.map((ph, idx) => {
+            /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 3, marginTop: 5, marginBottom: 3 }, children: site.phases.map((ph, idx) => {
               const done = idx < site.currentPhaseIdx;
               const active = idx === site.currentPhaseIdx;
               const pv = PHASE_VISUALS[ph] || { emoji: "\u{1F3D7}\uFE0F" };
-              return /* @__PURE__ */ jsxs(View, { style: { alignItems: "center", flex: 1 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 14, opacity: done ? 1 : active ? 1 : 0.3 }, children: pv.emoji }),
-                active && /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, width: "100%", marginTop: 2 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${site.phaseProgress}%`, backgroundColor: T.orange }] }) }),
-                done && /* @__PURE__ */ jsx(View, { style: { height: 4, width: "100%", backgroundColor: T.green, borderRadius: 2, marginTop: 2 } }),
-                !done && !active && /* @__PURE__ */ jsx(View, { style: { height: 4, width: "100%", backgroundColor: T.track, borderRadius: 2, marginTop: 2 } })
+              return /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "center", flex: 1 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 14, opacity: done ? 1 : active ? 1 : 0.3 }, children: pv.emoji }),
+                active && /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, width: "100%", marginTop: 2 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${site.phaseProgress}%`, backgroundColor: T.orange }] }) }),
+                done && /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: "100%", backgroundColor: T.green, borderRadius: 2, marginTop: 2 } }),
+                !done && !active && /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: "100%", backgroundColor: T.track, borderRadius: 2, marginTop: 2 } })
               ] }, idx);
             }) }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 site.client,
                 " \xB7 ",
                 Math.round(overallPct),
                 "%"
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: game.day > site.deadlineDay ? T.red : T.green }], children: game.day > site.deadlineDay ? "\u26A0 OVERDUE" : `Day ${site.deadlineDay} deadline` })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: game.day > site.deadlineDay ? T.red : T.green }], children: game.day > site.deadlineDay ? "\u26A0 OVERDUE" : `Day ${site.deadlineDay} deadline` })
             ] })
           ] }, site.id);
         })
@@ -9882,31 +10024,31 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const expenses = ws.expenses || 0;
         if (income === 0 && expenses === 0) return null;
         const net = income - expenses;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 8 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "This Week" }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Revenue" }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700" }], children: money2(income) })
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 8 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "This Week" }),
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Revenue" }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontWeight: "700" }], children: money2(income) })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Expenses" }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Expenses" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
               "-",
               money2(expenses)
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: T.border }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Net" }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: net >= 0 ? T.green : T.red, fontWeight: "700" }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: T.border }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Net" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: net >= 0 ? T.green : T.red, fontWeight: "700" }], children: [
               net >= 0 ? "+" : "",
               money2(net)
             ] })
           ] })
         ] });
       })(),
-      game.hotMaterialDeal && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.green + "18", borderColor: T.green, borderWidth: 1.5, marginBottom: 8 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.green }], children: "\u{1F4CA} Market Flash Deal" }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      game.hotMaterialDeal && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.green + "18", borderColor: T.green, borderWidth: 1.5, marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.green }], children: "\u{1F4CA} Market Flash Deal" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           game.hotMaterialDeal.label,
           " \u2014 ",
           game.hotMaterialDeal.discountPct,
@@ -9914,35 +10056,35 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           money2(game.hotMaterialDeal.unitPrice),
           "/unit"
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
           "Expires Day ",
           game.hotMaterialDeal.expiresDay,
           " \xB7 Buy in Sites tab"
         ] }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.smallBtn, { marginTop: 6, backgroundColor: T.green, borderColor: T.green }],
+            style: [styles2.smallBtn, { marginTop: 6, backgroundColor: T.green, borderColor: T.green }],
             onPress: () => setTab("Sites"),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: "#000" }], children: "Buy Now \u2192" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: "#000" }], children: "Buy Now \u2192" })
           }
         )
       ] }),
       (() => {
         const FEED_EMOJI = { green: "\u2705", red: "\u{1F534}", orange: "\u26A0\uFE0F", cyan: "\u{1F535}", yellow: "\u2B50", purple: "\u{1F537}", sub: "\xB7" };
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Ops Feed" }),
-          game.opsFeed?.length > 0 ? game.opsFeed.slice(0, 8).map((entry) => /* @__PURE__ */ jsxs(Text, { style: [styles.feedItem, { color: T[entry.tone] || T.sub }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Ops Feed" }),
+          game.opsFeed?.length > 0 ? game.opsFeed.slice(0, 8).map((entry) => /* @__PURE__ */ jsxs2(Text2, { style: [styles2.feedItem, { color: T[entry.tone] || T.sub }], children: [
             FEED_EMOJI[entry.tone] || "\xB7",
             " ",
             entry.text
-          ] }, entry.id)) : /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontStyle: "italic" }], children: "No recent events \u2014 keep building!" })
+          ] }, entry.id)) : /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontStyle: "italic" }], children: "No recent events \u2014 keep building!" })
         ] });
       })(),
       game.rivals && game.rivals.length > 0 && (() => {
         const topRivals = [...game.rivals].filter((r) => !(game.acquiredRivals || []).includes(r.id)).sort((a, b) => (b.rep || 0) - (a.rep || 0)).slice(0, 2);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Rival Activity" }),
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Rival Activity" }),
           topRivals.map((r) => {
             const statusLabel = r.status === "Bankrupt" ? "Bankrupt" : (r.cash || 0) < 5e3 ? "Struggling" : "Active";
             const statusColor = r.status === "Bankrupt" ? T.sub : (r.cash || 0) < 5e3 ? T.orange : T.green;
@@ -9951,25 +10093,25 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             const maxRep = Math.max(myRep, theirRep, 1);
             const myPct = Math.round(myRep / maxRep * 100);
             const ahead = myRep >= theirRep;
-            return /* @__PURE__ */ jsxs(View, { style: { paddingVertical: 5, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.border }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                /* @__PURE__ */ jsxs(View, { children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: r.name }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            return /* @__PURE__ */ jsxs2(View2, { style: { paddingVertical: 5, borderBottomWidth: StyleSheet2.hairlineWidth, borderBottomColor: T.border }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                /* @__PURE__ */ jsxs2(View2, { children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: r.name }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                     r.activeJobs || 0,
                     " active jobs"
                   ] })
                 ] }),
-                /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: statusColor, fontWeight: "600" }], children: statusLabel }),
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: money2(r.cash || 0) })
+                /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: statusColor, fontWeight: "600" }], children: statusLabel }),
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: money2(r.cash || 0) })
                 ] })
               ] }),
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", height: 3, borderRadius: 2, overflow: "hidden", marginTop: 4 }, children: [
-                /* @__PURE__ */ jsx(View, { style: { flex: myPct, height: 3, backgroundColor: T.purple } }),
-                /* @__PURE__ */ jsx(View, { style: { flex: 100 - myPct, height: 3, backgroundColor: ahead ? T.panel2 : T.red } })
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", height: 3, borderRadius: 2, overflow: "hidden", marginTop: 4 }, children: [
+                /* @__PURE__ */ jsx2(View2, { style: { flex: myPct, height: 3, backgroundColor: T.purple } }),
+                /* @__PURE__ */ jsx2(View2, { style: { flex: 100 - myPct, height: 3, backgroundColor: ahead ? T.panel2 : T.red } })
               ] }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }], children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 1 }], children: [
                 "You ",
                 myRep,
                 " rep ",
@@ -9983,11 +10125,11 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           })
         ] });
       })(),
-      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginTop: 4 }, children: [
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginTop: 4 }, children: [
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { backgroundColor: T.panel2, borderColor: T.border, flex: 1 }],
+            style: [styles2.btn, { backgroundColor: T.panel2, borderColor: T.border, flex: 1 }],
             onPress: () => {
               const t = theme === "dark" ? "light" : "dark";
               setTheme(t);
@@ -9995,17 +10137,17 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 g.theme = t;
               });
             },
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, col], children: theme === "dark" ? "\u2600\uFE0F Light Mode" : "\u{1F319} Dark Mode" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, col], children: theme === "dark" ? "\u2600\uFE0F Light Mode" : "\u{1F319} Dark Mode" })
           }
         ),
-        /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.panel2, borderColor: T.red, flex: 1 }], onPress: handleResetGame, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.red }], children: "Reset Game" }) })
+        /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { backgroundColor: T.panel2, borderColor: T.red, flex: 1 }], onPress: handleResetGame, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.red }], children: "Reset Game" }) })
       ] }),
-      onBackToHub && /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      onBackToHub && /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { backgroundColor: T.panel2, borderColor: T.border, marginTop: 8 }],
+          style: [styles2.btn, { backgroundColor: T.panel2, borderColor: T.border, marginTop: 8 }],
           onPress: onBackToHub,
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, col], children: "\u2190 Back to Game Hub" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, col], children: "\u2190 Back to Game Hub" })
         }
       )
     ] });
@@ -10016,7 +10158,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
     const openContracts = filter === "All" ? allOpen : allOpen.filter((c) => c.category === filter);
     const idleCrew = getIdleCrew(game);
     const idleEquip = getIdleEquipment(game);
-    return /* @__PURE__ */ jsx(
+    return /* @__PURE__ */ jsx2(
       BidsScreen,
       {
         game,
@@ -10046,22 +10188,22 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
       { key: "quality", label: "Quality", icon: "star", desc: "-22% speed, +bonus pay", color: T.cyan },
       { key: "budget", label: "Budget", icon: "cash", desc: "-12% speed, save costs", color: T.green }
     ];
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 12, paddingBottom: 100 }, children: [
-      activeSites.length === 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", paddingVertical: 24 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F3D7}\uFE0F" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }], children: "No active sites" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: "Accept a contract from the Bids tab to get started." }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 12, paddingBottom: 100 }, children: [
+      activeSites.length === 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", paddingVertical: 24 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F3D7}\uFE0F" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.sub, textAlign: "center", marginBottom: 4 }], children: "No active sites" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: "Accept a contract from the Bids tab to get started." }),
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { backgroundColor: T.orange, borderColor: T.orange }],
+            style: [styles2.btn, { backgroundColor: T.orange, borderColor: T.orange }],
             onPress: () => setTab("Bids"),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Go to Bids" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Go to Bids" })
           }
         )
       ] }),
-      activeSites.length > 0 && /* @__PURE__ */ jsxs(View, { style: { marginBottom: 16 }, children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col, { marginBottom: 8 }], children: [
+      activeSites.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col, { marginBottom: 8 }], children: [
           "Active Sites (",
           activeSites.length,
           ")"
@@ -10099,59 +10241,59 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             return { icon: mat?.icon || "\u{1F4E6}", id: matId, fulfilled, needed, ok: fulfilled >= needed };
           }) : [];
           const lastChaos = site.chaosHistory?.[0];
-          return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: hasMissingMats ? T.orange : isOverdue ? T.red : T.border, borderWidth: hasMissingMats || isOverdue ? 2 : 1, marginBottom: 10 }], children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.label, col], numberOfLines: 1, children: site.label }),
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: site.client }),
+          return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: hasMissingMats ? T.orange : isOverdue ? T.red : T.border, borderWidth: hasMissingMats || isOverdue ? 2 : 1, marginBottom: 10 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], numberOfLines: 1, children: site.label }),
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], numberOfLines: 1, children: site.client }),
                 contract?.cityId && (() => {
                   const siteCity = CITIES.find((c) => c.id === contract.cityId);
                   if (!siteCity) return null;
                   const _region = siteCity.region;
                   const _weatherRisk = _region === "Pacific Northwest" ? "\u{1F327}\uFE0F Rain risk region" : _region === "Southwest" ? "\u2600\uFE0F Heat risk region" : _region === "Mountain" ? "\u2744\uFE0F Snow risk region" : _region === "South Central" ? "\u26C8\uFE0F Storm risk region" : null;
-                  return /* @__PURE__ */ jsxs(Fragment, { children: [
-                    /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+                  return /* @__PURE__ */ jsxs2(Fragment, { children: [
+                    /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
                       "\u{1F4CD} ",
                       siteCity.name
                     ] }),
-                    _weatherRisk && !site.currentWeather && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9 }], children: _weatherRisk })
+                    _weatherRisk && !site.currentWeather && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9 }], children: _weatherRisk })
                   ] });
                 })()
               ] }),
-              /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: site.status === "Paused" ? T.orange : isOverdue ? T.red : T.green, fontWeight: "700" }], children: site.status === "Paused" ? "\u23F8 Paused" : isOverdue ? `\u26A0 ${daysLate}d Late` : `${Math.round(overallPct)}%` }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: isOverdue ? T.red : T.sub }], children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: site.status === "Paused" ? T.orange : isOverdue ? T.red : T.green, fontWeight: "700" }], children: site.status === "Paused" ? "\u23F8 Paused" : isOverdue ? `\u26A0 ${daysLate}d Late` : `${Math.round(overallPct)}%` }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: isOverdue ? T.red : T.sub }], children: [
                   "Due Day ",
                   site.deadlineDay
                 ] })
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginBottom: 4 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${overallPct}%`, backgroundColor: isOverdue ? T.red : T.orange }] }) }),
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginBottom: 4 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${overallPct}%`, backgroundColor: isOverdue ? T.red : T.orange }] }) }),
             !isOverdue && site.status !== "Paused" && (() => {
               const daysLeft = site.deadlineDay - game.day;
               const barColor = daysLeft <= 2 ? T.red : daysLeft <= 5 ? T.orange : T.green;
               const pct = Math.min(100, Math.round(daysLeft / 14 * 100));
-              return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 6 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Deadline" }),
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: barColor, fontSize: 10, fontWeight: daysLeft <= 5 ? "700" : "400" }], children: daysLeft <= 0 ? "Due today" : `${daysLeft}d left` })
+              return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 6 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Deadline" }),
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: barColor, fontSize: 10, fontWeight: daysLeft <= 5 ? "700" : "400" }], children: daysLeft <= 0 ? "Due today" : `${daysLeft}d left` })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: { height: 3, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 3, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
+                /* @__PURE__ */ jsx2(View2, { style: { height: 3, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 3, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
               ] });
             })(),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", marginBottom: 6 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: { fontSize: 16, marginRight: 6 }, children: vis.emoji }),
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan, fontWeight: "600", fontSize: 11 }], children: currentPh }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", marginBottom: 6 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 16, marginRight: 6 }, children: vis.emoji }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.cyan, fontWeight: "600", fontSize: 11 }], children: currentPh }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
                     "Phase ",
                     (site.currentPhaseIdx || 0) + 1,
                     "/",
                     site.phases.length
                   ] })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 3 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.max(0, site.phaseProgress || 0)}%`, backgroundColor: T.cyan, height: 4 }] }) }),
+                /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 3 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.max(0, site.phaseProgress || 0)}%`, backgroundColor: T.cyan, height: 4 }] }) }),
                 (() => {
                   const _rate = site._progressRate;
                   if (!_rate || overallPct >= 100 || site.status === "Paused") return null;
@@ -10159,7 +10301,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                   const _progressLeft = 100 * _phasesLeft - (site.phaseProgress || 0);
                   const _pctPerDay = _rate * 48;
                   const _daysLeft = _pctPerDay > 0 ? Math.ceil(_progressLeft / _pctPerDay) : null;
-                  return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 3 }], children: [
+                  return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginTop: 3 }], children: [
                     _daysLeft ? `~${_daysLeft} days remaining` : "",
                     _daysLeft ? " \xB7 " : "",
                     _pctPerDay.toFixed(1),
@@ -10176,12 +10318,12 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
               const equipHasMatch = siteEquip.some((e) => (phaseTypeMatch[e.type] || 1) > 1);
               const showMismatch = sitePh && siteCrew.length > 0 && !crewHasMatch && !equipHasMatch;
               const rushPenalty = site.rushQualityPenalty || 0;
-              return /* @__PURE__ */ jsxs(Fragment, { children: [
+              return /* @__PURE__ */ jsxs2(Fragment, { children: [
                 showMismatch && (() => {
                   const neededSpec = Object.entries(SPECIALTY_PHASE_BONUS).find(
                     ([, phases]) => Object.entries(phases).some(([p, v]) => v > 1 && sitePh.toLowerCase().includes(p.toLowerCase()))
                   )?.[0] || "matching";
-                  return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }], children: [
+                  return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }], children: [
                     "\u26A0 ",
                     sitePh,
                     " needs a ",
@@ -10189,7 +10331,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                     " specialist \xB7 \u221210% speed without one"
                   ] });
                 })(),
-                rushPenalty > 0.04 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }], children: [
+                rushPenalty > 0.04 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }], children: [
                   "\u26A1 Rush impact: quality \u2212",
                   Math.round(rushPenalty * 100),
                   "%"
@@ -10198,18 +10340,18 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             })(),
             (() => {
               const idleCrew = game.crew.filter((w) => w.status === "Idle");
-              return /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }], children: [
+              return /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }], children: [
                     "CREW (",
                     siteCrew.length,
                     ")"
                   ] }),
-                  siteCrew.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, fontSize: 10 }], children: "\u26A0 No crew" })
+                  siteCrew.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10 }], children: "\u26A0 No crew" })
                 ] }),
                 (() => {
                   const _exhausted = siteCrew.filter((w) => (w.stamina ?? 50) < 25 || (w.mood ?? 70) < 20);
-                  return _exhausted.length > 0 ? /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, fontSize: 10, marginBottom: 3 }], children: [
+                  return _exhausted.length > 0 ? /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 10, marginBottom: 3 }], children: [
                     "\u26A0 ",
                     _exhausted.length,
                     " worker",
@@ -10217,115 +10359,115 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                     " exhausted \u2014 rest them in Crew tab."
                   ] }) : null;
                 })(),
-                siteCrew.map((w) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: T.text, flex: 1 }], children: [
+                siteCrew.map((w) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: T.text, flex: 1 }], children: [
                     w.name.split(" ")[0],
                     " \xB7 ",
                     w.specialty || w.role
                   ] }),
-                  /* @__PURE__ */ jsx(
-                    TouchableOpacity,
+                  /* @__PURE__ */ jsx2(
+                    TouchableOpacity2,
                     {
                       style: { backgroundColor: T.red + "33", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.red },
                       onPress: () => handleUnassignCrewFromSite(w.id, site.id),
-                      children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.red, fontWeight: "700" }, children: "Remove" })
+                      children: /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.red, fontWeight: "700" }, children: "Remove" })
                     }
                   )
                 ] }, w.id)),
-                idleCrew.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }], children: "Idle workers:" }),
-                  idleCrew.slice(0, 4).map((w) => /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                idleCrew.length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }], children: "Idle workers:" }),
+                  idleCrew.slice(0, 4).map((w) => /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
                       style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: T.green + "18", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3, marginBottom: 2, borderWidth: 1, borderColor: T.green + "55" },
                       onPress: () => handleAssignCrewToSite(w.id, site.id),
                       children: [
-                        /* @__PURE__ */ jsxs(Text, { style: { fontSize: 10, color: T.text }, children: [
+                        /* @__PURE__ */ jsxs2(Text2, { style: { fontSize: 10, color: T.text }, children: [
                           w.name.split(" ")[0],
                           " \xB7 ",
                           w.role
                         ] }),
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.green, fontWeight: "700" }, children: "+ Assign" })
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.green, fontWeight: "700" }, children: "+ Assign" })
                       ]
                     },
                     w.id
                   )),
-                  idleCrew.length > 4 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }], children: [
+                  idleCrew.length > 4 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }], children: [
                     "+",
                     idleCrew.length - 4,
                     " more in Crew tab"
                   ] })
                 ] }),
-                idleCrew.length === 0 && siteCrew.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }], children: "No idle workers available" })
+                idleCrew.length === 0 && siteCrew.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }], children: "No idle workers available" })
               ] });
             })(),
             (() => {
               const idleEquip = game.equipment.filter((e) => e.status === "Idle" && !e.assignedSiteId);
               const brokenOnSite = siteEquip.filter((e) => e.status === "Maintenance" || e.condition < 30);
-              return /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }, children: [
-                /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }], children: [
+              return /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }, children: [
+                /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }], children: [
                   "EQUIPMENT (",
                   siteEquip.length,
                   ")"
                 ] }) }),
-                siteEquip.map((e) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: e.condition < 30 ? T.red : T.text, flex: 1 }], numberOfLines: 1, children: [
+                siteEquip.map((e) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: e.condition < 30 ? T.red : T.text, flex: 1 }], numberOfLines: 1, children: [
                     e.name,
                     " ",
                     e.condition < 30 ? "\u26A0" : ""
                   ] }),
-                  /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 4 }, children: [
-                    (e.condition < 80 || e.status === "Maintenance") && /* @__PURE__ */ jsx(
-                      TouchableOpacity,
+                  /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 4 }, children: [
+                    (e.condition < 80 || e.status === "Maintenance") && /* @__PURE__ */ jsx2(
+                      TouchableOpacity2,
                       {
                         style: { backgroundColor: T.blue + "33", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: T.blue },
                         onPress: () => handleRepairEquipmentNew(e.id, e.status === "Maintenance"),
-                        children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.blue, fontWeight: "700" }, children: "Repair" })
+                        children: /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.blue, fontWeight: "700" }, children: "Repair" })
                       }
                     ),
-                    /* @__PURE__ */ jsx(
-                      TouchableOpacity,
+                    /* @__PURE__ */ jsx2(
+                      TouchableOpacity2,
                       {
                         style: { backgroundColor: T.red + "33", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.red },
                         onPress: () => handleUnassignEquipFromSite(e.id, site.id),
-                        children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.red, fontWeight: "700" }, children: "Remove" })
+                        children: /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.red, fontWeight: "700" }, children: "Remove" })
                       }
                     )
                   ] })
                 ] }, e.id)),
-                idleEquip.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }], children: "Available equipment:" }),
-                  idleEquip.slice(0, 3).map((e) => /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                idleEquip.length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }], children: "Available equipment:" }),
+                  idleEquip.slice(0, 3).map((e) => /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
                       style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: T.cyan + "18", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3, marginBottom: 2, borderWidth: 1, borderColor: T.cyan + "55" },
                       onPress: () => handleAssignEquipToSite(e.id, site.id),
                       children: [
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.text }, children: e.name }),
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.cyan, fontWeight: "700" }, children: "+ Assign" })
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.text }, children: e.name }),
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.cyan, fontWeight: "700" }, children: "+ Assign" })
                       ]
                     },
                     e.id
                   )),
-                  idleEquip.length > 3 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }], children: [
+                  idleEquip.length > 3 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }], children: [
                     "+",
                     idleEquip.length - 3,
                     " more in Vehicles tab"
                   ] })
                 ] }),
-                siteEquip.length === 0 && idleEquip.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }], children: "No equipment available" })
+                siteEquip.length === 0 && idleEquip.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }], children: "No equipment available" })
               ] });
             })(),
-            allMats.length > 0 && /* @__PURE__ */ jsxs(View, { style: { marginBottom: 6 }, children: [
-              hasMissingMats && /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.orange + "22", borderRadius: 6, padding: 6, marginBottom: 6, borderWidth: 1, borderColor: T.orange }, children: [
-                /* @__PURE__ */ jsx(Text, { style: { color: T.orange, fontWeight: "700", fontSize: 11, marginBottom: 2 }, children: "\u26A0 Materials Missing \u2014 Work Stalled" }),
+            allMats.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 6 }, children: [
+              hasMissingMats && /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.orange + "22", borderRadius: 6, padding: 6, marginBottom: 6, borderWidth: 1, borderColor: T.orange }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: { color: T.orange, fontWeight: "700", fontSize: 11, marginBottom: 2 }, children: "\u26A0 Materials Missing \u2014 Work Stalled" }),
                 missingMats.map((m) => {
                   const shortfall = totalCostNormal - game.cash;
-                  return /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 1 }, children: [
-                    /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-                      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 3 }, children: [
-                        /* @__PURE__ */ jsx(Ionicons, { name: m.icon, size: 10, color: T.text }),
-                        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: T.text }], children: [
+                  return /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 1 }, children: [
+                    /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+                      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 3 }, children: [
+                        /* @__PURE__ */ jsx2(Ionicons, { name: m.icon, size: 10, color: T.text }),
+                        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: T.text }], children: [
                           m.label,
                           ": ",
                           m.fulfilled,
@@ -10335,53 +10477,53 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                           m.unit
                         ] })
                       ] }),
-                      /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 2, height: 3 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.round(m.fulfilled / m.needed * 100)}%`, backgroundColor: T.orange, height: 3 }] }) })
+                      /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 2, height: 3 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.round(m.fulfilled / m.needed * 100)}%`, backgroundColor: T.orange, height: 3 }] }) })
                     ] }),
-                    /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: T.orange }], children: [
+                    /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: T.orange }], children: [
                       "Need ",
                       money2(m.costNormal)
                     ] })
                   ] }, m.matId);
                 }),
-                !canAffordNormal && /* @__PURE__ */ jsxs(View, { style: { marginTop: 4, backgroundColor: T.red + "18", borderRadius: 4, padding: 4 }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: T.red }], children: [
+                !canAffordNormal && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 4, backgroundColor: T.red + "18", borderRadius: 4, padding: 4 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: T.red }], children: [
                     "Cash shortfall: ",
                     money2(Math.max(0, totalCostNormal - game.cash))
                   ] }),
-                  (game.creditScore || 600) >= 600 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 10, color: T.cyan }], children: [
+                  (game.creditScore || 600) >= 600 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 10, color: T.cyan }], children: [
                     "Supplier credit available (Credit ",
                     game.creditScore,
                     ")"
                   ] })
                 ] }),
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 6, marginTop: 8 }, children: [
-                  /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 6, marginTop: 8 }, children: [
+                  /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
                       style: { flex: 1, backgroundColor: canAffordNormal ? T.green : T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: canAffordNormal ? T.green : T.border, paddingVertical: 7, alignItems: "center" },
                       onPress: () => handleBuyMaterialsForSite(site.id),
                       children: [
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, fontWeight: "700", color: canAffordNormal ? "#fff" : T.sub }, children: "Buy Materials" }),
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: canAffordNormal ? "#ffffffcc" : T.sub }, children: money2(totalCostNormal) })
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, fontWeight: "700", color: canAffordNormal ? "#fff" : T.sub }, children: "Buy Materials" }),
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: canAffordNormal ? "#ffffffcc" : T.sub }, children: money2(totalCostNormal) })
                       ]
                     }
                   ),
-                  /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                  /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
                       style: { flex: 1, backgroundColor: canAffordEmergency ? T.orange + "33" : T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: canAffordEmergency ? T.orange : T.border, paddingVertical: 7, alignItems: "center" },
                       onPress: () => handleEmergencyPurchase(site.id),
                       children: [
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, fontWeight: "700", color: canAffordEmergency ? T.orange : T.sub }, children: "Emergency" }),
-                        /* @__PURE__ */ jsxs(Text, { style: { fontSize: 9, color: canAffordEmergency ? T.orange : T.sub }, children: [
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, fontWeight: "700", color: canAffordEmergency ? T.orange : T.sub }, children: "Emergency" }),
+                        /* @__PURE__ */ jsxs2(Text2, { style: { fontSize: 9, color: canAffordEmergency ? T.orange : T.sub }, children: [
                           money2(totalCostEmergency),
                           " (1.5\xD7)"
                         ] })
                       ]
                     }
                   ),
-                  /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                  /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
                       style: { flex: 1, backgroundColor: T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: T.blue, paddingVertical: 7, alignItems: "center" },
                       onPress: () => update((g) => {
@@ -10392,78 +10534,78 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                         }
                       }),
                       children: [
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, fontWeight: "700", color: T.blue }, children: "Pause" }),
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "No penalty" })
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, fontWeight: "700", color: T.blue }, children: "Pause" }),
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "No penalty" })
                       ]
                     }
                   )
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4 }, children: allMats.map((m) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", backgroundColor: m.ok ? T.panel3 : T.orange + "22", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }, children: [
-                /* @__PURE__ */ jsx(Ionicons, { name: m.icon, size: 10, color: m.ok ? T.sub : T.orange }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 9, color: m.ok ? T.sub : T.orange, marginLeft: 2 }], children: [
+              /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4 }, children: allMats.map((m) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", backgroundColor: m.ok ? T.panel3 : T.orange + "22", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }, children: [
+                /* @__PURE__ */ jsx2(Ionicons, { name: m.icon, size: 10, color: m.ok ? T.sub : T.orange }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 9, color: m.ok ? T.sub : T.orange, marginLeft: 2 }], children: [
                   m.fulfilled,
                   "/",
                   m.needed
                 ] })
               ] }, m.id)) })
             ] }),
-            (site.currentWeather || lastChaos) && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
-              site.currentWeather && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", backgroundColor: T.blue + "28", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }, children: [
-                /* @__PURE__ */ jsx(Ionicons, { name: site.currentWeather.icon, size: 11, color: T.blue }),
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.blue, fontSize: 9, marginLeft: 3 }], children: site.currentWeather.label })
+            (site.currentWeather || lastChaos) && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 6, marginBottom: 6 }, children: [
+              site.currentWeather && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", backgroundColor: T.blue + "28", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }, children: [
+                /* @__PURE__ */ jsx2(Ionicons, { name: site.currentWeather.icon, size: 11, color: T.blue }),
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.blue, fontSize: 9, marginLeft: 3 }], children: site.currentWeather.label })
               ] }),
-              lastChaos && /* @__PURE__ */ jsx(View, { style: { flex: 1 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, fontSize: 9 }], numberOfLines: 1, children: [
+              lastChaos && /* @__PURE__ */ jsx2(View2, { style: { flex: 1 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 9 }], numberOfLines: 1, children: [
                 "\u26A1 ",
                 lastChaos.text
               ] }) })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Contract value" }),
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700", fontSize: 11 }], children: money2(site.totalValue) }),
-                daysLate > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Contract value" }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontWeight: "700", fontSize: 11 }], children: money2(site.totalValue) }),
+                daysLate > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10 }], children: [
                   "\u2192 ",
                   money2(valueAfterPenalty)
                 ] })
               ] })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Spent so far" }),
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, alignItems: "center" }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }], children: money2(liveEconomics.directCosts) }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Spent so far" }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, alignItems: "center" }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }], children: money2(liveEconomics.directCosts) }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }], children: [
                   liveEconomics.netProfit >= 0 ? "+" : "\u2212",
                   money2(Math.abs(liveEconomics.netProfit)),
                   " if it finishes now"
                 ] })
               ] })
             ] }),
-            (site.depositPaid || 0) > 0 && !isOverdue && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10, marginBottom: 4 }], children: [
+            (site.depositPaid || 0) > 0 && !isOverdue && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 10, marginBottom: 4 }], children: [
               "\u{1F4B0} 25% deposit received: ",
               money2(site.depositPaid)
             ] }),
-            isOverdue && daysLate > 0 && /* @__PURE__ */ jsxs(View, { style: { marginBottom: 6 }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Value remaining" }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, fontSize: 10, fontWeight: "700" }], children: [
+            isOverdue && daysLate > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 6 }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Value remaining" }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10, fontWeight: "700" }], children: [
                   "-",
                   money2(daysLate * site.penaltyPerDay),
                   " penalty",
                   daysLate > 5 ? " (1.5\xD7 escalated)" : ""
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.max(0, Math.round(valueAfterPenalty / site.totalValue * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 } }) }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }], children: [
+              /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${Math.max(0, Math.round(valueAfterPenalty / site.totalValue * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 } }) }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 1 }], children: [
                 money2(valueAfterPenalty),
                 " of ",
                 money2(site.totalValue),
                 " remaining"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginBottom: 4 }], children: "SITE STRATEGY" }),
-            /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 4 }, children: SITE_MODES.map((m) => /* @__PURE__ */ jsxs(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginBottom: 4 }], children: "SITE STRATEGY" }),
+            /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 4 }, children: SITE_MODES.map((m) => /* @__PURE__ */ jsxs2(
+              TouchableOpacity2,
               {
                 style: {
                   flex: 1,
@@ -10480,74 +10622,74 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                   if (s) s.siteMode = m.key;
                 }),
                 children: [
-                  /* @__PURE__ */ jsx(Ionicons, { name: m.icon, size: 12, color: mode === m.key ? m.color : T.sub }),
-                  /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: mode === m.key ? m.color : T.sub, fontWeight: mode === m.key ? "700" : "400" }, children: m.label })
+                  /* @__PURE__ */ jsx2(Ionicons, { name: m.icon, size: 12, color: mode === m.key ? m.color : T.sub }),
+                  /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: mode === m.key ? m.color : T.sub, fontWeight: mode === m.key ? "700" : "400" }, children: m.label })
                 ]
               },
               m.key
             )) }),
-            modeDef.key !== "normal" && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 }, children: [
-              /* @__PURE__ */ jsx(Ionicons, { name: modeDef.icon, size: 10, color: modeDef.color }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: modeDef.color, fontSize: 10 }], children: modeDef.desc })
+            modeDef.key !== "normal" && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 }, children: [
+              /* @__PURE__ */ jsx2(Ionicons, { name: modeDef.icon, size: 10, color: modeDef.color }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: modeDef.color, fontSize: 10 }], children: modeDef.desc })
             ] }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
                 style: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: T.cyan, marginTop: 6 },
                 onPress: () => setTab("Crew"),
-                children: /* @__PURE__ */ jsx(Text, { style: { color: T.cyan, fontSize: 10, fontWeight: "700" }, children: "\u26A1 Hire Sub Crew \u2192" })
+                children: /* @__PURE__ */ jsx2(Text2, { style: { color: T.cyan, fontSize: 10, fontWeight: "700" }, children: "\u26A1 Hire Sub Crew \u2192" })
               }
             ),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 8 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "On-time bonus:" }),
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 8 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "On-time bonus:" }),
               [0, 500, 1e3, 2500].map((amt) => {
                 const sel = (site.completionBonus || 0) === amt;
-                return /* @__PURE__ */ jsx(
-                  TouchableOpacity,
+                return /* @__PURE__ */ jsx2(
+                  TouchableOpacity2,
                   {
                     style: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: sel ? T.yellow : T.border, backgroundColor: sel ? T.yellow + "33" : "transparent" },
                     onPress: () => update((g) => {
                       const s = g.activeSites.find((s2) => s2.id === site.id);
                       if (s) s.completionBonus = amt;
                     }),
-                    children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: sel ? T.yellow : T.sub, fontSize: 10, fontWeight: sel ? "700" : "400" }], children: amt === 0 ? "None" : money2(amt) })
+                    children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: sel ? T.yellow : T.sub, fontSize: 10, fontWeight: sel ? "700" : "400" }], children: amt === 0 ? "None" : money2(amt) })
                   },
                   amt
                 );
               })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
-              /* @__PURE__ */ jsx(
-                TouchableOpacity,
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
+              /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { borderWidth: 1, borderColor: site.status === "Paused" ? T.green : T.cyan, backgroundColor: "transparent" }],
+                  style: [styles2.smallBtn, { borderWidth: 1, borderColor: site.status === "Paused" ? T.green : T.cyan, backgroundColor: "transparent" }],
                   onPress: () => site.status === "Paused" ? handleResumeSite(site.id) : handlePauseSite(site.id),
-                  children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: site.status === "Paused" ? T.green : T.cyan }], children: site.status === "Paused" ? "\u25B6 Resume" : "\u23F8 Pause" })
+                  children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: site.status === "Paused" ? T.green : T.cyan }], children: site.status === "Paused" ? "\u25B6 Resume" : "\u23F8 Pause" })
                 }
               ),
-              game.day > site.deadlineDay && !site.renegotiated && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              game.day > site.deadlineDay && !site.renegotiated && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { borderWidth: 1, borderColor: _canRenegotiate ? T.yellow : T.border, backgroundColor: "transparent", opacity: _canRenegotiate ? 1 : 0.45 }],
+                  style: [styles2.smallBtn, { borderWidth: 1, borderColor: _canRenegotiate ? T.yellow : T.border, backgroundColor: "transparent", opacity: _canRenegotiate ? 1 : 0.45 }],
                   onPress: () => handleRenegotiate(site.id),
-                  children: /* @__PURE__ */ jsxs(Text, { style: [styles.smallBtnText, { color: _canRenegotiate ? T.yellow : T.sub }], children: [
+                  children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.smallBtnText, { color: _canRenegotiate ? T.yellow : T.sub }], children: [
                     "Renegotiate ",
                     money2(_renegCost)
                   ] })
                 }
               ),
-              (game.day > site.deadlineDay || site.status === "Paused") && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              (game.day > site.deadlineDay || site.status === "Paused") && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { borderWidth: 1, borderColor: T.purple, backgroundColor: "transparent" }],
+                  style: [styles2.smallBtn, { borderWidth: 1, borderColor: T.purple, backgroundColor: "transparent" }],
                   onPress: () => handleSettleSite(site.id),
-                  children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.purple }], children: "Settle" })
+                  children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.purple }], children: "Settle" })
                 }
               ),
-              /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { borderWidth: 1, borderColor: T.red, backgroundColor: "transparent" }],
+                  style: [styles2.smallBtn, { borderWidth: 1, borderColor: T.red, backgroundColor: "transparent" }],
                   onPress: () => {
                     const _siteDef = CONTRACT_DEFS.find((c) => c.id === game.contracts.find((cc) => cc.id === site.contractId)?.defId);
                     const _fee = Math.round((_siteDef?.baseValue || 1e4) * 0.15);
@@ -10556,43 +10698,43 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                       { text: "Abandon", style: "destructive", onPress: () => handleAbandonSite(site.id) }
                     ]);
                   },
-                  children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.red }], children: "Abandon" })
+                  children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.red }], children: "Abandon" })
                 }
               )
             ] })
           ] }, site.id);
         })
       ] }),
-      (game.jobHistory || []).length > 0 && /* @__PURE__ */ jsxs(View, { style: { marginTop: 16 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginBottom: 8 }], children: "Recently Completed" }),
-        [...game.jobHistory || []].reverse().slice(0, 5).map((job, i) => /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderLeftWidth: 3, borderLeftColor: T.green, marginBottom: 6, padding: 10 }], children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.label, col, { fontSize: 13 }], children: [
+      (game.jobHistory || []).length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 16 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginBottom: 8 }], children: "Recently Completed" }),
+        [...game.jobHistory || []].reverse().slice(0, 5).map((job, i) => /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderLeftWidth: 3, borderLeftColor: T.green, marginBottom: 6, padding: 10 }], children: /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col, { fontSize: 13 }], children: [
               "\u2713 ",
               job.label
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               job.client,
               " \xB7 Day ",
               job.day
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700", fontSize: 13 }], children: money2(job.value) }),
-            job.quality && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontWeight: "700", fontSize: 13 }], children: money2(job.value) }),
+            job.quality && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               job.quality,
               " quality"
             ] })
           ] })
         ] }) }, i))
       ] }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: [
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: [
         "Office: ",
         office.name
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        OFFICE_IMAGES[office.id] && /* @__PURE__ */ jsx(Image, { source: OFFICE_IMAGES[office.id], style: { width: "100%", height: 130, borderRadius: 8, marginBottom: 8, backgroundColor: "#fff" }, resizeMode: "contain" }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        OFFICE_IMAGES[office.id] && /* @__PURE__ */ jsx2(Image, { source: OFFICE_IMAGES[office.id], style: { width: "100%", height: 130, borderRadius: 8, marginBottom: 8, backgroundColor: "#fff" }, resizeMode: "contain" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           "Crew cap: ",
           office.crewCap,
           " \xB7 Equip cap: ",
@@ -10600,33 +10742,33 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           " \xB7 Daily rent: ",
           money2(office.dailyRent)
         ] }),
-        office.perks.map((p) => /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan }], children: p.label }, p.key)),
+        office.perks.map((p) => /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.cyan }], children: p.label }, p.key)),
         OFFICES[game.officeIndex + 1] && (() => {
           const nextOffice = OFFICES[game.officeIndex + 1];
           const canAfford = game.cash >= nextOffice.cost;
-          return /* @__PURE__ */ jsxs(Fragment, { children: [
-            OFFICE_IMAGES[nextOffice.id] && /* @__PURE__ */ jsx(Image, { source: OFFICE_IMAGES[nextOffice.id], style: { width: "100%", height: 100, borderRadius: 8, marginTop: 10, backgroundColor: "#fff", opacity: 0.85 }, resizeMode: "contain" }),
+          return /* @__PURE__ */ jsxs2(Fragment, { children: [
+            OFFICE_IMAGES[nextOffice.id] && /* @__PURE__ */ jsx2(Image, { source: OFFICE_IMAGES[nextOffice.id], style: { width: "100%", height: 100, borderRadius: 8, marginTop: 10, backgroundColor: "#fff", opacity: 0.85 }, resizeMode: "contain" }),
             !canAfford && nextOffice.cost > 0 && (() => {
               const pct = Math.min(99, Math.round(game.cash / nextOffice.cost * 100));
               const barColor = pct >= 75 ? T.yellow : pct >= 50 ? T.orange : T.sub;
-              return /* @__PURE__ */ jsxs(View, { style: { marginTop: 10, marginBottom: 4 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Upgrade savings" }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: barColor }], children: [
+              return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 10, marginBottom: 4 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Upgrade savings" }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: barColor }], children: [
                     money2(game.cash),
                     " / ",
                     money2(nextOffice.cost)
                   ] })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
+                /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
               ] });
             })(),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.btn, { marginTop: canAfford ? 10 : 4, backgroundColor: canAfford ? T.blue : T.panel2, borderColor: T.blue }],
+                style: [styles2.btn, { marginTop: canAfford ? 10 : 4, backgroundColor: canAfford ? T.blue : T.panel2, borderColor: T.blue }],
                 onPress: handleUpgradeOffice,
-                children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: canAfford ? "#fff" : T.red }], children: [
+                children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: canAfford ? "#fff" : T.red }], children: [
                   "Upgrade to ",
                   nextOffice.name,
                   " \u2014 ",
@@ -10640,33 +10782,33 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
     ] });
   }
   function renderCrew() {
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { paddingBottom: 0 }, children: [
-      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, padding: 12, paddingBottom: 0 }, children: [
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { paddingBottom: 0 }, children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, padding: 12, paddingBottom: 0 }, children: [
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { flex: 1, backgroundColor: game.autoAssignCrew ? T.green : T.panel2, borderColor: T.green, paddingVertical: 8 }],
+            style: [styles2.btn, { flex: 1, backgroundColor: game.autoAssignCrew ? T.green : T.panel2, borderColor: T.green, paddingVertical: 8 }],
             onPress: () => update((g) => {
               g.autoAssignCrew = !g.autoAssignCrew;
             }),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.autoAssignCrew ? "#fff" : T.sub, fontSize: 12 }], children: game.autoAssignCrew ? "\u2713 Auto Assign ON" : "Auto Assign OFF" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.autoAssignCrew ? "#fff" : T.sub, fontSize: 12 }], children: game.autoAssignCrew ? "\u2713 Auto Assign ON" : "Auto Assign OFF" })
           }
         ),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.cyan, paddingVertical: 8 }],
+            style: [styles2.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.cyan, paddingVertical: 8 }],
             onPress: () => handleRestAllTired(),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.cyan, fontSize: 12 }], children: "\u{1F634} Rest All Tired" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.cyan, fontSize: 12 }], children: "\u{1F634} Rest All Tired" })
           }
         )
       ] }),
-      /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { paddingHorizontal: 12, marginTop: 8, marginBottom: 4 }, contentContainerStyle: { gap: 8, flexDirection: "row" }, children: ["All", "Active", "Idle", "Resting", "Training", "Low Stamina"].map((f) => /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { paddingHorizontal: 12, marginTop: 8, marginBottom: 4 }, contentContainerStyle: { gap: 8, flexDirection: "row" }, children: ["All", "Active", "Idle", "Resting", "Training", "Low Stamina"].map((f) => /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
           onPress: () => setCrewFilter(f),
           style: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: crewFilter === f ? T.cyan : T.panel2, borderWidth: 1, borderColor: crewFilter === f ? T.cyan : T.border },
-          children: /* @__PURE__ */ jsx(Text, { style: { color: crewFilter === f ? "#fff" : T.sub, fontSize: 12, fontWeight: "600" }, children: f })
+          children: /* @__PURE__ */ jsx2(Text2, { style: { color: crewFilter === f ? "#fff" : T.sub, fontSize: 12, fontWeight: "600" }, children: f })
         },
         f
       )) }),
@@ -10674,26 +10816,26 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const _filteredCrew = crewFilter === "All" ? game.crew || [] : (game.crew || []).filter(
           (w) => crewFilter === "Active" ? w.status === "Active" : crewFilter === "Idle" ? w.status === "Idle" : crewFilter === "Resting" ? w.status === "Resting" : crewFilter === "Training" ? !!(game.trainingQueue || []).find((t) => t.workerId === w.id) : crewFilter === "Low Stamina" ? (w.stamina ?? 50) < 30 : true
         );
-        if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew || []).length > 0) return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }], children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
+        if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew || []).length > 0) return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
             "None of your ",
             (game.crew || []).length,
             " crew are ",
             crewFilter.toLowerCase(),
             " right now."
           ] }),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }],
+              style: [styles2.btn, { backgroundColor: T.cyan, borderColor: T.cyan }],
               onPress: () => setCrewFilter("All"),
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Crew" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Show All Crew" })
             }
           )
         ] });
         return null;
       })(),
-      /* @__PURE__ */ jsx(
+      /* @__PURE__ */ jsx2(
         CrewScreen,
         {
           game: crewFilter === "All" ? game : { ...game, crew: (game.crew || []).filter(
@@ -10726,29 +10868,29 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
     const conditionColor = (c) => c >= 70 ? T.green : c >= 40 ? T.orange : T.red;
     const office2 = OFFICES[game.officeIndex || 0];
     const totalEquipCap = office2.equipCap + getEquipCapBonus(game);
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 12, paddingBottom: 120 }, children: [
-      /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col], children: [
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 12, paddingBottom: 120 }, children: [
+      /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col], children: [
         "Vehicles Fleet (",
         (game.equipment || []).length,
         "/",
         totalEquipCap,
         ")"
       ] }) }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "\u26A1 Auto Dispatch" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: "Hire a Senior PM or Director to auto-manage your operation." }),
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "\u26A1 Auto Dispatch" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: "Hire a Senior PM or Director to auto-manage your operation." }),
         [
           { key: "autoAssignCrew", label: "Auto-Assign Crew", icon: "\u{1F477}", color: T.green },
           { key: "autoAssignEquipment", label: "Auto-Assign Vehicles", icon: "\u{1F69B}", color: T.cyan },
           { key: "autoRepairEquipment", label: "Auto-Repair Fleet", icon: "\u{1F527}", color: T.orange },
           { key: "autoPurchaseMaterials", label: "Auto-Buy Materials", icon: "\u{1F4E6}", color: T.yellow }
-        ].map((item, idx, arr) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: idx < arr.length - 1 ? 1 : 0, borderColor: T.border }, children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, col], children: [
+        ].map((item, idx, arr) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: idx < arr.length - 1 ? 1 : 0, borderColor: T.border }, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, col], children: [
             item.icon,
             "  ",
             item.label
           ] }),
-          /* @__PURE__ */ jsx(
+          /* @__PURE__ */ jsx2(
             Switch,
             {
               value: !!game[item.key],
@@ -10761,12 +10903,12 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           )
         ] }, item.key))
       ] }),
-      /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, contentContainerStyle: { gap: 8, flexDirection: "row" }, children: ["All", "Active", "Idle", "Maintenance", "Broken", "Low Condition"].map((f) => /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, contentContainerStyle: { gap: 8, flexDirection: "row" }, children: ["All", "Active", "Idle", "Maintenance", "Broken", "Low Condition"].map((f) => /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
           onPress: () => setEquipFilter(f),
           style: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: equipFilter === f ? T.orange : T.panel2, borderWidth: 1, borderColor: equipFilter === f ? T.orange : T.border },
-          children: /* @__PURE__ */ jsx(Text, { style: { color: equipFilter === f ? "#fff" : T.sub, fontSize: 11, fontWeight: "600" }, children: f })
+          children: /* @__PURE__ */ jsx2(Text2, { style: { color: equipFilter === f ? "#fff" : T.sub, fontSize: 11, fontWeight: "600" }, children: f })
         },
         f
       )) }),
@@ -10777,47 +10919,47 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const idle = equips.filter((e) => e.status === "Idle").length;
         const needsWork = equips.filter((e) => e.status === "Maintenance" || e.status === "Broken").length;
         const barColor = avgCond >= 70 ? T.green : avgCond >= 40 ? T.orange : T.red;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 8 }], children: [
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 8 }], children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
             { label: "Active", val: active, color: T.orange },
             { label: "Idle", val: idle, color: T.green },
             { label: "Needs Work", val: needsWork, color: needsWork > 0 ? T.red : T.sub }
-          ].map((s) => /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { color: s.color, fontSize: 18, fontWeight: "900" }, children: s.val }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: s.label })
+          ].map((s) => /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { color: s.color, fontSize: 18, fontWeight: "900" }, children: s.val }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: s.label })
           ] }, s.label)) }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Fleet health" }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: barColor, fontWeight: "600" }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Fleet health" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: barColor, fontWeight: "600" }], children: [
               avgCond,
               "% avg condition"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${avgCond}%`, backgroundColor: barColor }] }) })
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${avgCond}%`, backgroundColor: barColor }] }) })
         ] });
       })(),
-      (game.equipment || []).length === 0 ? /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 24 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F69C}" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { textAlign: "center" }], children: "No Vehicles Yet" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginTop: 4 }], children: "Buy a vehicle below to boost site efficiency and unlock contracts." })
+      (game.equipment || []).length === 0 ? /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 24 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F69C}" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { textAlign: "center" }], children: "No Vehicles Yet" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", marginTop: 4 }], children: "Buy a vehicle below to boost site efficiency and unlock contracts." })
       ] }) : (() => {
         const _filteredEquip = equipFilter === "All" ? game.equipment || [] : (game.equipment || []).filter(
           (e) => equipFilter === "Active" ? e.status === "Active" : equipFilter === "Idle" ? e.status === "Idle" : equipFilter === "Maintenance" ? e.status === "Maintenance" : equipFilter === "Broken" ? e.status === "Broken" : equipFilter === "Low Condition" ? (e.condition ?? 100) < 40 : true
         );
-        if (_filteredEquip.length === 0 && equipFilter !== "All") return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }], children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
+        if (_filteredEquip.length === 0 && equipFilter !== "All") return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }], children: [
             "None of your ",
             (game.equipment || []).length,
             " machines are ",
             equipFilter.toLowerCase(),
             " right now."
           ] }),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { backgroundColor: T.orange, borderColor: T.orange }],
+              style: [styles2.btn, { backgroundColor: T.orange, borderColor: T.orange }],
               onPress: () => setEquipFilter("All"),
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Equipment" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Show All Equipment" })
             }
           )
         ] });
@@ -10828,15 +10970,15 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           const emergRepairCost = Math.round((equip.price || 5e3) * 0.4);
           const assignedSite = equip.assignedSiteId ? game.activeSites?.find((s) => s.id === equip.assignedSiteId) : null;
           const equipImg = EQUIPMENT_IMAGES[equip.shopId];
-          return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: cc, borderWidth: 1.5 }], children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              equipImg && /* @__PURE__ */ jsx(Image, { source: equipImg, style: { width: 64, height: 48, borderRadius: 8, marginRight: 10, backgroundColor: "#fff" }, resizeMode: "contain" }),
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                /* @__PURE__ */ jsxs(Text, { style: [styles.label, col], children: [
+          return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: cc, borderWidth: 1.5 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              equipImg && /* @__PURE__ */ jsx2(Image, { source: equipImg, style: { width: 64, height: 48, borderRadius: 8, marginRight: 10, backgroundColor: "#fff" }, resizeMode: "contain" }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col], children: [
                   equipImg ? "" : "\u{1F527} ",
                   equip.name
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                   "Tier ",
                   equip.tier || 1,
                   " \xB7 ",
@@ -10844,182 +10986,182 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                   "/day \xB7 ",
                   equip.type
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: cc }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: cc }], children: [
                   "Condition: ",
                   cond,
                   "%"
                 ] }),
-                equip.status === "Maintenance" && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red }], children: "\u26A0\uFE0F In maintenance \u2014 needs repair" }),
-                assignedSite && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+                equip.status === "Maintenance" && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red }], children: "\u26A0\uFE0F In maintenance \u2014 needs repair" }),
+                assignedSite && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
                   "Assigned to: ",
                   assignedSite.label
                 ] }),
-                !assignedSite && equip.status === "Idle" && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green }], children: "Available" })
+                !assignedSite && equip.status === "Idle" && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green }], children: "Available" })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { alignItems: "flex-end" }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: equip.status === "Active" ? T.orange : equip.status === "Maintenance" ? T.red : T.green }], children: equip.status }) })
+              /* @__PURE__ */ jsx2(View2, { style: { alignItems: "flex-end" }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: equip.status === "Active" ? T.orange : equip.status === "Maintenance" ? T.red : T.green }], children: equip.status }) })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 6 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${cond}%`, backgroundColor: cc }] }) }),
-            /* @__PURE__ */ jsxs(View, { style: { marginTop: 10, marginBottom: 2 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700", marginBottom: 5 }], children: "UPGRADES" }),
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 6 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${cond}%`, backgroundColor: cc }] }) }),
+            /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 10, marginBottom: 2 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, fontWeight: "700", marginBottom: 5 }], children: "UPGRADES" }),
               EQUIPMENT_UPGRADES.map((upg) => {
                 const currentTier = (equip.upgrades || {})[upg.id] || 0;
                 const nextTier = upg.tiers[currentTier];
                 const isMax = currentTier >= upg.tiers.length;
                 const canAfford = nextTier && game.cash >= nextTier.cost;
-                return /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: { fontSize: 13, marginRight: 6 }, children: upg.icon }),
-                  /* @__PURE__ */ jsx(View, { style: { flex: 1 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: isMax ? T.green : currentTier > 0 ? T.cyan : T.sub, fontSize: 10 }], children: [
+                return /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 13, marginRight: 6 }, children: upg.icon }),
+                  /* @__PURE__ */ jsx2(View2, { style: { flex: 1 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: isMax ? T.green : currentTier > 0 ? T.cyan : T.sub, fontSize: 10 }], children: [
                     upg.label,
                     currentTier > 0 ? ` T${currentTier} \u2014 ${upg.tiers[currentTier - 1].effect}` : " \u2014 not installed"
                   ] }) }),
-                  !isMax ? /* @__PURE__ */ jsx(
-                    TouchableOpacity,
+                  !isMax ? /* @__PURE__ */ jsx2(
+                    TouchableOpacity2,
                     {
-                      style: [styles.smallBtn, { backgroundColor: canAfford ? T.blue : T.panel2, borderColor: T.blue, paddingHorizontal: 8 }],
+                      style: [styles2.smallBtn, { backgroundColor: canAfford ? T.blue : T.panel2, borderColor: T.blue, paddingHorizontal: 8 }],
                       onPress: () => handleBuyEquipmentUpgrade(equip.id, upg.id),
-                      children: /* @__PURE__ */ jsxs(Text, { style: [styles.smallBtnText, { color: canAfford ? "#fff" : T.sub }], children: [
+                      children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.smallBtnText, { color: canAfford ? "#fff" : T.sub }], children: [
                         currentTier === 0 ? "Install" : "Upgrade",
                         " ",
                         money2(nextTier.cost)
                       ] })
                     }
-                  ) : /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontSize: 10 }], children: "\u2713 Max" })
+                  ) : /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontSize: 10 }], children: "\u2713 Max" })
                 ] }, upg.id);
               })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
-              cond < 80 && equip.status !== "Maintenance" && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
+              cond < 80 && equip.status !== "Maintenance" && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { backgroundColor: T.blue, flex: 1, minWidth: 80 }],
+                  style: [styles2.smallBtn, { backgroundColor: T.blue, flex: 1, minWidth: 80 }],
                   onPress: () => handleRepairEquipmentNew(equip.id, false),
-                  children: /* @__PURE__ */ jsxs(Text, { style: styles.smallBtnText, children: [
+                  children: /* @__PURE__ */ jsxs2(Text2, { style: styles2.smallBtnText, children: [
                     "Repair (",
                     money2(repairCost),
                     ")"
                   ] })
                 }
               ),
-              equip.status === "Maintenance" && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              equip.status === "Maintenance" && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { backgroundColor: T.orange, flex: 1, minWidth: 80 }],
+                  style: [styles2.smallBtn, { backgroundColor: T.orange, flex: 1, minWidth: 80 }],
                   onPress: () => handleRepairEquipmentNew(equip.id, true),
-                  children: /* @__PURE__ */ jsxs(Text, { style: styles.smallBtnText, children: [
+                  children: /* @__PURE__ */ jsxs2(Text2, { style: styles2.smallBtnText, children: [
                     "Emergency Repair (",
                     money2(emergRepairCost),
                     ")"
                   ] })
                 }
               ),
-              equip.status !== "Maintenance" && !equip.assignedSiteId && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              equip.status !== "Maintenance" && !equip.assignedSiteId && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { backgroundColor: T.yellow + "33", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.yellow }],
+                  style: [styles2.smallBtn, { backgroundColor: T.yellow + "33", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.yellow }],
                   onPress: () => handleScheduleMaintenance(equip.id),
-                  children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.yellow }], children: "Maintenance" })
+                  children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.yellow }], children: "Maintenance" })
                 }
               ),
-              !equip.assignedSiteId && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              !equip.assignedSiteId && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { backgroundColor: T.red + "22", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.red }],
+                  style: [styles2.smallBtn, { backgroundColor: T.red + "22", flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.red }],
                   onPress: () => handleSellEquipment(equip.id),
-                  children: /* @__PURE__ */ jsxs(Text, { style: [styles.smallBtnText, { color: T.red }], children: [
+                  children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.smallBtnText, { color: T.red }], children: [
                     "Sell (",
                     money2(Math.round(cond / 100 * (equip.price || 5e3) * 0.5)),
                     ")"
                   ] })
                 }
               ),
-              !equip.assignedSiteId && /* @__PURE__ */ jsx(
-                TouchableOpacity,
+              !equip.assignedSiteId && /* @__PURE__ */ jsx2(
+                TouchableOpacity2,
                 {
-                  style: [styles.smallBtn, { backgroundColor: T.panel2, flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.sub }],
+                  style: [styles2.smallBtn, { backgroundColor: T.panel2, flex: 1, minWidth: 80, borderWidth: 1, borderColor: T.sub }],
                   onPress: () => Alert.alert("Retire Equipment", `Remove ${equip.name} from fleet permanently? No cash recovered.`, [
                     { text: "Cancel", style: "cancel" },
                     { text: "Retire", style: "destructive", onPress: () => handleRetireEquipment(equip.id) }
                   ]),
-                  children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.sub }], children: "Retire" })
+                  children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.sub }], children: "Retire" })
                 }
               )
             ] })
           ] }, equip.id);
         });
       })(),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 4 }], children: "Buy Vehicles" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 10 }], children: "New vehicles have full reliability. Used vehicles cost ~40% less but have higher breakdown risk." }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 4 }], children: "Buy Vehicles" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 10 }], children: "New vehicles have full reliability. Used vehicles cost ~40% less but have higher breakdown risk." }),
       EQUIPMENT_SHOP.map((item) => {
         const atCap = (game.equipment || []).length >= totalEquipCap;
         const discount = game._equipDiscount || 0;
         const newPrice = Math.round(item.price * (1 - discount));
         const usedPrice = Math.round(newPrice * 0.58);
         const shopImg = EQUIPMENT_IMAGES[item.shopId];
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          shopImg && /* @__PURE__ */ jsx(Image, { source: shopImg, style: { width: "100%", height: 110, borderRadius: 8, marginBottom: 8, backgroundColor: "#fff" }, resizeMode: "contain" }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.label, col], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+          shopImg && /* @__PURE__ */ jsx2(Image, { source: shopImg, style: { width: "100%", height: 110, borderRadius: 8, marginBottom: 8, backgroundColor: "#fff" }, resizeMode: "contain" }),
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col], children: [
                 shopImg ? "" : "\u{1F69C} ",
                 item.name,
                 " ",
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.blue }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.blue }], children: [
                   "Tier ",
                   item.tier
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: item.role }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: item.role }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 "Daily cost: ",
                 money2(item.dailyCost),
                 " \xB7 Type: ",
                 item.type
               ] })
             ] }),
-            discount > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.yellow }], children: [
+            discount > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.yellow }], children: [
               "-",
               Math.round(discount * 100),
               "%"
             ] })
           ] }),
-          atCap ? /* @__PURE__ */ jsx(View, { style: [styles.btn, { marginTop: 8, backgroundColor: T.panel2, borderColor: T.border }], children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.sub }], children: "Vehicles Cap \u2014 Upgrade office" }) }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+          atCap ? /* @__PURE__ */ jsx2(View2, { style: [styles2.btn, { marginTop: 8, backgroundColor: T.panel2, borderColor: T.border }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.sub }], children: "Vehicles Cap \u2014 Upgrade office" }) }) : /* @__PURE__ */ jsxs2(Fragment, { children: [
             game.cash < newPrice && (() => {
               const pct = Math.min(99, Math.round(game.cash / newPrice * 100));
               const barColor = pct >= 75 ? T.yellow : pct >= 50 ? T.orange : T.sub;
-              return /* @__PURE__ */ jsxs(View, { style: { marginTop: 8, marginBottom: 2 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Savings" }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: barColor }], children: [
+              return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 8, marginBottom: 2 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Savings" }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: barColor }], children: [
                     money2(game.cash),
                     " / ",
                     money2(newPrice)
                   ] })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
+                /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 } }) })
               ] });
             })(),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginTop: 8 }, children: [
-              /* @__PURE__ */ jsxs(
-                TouchableOpacity,
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginTop: 8 }, children: [
+              /* @__PURE__ */ jsxs2(
+                TouchableOpacity2,
                 {
-                  style: [styles.btn, { flex: 1, backgroundColor: game.cash >= newPrice ? T.blue : T.panel2, borderColor: T.blue }],
+                  style: [styles2.btn, { flex: 1, backgroundColor: game.cash >= newPrice ? T.blue : T.panel2, borderColor: T.blue }],
                   onPress: () => handleBuyEquipment(item, false),
                   children: [
-                    /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= newPrice ? "#fff" : T.red, fontSize: 12 }], children: "\u{1F195} New" }),
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: game.cash >= newPrice ? T.sub : T.red, textAlign: "center" }], children: money2(newPrice) }),
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }], children: "100% condition \xB7 reliable" })
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= newPrice ? "#fff" : T.red, fontSize: 12 }], children: "\u{1F195} New" }),
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: game.cash >= newPrice ? T.sub : T.red, textAlign: "center" }], children: money2(newPrice) }),
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", fontSize: 10 }], children: "100% condition \xB7 reliable" })
                   ]
                 }
               ),
-              /* @__PURE__ */ jsxs(
-                TouchableOpacity,
+              /* @__PURE__ */ jsxs2(
+                TouchableOpacity2,
                 {
-                  style: [styles.btn, { flex: 1, backgroundColor: game.cash >= usedPrice ? T.orange + "44" : T.panel2, borderColor: T.orange }],
+                  style: [styles2.btn, { flex: 1, backgroundColor: game.cash >= usedPrice ? T.orange + "44" : T.panel2, borderColor: T.orange }],
                   onPress: () => handleBuyEquipment(item, true),
                   children: [
-                    /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= usedPrice ? T.orange : T.red, fontSize: 12 }], children: "\u{1F504} Used" }),
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: game.cash >= usedPrice ? T.orange : T.red, textAlign: "center" }], children: money2(usedPrice) }),
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }], children: "~55% cond \xB7 higher risk" })
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= usedPrice ? T.orange : T.red, fontSize: 12 }], children: "\u{1F504} Used" }),
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: game.cash >= usedPrice ? T.orange : T.red, textAlign: "center" }], children: money2(usedPrice) }),
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", fontSize: 10 }], children: "~55% cond \xB7 higher risk" })
                   ]
                 }
               )
@@ -11035,37 +11177,37 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
     const completedGoalIds = game.empireGoalsCompleted || [];
     const selectedCity = CITIES.find((c) => c.id === game.selectedEmpireCity) || CITIES[1];
     const hasOfficeInSelected = (game.cityOffices || []).some((o) => o.cityId === selectedCity.id);
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 120 }, children: [
-      game.hallOfFame?.prestigeReached && /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.yellow + "22", borderColor: T.yellow, borderWidth: 2, borderRadius: 10, padding: 14, marginBottom: 12, alignItems: "center" }, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 28, marginBottom: 4 }, children: "\u{1F451}" }),
-        /* @__PURE__ */ jsxs(Text, { style: { color: T.yellow, fontWeight: "900", fontSize: 16, marginBottom: 2 }, children: [
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 120 }, children: [
+      game.hallOfFame?.prestigeReached && /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.yellow + "22", borderColor: T.yellow, borderWidth: 2, borderRadius: 10, padding: 14, marginBottom: 12, alignItems: "center" }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 28, marginBottom: 4 }, children: "\u{1F451}" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: { color: T.yellow, fontWeight: "900", fontSize: 16, marginBottom: 2 }, children: [
           "DYNASTY COMPLETE \u2014 GEN ",
           game.generation || 1
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.text, textAlign: "center", marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.text, textAlign: "center", marginBottom: 8 }], children: [
           "Built the #1 construction empire in America. Achieved on Day ",
           game.hallOfFame.prestigeReached,
           "."
         ] }),
-        (game.legacyPerks || []).length > 0 && /* @__PURE__ */ jsxs(View, { style: { width: "100%", marginTop: 4 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow, fontWeight: "700", marginBottom: 4 }], children: "Carried Legacy Perks:" }),
+        (game.legacyPerks || []).length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { width: "100%", marginTop: 4 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.yellow, fontWeight: "700", marginBottom: 4 }], children: "Carried Legacy Perks:" }),
           (game.legacyPerks || []).map((p, i) => {
             const def = LEGACY_PERKS.find((lp) => lp.id === p);
-            return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.text }], children: [
+            return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.text }], children: [
               "\u2022 ",
               def?.label || p
             ] }, i);
           })
         ] })
       ] }),
-      game._pendingPrestige && !game.hallOfFame?.prestigeReached && /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.green + "22", borderColor: T.green, borderWidth: 2, borderRadius: 10, padding: 14, marginBottom: 12, alignItems: "center" }, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 24, marginBottom: 4 }, children: "\u{1F3C6}" }),
-        /* @__PURE__ */ jsx(Text, { style: { color: T.green, fontWeight: "900", fontSize: 15, marginBottom: 4 }, children: "Dynasty Ready to Claim!" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.text, textAlign: "center" }], children: "You've hit Level 10, Rank #1, and cleared your debt. Tap the crown to begin your legacy." })
+      game._pendingPrestige && !game.hallOfFame?.prestigeReached && /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.green + "22", borderColor: T.green, borderWidth: 2, borderRadius: 10, padding: 14, marginBottom: 12, alignItems: "center" }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 24, marginBottom: 4 }, children: "\u{1F3C6}" }),
+        /* @__PURE__ */ jsx2(Text2, { style: { color: T.green, fontWeight: "900", fontSize: 15, marginBottom: 4 }, children: "Dynasty Ready to Claim!" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.text, textAlign: "center" }], children: "You've hit Level 10, Rank #1, and cleared your debt. Tap the crown to begin your legacy." })
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 2 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Company Valuation" }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginBottom: 6 }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 2 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Company Valuation" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginBottom: 6 }], children: [
           "Home market: ",
           displayCityName,
           ", ",
@@ -11074,24 +11216,24 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           displayCompetition,
           " competition"
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 }, children: [
-          /* @__PURE__ */ jsxs(View, { children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.cashBig, { color: T.cyan }], children: money2(valuation) }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Net Worth" })
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.cashBig, { color: T.cyan }], children: money2(valuation) }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Net Worth" })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.cashBig, { color: rank <= 10 ? T.green : T.sub }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.cashBig, { color: rank <= 10 ? T.green : T.sub }], children: [
               "#",
               rank
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "National Rank" })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "National Rank" })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.cashBig, { color: T.blue }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.cashBig, { color: T.blue }], children: [
               game.marketShare || 1,
               "%"
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Market Share" })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Market Share" })
           ] })
         ] }),
         [
@@ -11106,22 +11248,22 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             return s + (d ? d.cost * 0.7 : 0);
           }, 0))), color: T.blue },
           { label: "Active Pipeline", val: money2(Math.round((game.activeSites || []).reduce((s, site) => s + site.totalValue * 0.4, 0))), color: T.cyan }
-        ].map((row) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: row.label }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color }], children: row.val })
+        ].map((row) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: row.label }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color }], children: row.val })
         ] }, row.label))
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, marginTop: 8 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Market Position" }),
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border, marginTop: 8 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Market Position" }),
         [
           { label: "Market Share", val: `${game.marketShare || 1}%`, color: T.blue },
           { label: "National Rank", val: `#${rank}`, color: rank <= 3 ? T.yellow : rank <= 10 ? T.green : T.sub },
           { label: "Cities with Offices", val: `${(game.cityOffices || []).length + 1}`, color: T.orange },
           { label: "Acquired Rivals", val: `${(game.acquiredRivals || []).length}`, color: T.purple },
           { label: "Your Valuation", val: money2(valuation), color: T.cyan }
-        ].map((row) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: row.label }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color }], children: row.val })
+        ].map((row) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: row.label }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color }], children: row.val })
         ] }, row.label)),
         (game.rivals || []).filter((r) => !(game.acquiredRivals || []).includes(r.id) && r.status !== "Bankrupt").slice(0, 3).map((rival) => {
           const rivalVal = (rival.cash || 0) + (rival.rep || 0) * 5e4 + (rival.cityPresence || ["salem"]).length * 1e5 + (rival.jobsCompleted || 0) * 15e3;
@@ -11129,20 +11271,20 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           const total = valuation + rivalVal;
           const playerShare = total > 0 ? Math.round(valuation / total * 100) : 50;
           const gap = Math.abs(valuation - rivalVal);
-          return /* @__PURE__ */ jsxs(View, { style: { paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.border }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: rival.name }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: ahead ? T.green : T.red }], children: [
+          return /* @__PURE__ */ jsxs2(View2, { style: { paddingVertical: 6, borderBottomWidth: StyleSheet2.hairlineWidth, borderBottomColor: T.border }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: rival.name }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: ahead ? T.green : T.red }], children: [
                 money2(rivalVal),
                 " ",
                 ahead ? "\u25BC" : "\u25B2"
               ] })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", height: 4, borderRadius: 2, overflow: "hidden", marginTop: 4 }, children: [
-              /* @__PURE__ */ jsx(View, { style: { flex: playerShare, height: 4, backgroundColor: T.green } }),
-              /* @__PURE__ */ jsx(View, { style: { flex: 100 - playerShare, height: 4, backgroundColor: ahead ? T.panel2 : T.red } })
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", height: 4, borderRadius: 2, overflow: "hidden", marginTop: 4 }, children: [
+              /* @__PURE__ */ jsx2(View2, { style: { flex: playerShare, height: 4, backgroundColor: T.green } }),
+              /* @__PURE__ */ jsx2(View2, { style: { flex: 100 - playerShare, height: 4, backgroundColor: ahead ? T.panel2 : T.red } })
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 2 }], children: ahead ? `You're ahead by ${money2(gap)}` : `Behind by ${money2(gap)}` })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 2 }], children: ahead ? `You're ahead by ${money2(gap)}` : `Behind by ${money2(gap)}` })
           ] }, rival.id);
         })
       ] }),
@@ -11164,21 +11306,21 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         }).length;
         const totalRivals = activeRivals.length;
         const aheadCount = totalRivals - (valRank - 1);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderWidth: 1.5, marginTop: 8 }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.yellow, marginBottom: 8 }], children: "Rankings" }),
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderWidth: 1.5, marginTop: 8 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.yellow, marginBottom: 8 }], children: "Rankings" }),
           [
             { label: "Revenue Rank", val: `#${revenueRank} / ${totalRivals + 1}`, color: revenueRank <= 3 ? T.yellow : revenueRank <= Math.ceil((totalRivals + 1) / 2) ? T.green : T.sub },
             { label: "Reputation Rank", val: `#${repRank} / ${totalRivals + 1}`, color: repRank <= 3 ? T.yellow : repRank <= Math.ceil((totalRivals + 1) / 2) ? T.green : T.sub },
             { label: "Market Share", val: `${marketSharePct.toFixed(1)}%`, color: marketSharePct >= 50 ? T.green : marketSharePct >= 25 ? T.cyan : T.sub },
             { label: "Company Value", val: `#${valRank} / ${totalRivals + 1}`, color: valRank <= 3 ? T.yellow : valRank <= Math.ceil((totalRivals + 1) / 2) ? T.green : T.sub }
-          ].map((row) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border }], children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: row.label }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color, fontWeight: "700" }], children: row.val })
+          ].map((row) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: row.label }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color, fontWeight: "700" }], children: row.val })
           ] }, row.label)),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan, marginTop: 6, fontStyle: "italic" }], children: aheadCount > 0 ? `You're ahead of ${aheadCount} rival${aheadCount !== 1 ? "s" : ""}` : "Rivals are outpacing you \u2014 push harder!" })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.cyan, marginTop: 6, fontStyle: "italic" }], children: aheadCount > 0 ? `You're ahead of ${aheadCount} rival${aheadCount !== 1 ? "s" : ""}` : "Rivals are outpacing you \u2014 push harder!" })
         ] });
       })(),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 8, marginBottom: 8 }], children: "Empire Goals" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 8, marginBottom: 8 }], children: "Empire Goals" }),
       EMPIRE_GOALS.map((goal) => {
         const done = completedGoalIds.includes(goal.id);
         let progressPct = done ? 100 : 0;
@@ -11223,50 +11365,50 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             progressLabel = `${v}/15 jobs`;
           }
         }
-        return /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: done ? T.panel3 : T.panel, borderColor: done ? T.green : T.border, borderWidth: done ? 1.5 : 1 }], children: /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: done ? T.green : T.text }], children: [
+        return /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: done ? T.panel3 : T.panel, borderColor: done ? T.green : T.border, borderWidth: done ? 1.5 : 1 }], children: /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: done ? T.green : T.text }], children: [
               done ? "\u2705" : "\u25CB",
               " ",
               goal.title
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: goal.desc }),
-            !done && progressLabel && /* @__PURE__ */ jsxs(View, { style: { marginTop: 5 }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10 }], children: progressLabel }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: goal.desc }),
+            !done && progressLabel && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 5 }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 10 }], children: progressLabel }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
                   Math.round(progressPct),
                   "%"
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${progressPct}%`, backgroundColor: T.cyan, borderRadius: 2 } }) })
+              /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${progressPct}%`, backgroundColor: T.cyan, borderRadius: 2 } }) })
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
             "+",
             money2(goal.cashReward || 0)
           ] })
         ] }) }, goal.id);
       }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "City Expansion" }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol, { marginBottom: 10 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "City Expansion" }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol, { marginBottom: 10 }], children: [
         "You operate in ",
         (game.cityOffices || []).length + 1,
         " cit",
         (game.cityOffices || []).length === 0 ? "y" : "ies",
         ". Open offices to unlock higher-value contracts."
       ] }),
-      /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 12 }, children: CITIES.filter((c) => c.id !== "salem").map((city) => {
+      /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 12 }, children: CITIES.filter((c) => c.id !== "salem").map((city) => {
         const hasOffice = (game.cityOffices || []).some((o) => o.cityId === city.id);
         const isSelected = game.selectedEmpireCity === city.id;
-        return /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        return /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.chip, { marginRight: 8, paddingVertical: 6, paddingHorizontal: 12, borderColor: isSelected ? T.orange : hasOffice ? T.green : T.border, backgroundColor: isSelected ? T.orange : hasOffice ? T.panel3 : T.panel2 }],
+            style: [styles2.chip, { marginRight: 8, paddingVertical: 6, paddingHorizontal: 12, borderColor: isSelected ? T.orange : hasOffice ? T.green : T.border, backgroundColor: isSelected ? T.orange : hasOffice ? T.panel3 : T.panel2 }],
             onPress: () => update((g) => {
               g.selectedEmpireCity = city.id;
             }),
-            children: /* @__PURE__ */ jsxs(Text, { style: { color: isSelected ? "#fff" : hasOffice ? T.green : T.sub, fontSize: 12, fontWeight: "600" }, children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: { color: isSelected ? "#fff" : hasOffice ? T.green : T.sub, fontSize: 12, fontWeight: "600" }, children: [
               hasOffice ? "\u2705 " : "",
               city.name,
               ", ",
@@ -11276,37 +11418,37 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           city.id
         );
       }) }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.label, col], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col], children: [
           selectedCity.name,
           ", ",
           selectedCity.state
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           selectedCity.popLabel,
           " \xB7 ",
           selectedCity.region
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           "Contract value: \xD7",
           selectedCity.contractMult,
           " \xB7 Competition: ",
           selectedCity.competition
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: game.reputation >= selectedCity.unlockRep ? T.green : T.orange }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: game.reputation >= selectedCity.unlockRep ? T.green : T.orange }], children: [
           "Rep required: ",
           selectedCity.unlockRep,
           " ",
           game.reputation >= selectedCity.unlockRep ? "\u2705" : `(have ${game.reputation})`
         ] }),
-        hasOfficeInSelected ? /* @__PURE__ */ jsxs(View, { style: { marginTop: 8 }, children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.green }], children: [
+        hasOfficeInSelected ? /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 8 }, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.green }], children: [
             "\u2705 You have a presence in ",
             selectedCity.name
           ] }),
           (game.cityOffices || []).filter((o) => o.cityId === selectedCity.id).map((o) => {
             const def = REGIONAL_OFFICE_TYPES.find((t) => t.id === o.typeId);
-            return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               "\xB7 ",
               def?.name || o.typeId,
               " (opened Day ",
@@ -11315,60 +11457,60 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             ] }, o.id);
           })
         ] }) : null,
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginTop: 12, marginBottom: 4 }], children: "Open an Office" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginTop: 12, marginBottom: 4 }], children: "Open an Office" }),
         REGIONAL_OFFICE_TYPES.map((def) => {
           const totalCost = def.cost + (hasOfficeInSelected ? 0 : selectedCity.unlockCost);
           const canAfford = game.cash >= totalCost;
           const repOk = game.reputation >= selectedCity.unlockRep;
-          return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border, marginBottom: 8 }], children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: def.name }),
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: def.desc }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+          return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border, marginBottom: 8 }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: def.name }),
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: def.desc }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
                   "+",
                   def.crewBonus,
                   " crew \xB7 +",
                   def.contractSlots,
                   " contract slots"
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
                   "Daily rent: ",
                   money2(def.dailyRent)
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: canAfford ? T.green : T.red }], children: money2(totalCost) })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: canAfford ? T.green : T.red }], children: money2(totalCost) })
             ] }),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.btn, { marginTop: 8, backgroundColor: !repOk || !canAfford ? T.panel3 : T.blue, borderColor: !repOk ? T.orange : T.blue }],
+                style: [styles2.btn, { marginTop: 8, backgroundColor: !repOk || !canAfford ? T.panel3 : T.blue, borderColor: !repOk ? T.orange : T.blue }],
                 onPress: () => handleOpenOffice(selectedCity.id, def.id),
                 disabled: !repOk,
-                children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: !repOk || !canAfford ? T.sub : "#fff" }], children: !repOk ? `Needs Rep ${selectedCity.unlockRep}` : `Open ${def.name}` })
+                children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: !repOk || !canAfford ? T.sub : "#fff" }], children: !repOk ? `Needs Rep ${selectedCity.unlockRep}` : `Open ${def.name}` })
               }
             )
           ] }, def.id);
         })
       ] }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Land & Properties" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Land & Properties" }),
       PROPERTY_TYPES.map((def) => {
         const owned = (game.properties || []).filter((p) => p.typeId === def.id);
         const canAfford = game.cash >= def.cost;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: def.name }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: def.desc }),
-              def.dailyCost > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: def.name }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: def.desc }),
+              def.dailyCost > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
                 "Daily cost: ",
                 money2(def.dailyCost)
               ] }),
-              def.weeklyIncome > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.green }], children: [
+              def.weeklyIncome > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.green }], children: [
                 "\u{1F4B5} Weekly income: +",
                 money2(def.weeklyIncome)
               ] }),
-              owned.length > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+              owned.length > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
                 "\u2705 Owned \xD7",
                 owned.length,
                 " \xB7 earning ",
@@ -11376,47 +11518,47 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 "/wk"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: canAfford ? T.green : T.red }], children: money2(def.cost) })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: canAfford ? T.green : T.red }], children: money2(def.cost) })
           ] }),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { marginTop: 8, backgroundColor: canAfford ? T.purple : T.panel2, borderColor: T.purple }],
+              style: [styles2.btn, { marginTop: 8, backgroundColor: canAfford ? T.purple : T.panel2, borderColor: T.purple }],
               onPress: () => handleBuyProperty(def.id),
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: canAfford ? "#fff" : T.sub }], children: "Purchase" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: canAfford ? "#fff" : T.sub }], children: "Purchase" })
             }
           ),
-          owned.map((p) => /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { marginTop: 4, borderColor: T.red }], onPress: () => handleSellProperty(p.id), children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: T.red }], children: [
+          owned.map((p) => /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { marginTop: 4, borderColor: T.red }], onPress: () => handleSellProperty(p.id), children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: T.red }], children: [
             "Sell (",
             money2(Math.round(def.cost * (def.resaleRate || 0.8))),
             ")"
           ] }) }, p.id))
         ] }, def.id);
       }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "City Market Share" }),
-      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, padding: 10 }], children: CITIES.map((city) => {
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "City Market Share" }),
+      /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border, padding: 10 }], children: CITIES.map((city) => {
         const hasPresence = city.id === "salem" || (game.cityOffices || []).some((o) => o.cityId === city.id);
         if (!hasPresence) return null;
         const playerShare = getCityPlayerShare(game, city.id);
         const jobsWon = (game.cityJobsWon || {})[city.id] || 0;
-        return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 10 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.label, col], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 10 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col], children: [
               city.name,
               ", ",
               city.state
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: playerShare >= 50 ? T.green : T.sub }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: playerShare >= 50 ? T.green : T.sub }], children: [
               playerShare,
               "% share \xB7 ",
               jobsWon,
               " jobs won"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { height: 6, backgroundColor: T.track, borderRadius: 3 }, children: /* @__PURE__ */ jsx(View, { style: { height: 6, width: `${Math.min(100, playerShare)}%`, backgroundColor: playerShare >= 50 ? T.green : T.blue, borderRadius: 3 } }) })
+          /* @__PURE__ */ jsx2(View2, { style: { height: 6, backgroundColor: T.track, borderRadius: 3 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 6, width: `${Math.min(100, playerShare)}%`, backgroundColor: playerShare >= 50 ? T.green : T.blue, borderRadius: 3 } }) })
         ] }, city.id);
       }) }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "National Contractor Rankings" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "National Contractor Rankings" }),
       (() => {
         const activeRivals = (game.rivals || []).filter((r) => !(game.acquiredRivals || []).includes(r.id) && r.status !== "Bankrupt");
         if (activeRivals.length === 0) return null;
@@ -11428,12 +11570,12 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const closestVal = (closestRival.cash || 0) + (closestRival.rep || 0) * 5e4 + (closestRival.cityPresence || ["salem"]).length * 1e5 + (closestRival.jobsCompleted || 0) * 15e3;
         const gap = valuation - closestVal;
         const isAhead = gap >= 0;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.orange, borderWidth: 1, marginBottom: 8 }], children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, fontSize: 10, fontWeight: "700", marginBottom: 2 }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.orange, borderWidth: 1, marginBottom: 8 }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 10, fontWeight: "700", marginBottom: 2 }], children: [
             "\u{1F3AF} CLOSEST RIVAL \u2014 ",
             closestRival.name
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
             isAhead ? `You're ahead by ${money2(Math.abs(gap))}` : `They're ahead by ${money2(Math.abs(gap))}`,
             " \xB7 ",
             closestRival.focus || "general",
@@ -11445,25 +11587,25 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const rival = !entry.isPlayer ? (game.rivals || []).find((r) => r.id === entry.id) : null;
         const acqCost = rival ? Math.max(5e4, (rival.rep || 0) * 3e3 + (rival.cash || 0) * 0.5) : 0;
         const rankColor = entry.rank === 1 ? T.yellow : entry.rank <= 3 ? T.orange : entry.rank <= 10 ? T.green : T.sub;
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, {
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, {
           backgroundColor: entry.isPlayer ? T.panel3 : entry.acquired ? T.panel2 : T.panel,
           borderColor: entry.isPlayer ? T.cyan : entry.rank <= 3 ? T.yellow : entry.acquired ? T.green : T.border,
           borderLeftWidth: entry.isPlayer || entry.rank <= 3 ? 4 : 1,
           marginBottom: 6
         }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [{ fontSize: 18, fontWeight: "900", color: rankColor, minWidth: 36 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [{ fontSize: 18, fontWeight: "900", color: rankColor, minWidth: 36 }], children: [
                 "#",
                 entry.rank
               ] }),
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: entry.isPlayer ? T.cyan : col.color }], children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: entry.isPlayer ? T.cyan : col.color }], children: [
                   entry.isPlayer ? "\u2605 " : "",
                   entry.name,
                   entry.acquired ? " \u2705" : ""
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                   "Rep ",
                   entry.rep,
                   " \xB7 ",
@@ -11478,105 +11620,105 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                   const aggLabel = (rival.aggression || 0) >= 0.7 ? "High threat" : (rival.aggression || 0) >= 0.55 ? "Active" : "Low key";
                   const aggColor = (rival.aggression || 0) >= 0.7 ? T.red : (rival.aggression || 0) >= 0.55 ? T.orange : T.sub;
                   const inHomeCity = (rival.cityPresence || ["salem"]).includes(game.startingCityId || "salem");
-                  return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], children: [
+                  return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginTop: 1 }], children: [
                     focusIcon,
                     " ",
                     focusLabel,
                     " \xB7 ",
-                    /* @__PURE__ */ jsx(Text, { style: { color: aggColor }, children: aggLabel }),
+                    /* @__PURE__ */ jsx2(Text2, { style: { color: aggColor }, children: aggLabel }),
                     inHomeCity ? " \xB7 \u{1F3E0} In your market" : ""
                   ] });
                 })()
               ] })
             ] }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: entry.isPlayer ? T.cyan : T.sub }], children: money2(entry.value) })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: entry.isPlayer ? T.cyan : T.sub }], children: money2(entry.value) })
           ] }),
-          rival && !entry.acquired && entry.status !== "Bankrupt" && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 12, marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+          rival && !entry.acquired && entry.status !== "Bankrupt" && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 12, marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet2.hairlineWidth, borderTopColor: T.border }, children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               "\u{1F477} ",
               rival.employees || 0,
               " crew"
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               "\u{1F69B} ",
               rival.equipment || 0,
               " vehicles"
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               "\u{1F3D9}\uFE0F ",
               (rival.cityPresence || ["salem"]).length,
               " ",
               (rival.cityPresence || ["salem"]).length === 1 ? "city" : "cities"
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
               "\u{1F4B0} ",
               money2(rival.cash || 0)
             ] })
           ] }),
-          rival && (rival.aggression || 0) >= 0.7 && !entry.acquired && entry.status !== "Bankrupt" && /* @__PURE__ */ jsxs(View, { style: { marginTop: 5 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, fontSize: 10, fontWeight: "700" }], children: "\u26A0 High aggression rival" }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, fontSize: 10 }], children: [
+          rival && (rival.aggression || 0) >= 0.7 && !entry.acquired && entry.status !== "Bankrupt" && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 5 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10, fontWeight: "700" }], children: "\u26A0 High aggression rival" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10 }], children: [
                 Math.round((rival.aggression || 0) * 100),
                 "%"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: { height: 3, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 3, width: `${Math.round((rival.aggression || 0) * 100)}%`, backgroundColor: T.red, borderRadius: 2 } }) })
+            /* @__PURE__ */ jsx2(View2, { style: { height: 3, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 3, width: `${Math.round((rival.aggression || 0) * 100)}%`, backgroundColor: T.red, borderRadius: 2 } }) })
           ] }),
           !entry.isPlayer && !entry.acquired && entry.status !== "Bankrupt" && game.reputation >= 50 && (() => {
             const rivalValNow = entry.value;
             const canAcquire = valuation >= rivalValNow * 5 && game.cash >= 2e5 || game.cash >= acqCost;
-            return canAcquire ? /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            return canAcquire ? /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.btn, { marginTop: 8, backgroundColor: game.cash >= acqCost ? T.orange : T.panel2, borderColor: T.orange }],
+                style: [styles2.btn, { marginTop: 8, backgroundColor: game.cash >= acqCost ? T.orange : T.panel2, borderColor: T.orange }],
                 onPress: () => Alert.alert(
                   "Acquire Competitor",
                   `Buy out ${entry.name} for ${money2(acqCost)}? You'll absorb their assets and crew.`,
                   [{ text: "Cancel", style: "cancel" }, { text: "Acquire", onPress: () => handleAcquireRival(entry.id) }]
                 ),
-                children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: game.cash >= acqCost ? "#fff" : T.sub }], children: [
+                children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: game.cash >= acqCost ? "#fff" : T.sub }], children: [
                   "Acquire \u2014 ",
                   money2(acqCost)
                 ] })
               }
             ) : null;
           })(),
-          entry.acquired && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, marginTop: 4 }], children: "Acquired \u2014 integrated into your company." })
+          entry.acquired && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, marginTop: 4 }], children: "Acquired \u2014 integrated into your company." })
         ] }, entry.id);
       }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Achievements" }),
-      /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, children: ACHIEVEMENTS_LIST.map((ach) => {
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Achievements" }),
+      /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, children: ACHIEVEMENTS_LIST.map((ach) => {
         const earned = (game.achievements || []).includes(ach.id);
-        return /* @__PURE__ */ jsxs(View, { style: { width: "48%", backgroundColor: earned ? T.green + "15" : T.panel, borderColor: earned ? T.green : T.border, borderWidth: earned ? 1.5 : 1, borderRadius: 10, padding: 11, marginBottom: 0 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
-            /* @__PURE__ */ jsx(Ionicons, { name: ach.icon, size: 22, color: earned ? T.green : T.sub, style: { marginRight: 7, opacity: earned ? 1 : 0.35 } }),
-            earned && /* @__PURE__ */ jsx(Text, { style: { color: T.green, fontSize: 13, fontWeight: "bold", marginLeft: "auto" }, children: "\u2713" })
+        return /* @__PURE__ */ jsxs2(View2, { style: { width: "48%", backgroundColor: earned ? T.green + "15" : T.panel, borderColor: earned ? T.green : T.border, borderWidth: earned ? 1.5 : 1, borderRadius: 10, padding: 11, marginBottom: 0 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", marginBottom: 5 }, children: [
+            /* @__PURE__ */ jsx2(Ionicons, { name: ach.icon, size: 22, color: earned ? T.green : T.sub, style: { marginRight: 7, opacity: earned ? 1 : 0.35 } }),
+            earned && /* @__PURE__ */ jsx2(Text2, { style: { color: T.green, fontSize: 13, fontWeight: "bold", marginLeft: "auto" }, children: "\u2713" })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: { fontWeight: "bold", fontSize: 12, color: earned ? T.text : T.sub, marginBottom: 3 }, children: ach.title }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: earned ? T.sub : T.border, fontSize: 10, lineHeight: 14 }], children: ach.desc })
+          /* @__PURE__ */ jsx2(Text2, { style: { fontWeight: "bold", fontSize: 12, color: earned ? T.text : T.sub, marginBottom: 3 }, children: ach.title }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: earned ? T.sub : T.border, fontSize: 10, lineHeight: 14 }], children: ach.desc })
         ] }, ach.id);
       }) }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Company Records" }),
-      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.yellow, borderWidth: 1.5 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Company Records" }),
+      /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.yellow, borderWidth: 1.5 }], children: [
         { label: "\u{1F3C6} Biggest Contract", value: money2(game.hallOfFame?.biggestContract || 0), color: T.yellow },
         { label: "\u{1F4C8} Peak Reputation", value: `${game.hallOfFame?.highestRep || 0}`, color: T.purple },
         { label: "\u{1F477} Largest Crew Ever", value: `${game.hallOfFame?.largestCrew || 0} workers`, color: T.cyan },
         { label: "\u{1F69C} Largest Fleet Ever", value: `${game.hallOfFame?.largestFleet || 0} machines`, color: T.orange },
         { label: "\u{1F4B0} Peak Valuation", value: money2(game.hallOfFame?.highestValuation || 0), color: T.green },
         { label: "\u2B50 Most Profitable Job", value: game.hallOfFame?.mostProfitableProject?.label ? `${game.hallOfFame.mostProfitableProject.label} (${money2(game.hallOfFame.mostProfitableProject.value)})` : "None yet", color: T.blue }
-      ].map((row, i, arr) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 9, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: T.border }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 12 }], children: row.label }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color, fontWeight: "700", fontSize: 12, textAlign: "right", flex: 1, marginLeft: 8 }], numberOfLines: 1, children: row.value })
+      ].map((row, i, arr) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 9, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: T.border }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 12 }], children: row.label }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color, fontWeight: "700", fontSize: 12, textAlign: "right", flex: 1, marginLeft: 8 }], numberOfLines: 1, children: row.value })
       ] }, row.label)) }),
       (() => {
         const activeCities = CITIES.filter(
           (city) => city.id === "salem" || (game.cityOffices || []).some((o) => o.cityId === city.id)
         );
         if (activeCities.length === 0) return null;
-        return /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "City Presence" }),
-          /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: activeCities.map((city, i) => {
+        return /* @__PURE__ */ jsxs2(Fragment, { children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "City Presence" }),
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: activeCities.map((city, i) => {
             const stats = game.cityStats?.[city.id] || { playerJobs: 0, rivalJobs: 0 };
             const totalJobs = stats.playerJobs + stats.rivalJobs;
             const sharePct = totalJobs > 0 ? Math.round(stats.playerJobs / totalJobs * 100) : 100;
@@ -11584,15 +11726,15 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
               (r) => r.status !== "Bankrupt" && (r.cityPresence || ["salem"]).includes(city.id) && (r.rep || 0) > (game.reputation || 0)
             ).length;
             const hasOffice = city.id === "salem" || (game.cityOffices || []).some((o) => o.cityId === city.id);
-            return /* @__PURE__ */ jsxs(View, { style: { marginBottom: i < activeCities.length - 1 ? 12 : 0, paddingBottom: i < activeCities.length - 1 ? 12 : 0, borderBottomWidth: i < activeCities.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: T.border }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
-                /* @__PURE__ */ jsxs(View, { children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.label, col], children: [
+            return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: i < activeCities.length - 1 ? 12 : 0, paddingBottom: i < activeCities.length - 1 ? 12 : 0, borderBottomWidth: i < activeCities.length - 1 ? StyleSheet2.hairlineWidth : 0, borderBottomColor: T.border }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col], children: [
                     city.name,
                     ", ",
                     city.state
                   ] }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub }], children: [
                     "Rank #",
                     rankInCity,
                     " \xB7 ",
@@ -11600,15 +11742,15 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                     " jobs won"
                   ] })
                 ] }),
-                /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: sharePct >= 50 ? T.green : sharePct >= 25 ? T.cyan : T.sub, fontWeight: "700" }], children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: sharePct >= 50 ? T.green : sharePct >= 25 ? T.cyan : T.sub, fontWeight: "700" }], children: [
                     sharePct,
                     "%"
                   ] }),
-                  /* @__PURE__ */ jsx(Text, { style: [{ fontSize: 9, color: T.sub }], children: "market share" })
+                  /* @__PURE__ */ jsx2(Text2, { style: [{ fontSize: 9, color: T.sub }], children: "market share" })
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: { height: 6, backgroundColor: T.track, borderRadius: 3 }, children: /* @__PURE__ */ jsx(View, { style: { height: 6, width: `${Math.min(100, sharePct)}%`, backgroundColor: sharePct >= 50 ? T.green : T.blue, borderRadius: 3 } }) })
+              /* @__PURE__ */ jsx2(View2, { style: { height: 6, backgroundColor: T.track, borderRadius: 3 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 6, width: `${Math.min(100, sharePct)}%`, backgroundColor: sharePct >= 50 ? T.green : T.blue, borderRadius: 3 } }) })
             ] }, city.id);
           }) })
         ] });
@@ -11617,8 +11759,8 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const endgameMilestones = MILESTONE_DEFS.filter((m) => m.tier === 4);
         if (endgameMilestones.length === 0) return null;
         const valuation2 = computeValuation(game);
-        return /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Ultimate Goals" }),
+        return /* @__PURE__ */ jsxs2(Fragment, { children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Ultimate Goals" }),
           endgameMilestones.map((m) => {
             const done = !!game._milestones?.[m.key];
             let progressPct = done ? 100 : 0;
@@ -11647,29 +11789,29 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 progressLabel = `${outvalued}/${activeRivals.length} rivals outvalued 10\xD7`;
               }
             }
-            return /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: done ? T.panel3 : T.panel, borderColor: done ? T.yellow : T.border, borderWidth: done ? 2 : 1, marginBottom: 6 }], children: /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: done ? T.yellow : T.text }], children: [
+            return /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: done ? T.panel3 : T.panel, borderColor: done ? T.yellow : T.border, borderWidth: done ? 2 : 1, marginBottom: 6 }], children: /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: done ? T.yellow : T.text }], children: [
                 done ? "\u{1F3C6}" : "\u25CB",
                 " ",
                 m.label
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: m.desc }),
-              !done && progressLabel && /* @__PURE__ */ jsxs(View, { style: { marginTop: 5 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow, fontSize: 10 }], children: progressLabel }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: m.desc }),
+              !done && progressLabel && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 5 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.yellow, fontSize: 10 }], children: progressLabel }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
                     Math.round(progressPct),
                     "%"
                   ] })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${progressPct}%`, backgroundColor: T.yellow, borderRadius: 2 } }) })
+                /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${progressPct}%`, backgroundColor: T.yellow, borderRadius: 2 } }) })
               ] })
             ] }) }) }, m.key);
           })
         ] });
       })(),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Company Legacy" }),
-      /* @__PURE__ */ jsx(View, { style: styles.card, children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 20, marginBottom: 8 }], children: "Company Legacy" }),
+      /* @__PURE__ */ jsx2(View2, { style: styles2.card, children: [
         { label: "Years in Business", value: (() => {
           const yrs = Math.floor((game.day || 1) / 365);
           return yrs >= 1 ? `${yrs} Year${yrs !== 1 ? "s" : ""}` : "< 1 Year";
@@ -11680,22 +11822,22 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         { label: "Employees Ever Hired", value: `${(game.legacyStats?.totalEmployeesHired ?? 0).toLocaleString()}`, color: T.purple },
         { label: "Equipment Purchased", value: `${(game.legacyStats?.totalEquipmentBought ?? 0).toLocaleString()}`, color: T.orange },
         { label: "Achievements Earned", value: `${(game.achievements || []).length} / ${ACHIEVEMENTS_LIST.length}`, color: T.yellow }
-      ].map((row, i, arr) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: T.border }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, fontWeight: "500", fontSize: 13 }], children: row.label }),
-        /* @__PURE__ */ jsx(Text, { style: { color: row.color, fontWeight: "bold", fontSize: 14 }, children: row.value })
+      ].map((row, i, arr) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: T.border }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.sub, fontWeight: "500", fontSize: 13 }], children: row.label }),
+        /* @__PURE__ */ jsx2(Text2, { style: { color: row.color, fontWeight: "bold", fontSize: 14 }, children: row.value })
       ] }, row.label)) }),
       (() => {
         const legacy = getLegacyScore(game);
-        return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.purple, borderWidth: 1.5, marginTop: 8, marginBottom: 8, alignItems: "center" }], children: [
-          /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: T.purple, fontWeight: "700", marginBottom: 4 }, children: "YOUR LEGACY TIER" }),
-          /* @__PURE__ */ jsx(Ionicons, { name: legacy.icon, size: 36, color: T.purple, style: { marginBottom: 4 } }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.h2, { color: T.purple, textAlign: "center" }], children: legacy.label }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: [
+        return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.purple, borderWidth: 1.5, marginTop: 8, marginBottom: 8, alignItems: "center" }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, color: T.purple, fontWeight: "700", marginBottom: 4 }, children: "YOUR LEGACY TIER" }),
+          /* @__PURE__ */ jsx2(Ionicons, { name: legacy.icon, size: 36, color: T.purple, style: { marginBottom: 4 } }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, { color: T.purple, textAlign: "center" }], children: legacy.label }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: [
             "Legacy Score: ",
             legacy.score,
             " / 100"
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { height: 6, width: "100%", backgroundColor: T.track, borderRadius: 3, marginTop: 10 }, children: /* @__PURE__ */ jsx(View, { style: { height: 6, width: `${legacy.score}%`, backgroundColor: T.purple, borderRadius: 3 } }) })
+          /* @__PURE__ */ jsx2(View2, { style: { height: 6, width: "100%", backgroundColor: T.track, borderRadius: 3, marginTop: 10 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 6, width: `${legacy.score}%`, backgroundColor: T.purple, borderRadius: 3 } }) })
         ] });
       })()
     ] });
@@ -11755,9 +11897,9 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
     }, {})).sort((a, b) => b[1] - a[1]).slice(0, 4);
     const topRevenueCategories = summarizeLedgerCategories(ledger7d, "income");
     const topExpenseCategories = summarizeLedgerCategories(ledger7d, "expense");
-    return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Financial Overview" }),
+    return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Financial Overview" }),
         [
           { label: "Cash on Hand", val: money2(game.cash), color: game.cash >= 0 ? T.green : T.red },
           {
@@ -11778,85 +11920,85 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           { label: "Weekly Rent", val: money2(weeklyRent), color: T.text },
           { label: "Total Revenue", val: money2(game.revenue), color: T.cyan },
           { label: "Total Expenses", val: money2(game.expenses), color: T.orange }
-        ].map((row) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border, flexDirection: "column", alignItems: "stretch" }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: row.label }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color }], children: row.val })
+        ].map((row) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border, flexDirection: "column", alignItems: "stretch" }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: row.label }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color }], children: row.val })
           ] }),
-          row.bar && /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 4 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${row.bar.value}%`, backgroundColor: row.bar.color }] }) }),
-          row.note && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.bar?.color || T.sub, fontSize: 10, marginTop: 2 }], children: row.note })
+          row.bar && /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 4 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${row.bar.value}%`, backgroundColor: row.bar.color }] }) }),
+          row.note && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.bar?.color || T.sub, fontSize: 10, marginTop: 2 }], children: row.note })
         ] }, row.label))
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1 }], children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, { color: T.cyan }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, { color: T.cyan }], children: [
           "Regional Economy \xB7 ",
           regionalEconomy.stateName
         ] }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "Local construction conditions actively affect bids, materials, wages, and financing." }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "Local construction conditions actively affect bids, materials, wages, and financing." }),
         [
           { label: "Contract Market", val: `${regionalEconomy.contractValueMult.toFixed(2)}\xD7`, color: regionalEconomy.contractValueMult >= 1 ? T.green : T.orange },
           { label: "Material Prices", val: `${regionalEconomy.materialPriceMult.toFixed(2)}\xD7`, color: regionalEconomy.materialPriceMult <= 1 ? T.green : T.orange },
           { label: "Wage Pressure", val: `${regionalEconomy.wageMult.toFixed(2)}\xD7`, color: regionalEconomy.wageMult <= 1 ? T.green : T.orange },
           { label: "Lending Climate", val: `${regionalEconomy.lendingEconomyMult.toFixed(2)}\xD7`, color: regionalEconomy.lendingEconomyMult >= 1 ? T.green : T.orange }
-        ].map((row) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border }], children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: row.label }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: row.color, fontWeight: "700" }], children: row.val })
+        ].map((row) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: row.label }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: row.color, fontWeight: "700" }], children: row.val })
         ] }, row.label))
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 1.5 }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
-          /* @__PURE__ */ jsxs(View, { children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Transaction Ledger" }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Last 7 days \xB7 cash movements recorded automatically" })
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 1.5 }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Transaction Ledger" }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Last 7 days \xB7 cash movements recorded automatically" })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: (ledgerNet >= 0 ? T.green : T.red) + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: ledgerNet >= 0 ? T.green : T.red }], children: [
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: (ledgerNet >= 0 ? T.green : T.red) + "22" }], children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.statusPillText, { color: ledgerNet >= 0 ? T.green : T.red }], children: [
             ledgerNet >= 0 ? "+" : "",
             money2(ledgerNet),
             " net"
           ] }) })
         ] }),
-        /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 8, marginBottom: 10 }, children: [
+        /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 10 }, children: [
           { label: "Income", value: ledgerRevenue, color: T.green, prefix: "+" },
           { label: "Expenses", value: ledgerExpenses, color: T.red, prefix: "-" },
           { label: "Net", value: Math.abs(ledgerNet), color: ledgerNet >= 0 ? T.green : T.red, prefix: ledgerNet >= 0 ? "+" : "-" }
-        ].map((item) => /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 8, padding: 9, alignItems: "center" }, children: [
-          /* @__PURE__ */ jsxs(Text, { style: { color: item.color, fontSize: 13, fontWeight: "800" }, children: [
+        ].map((item) => /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 8, padding: 9, alignItems: "center" }, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: { color: item.color, fontSize: 13, fontWeight: "800" }, children: [
             item.prefix,
             money2(item.value)
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: item.label })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: item.label })
         ] }, item.label)) }),
-        ledger7d.length > 0 ? /* @__PURE__ */ jsxs(Fragment, { children: [
-          (topRevenueCategories.length > 0 || topExpenseCategories.length > 0) && /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 10, marginBottom: 10 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700", marginBottom: 4 }], children: "TOP INCOME" }),
-              topRevenueCategories.map(([category, amount]) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: ledgerCategoryLabels[category] || category }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.green }], children: [
+        ledger7d.length > 0 ? /* @__PURE__ */ jsxs2(Fragment, { children: [
+          (topRevenueCategories.length > 0 || topExpenseCategories.length > 0) && /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 10, marginBottom: 10 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontWeight: "700", marginBottom: 4 }], children: "TOP INCOME" }),
+              topRevenueCategories.map(([category, amount]) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], numberOfLines: 1, children: ledgerCategoryLabels[category] || category }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.green }], children: [
                   "+",
                   money2(amount)
                 ] })
               ] }, `rev-${category}`)),
-              topRevenueCategories.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "No income yet" })
+              topRevenueCategories.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "No income yet" })
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, fontWeight: "700", marginBottom: 4 }], children: "TOP SPENDING" }),
-              topExpenseCategories.map(([category, amount]) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], numberOfLines: 1, children: ledgerCategoryLabels[category] || category }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red, fontWeight: "700", marginBottom: 4 }], children: "TOP SPENDING" }),
+              topExpenseCategories.map(([category, amount]) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], numberOfLines: 1, children: ledgerCategoryLabels[category] || category }),
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
                   "-",
                   money2(amount)
                 ] })
               ] }, `exp-${category}`)),
-              topExpenseCategories.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "No expenses yet" })
+              topExpenseCategories.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "No expenses yet" })
             ] })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontWeight: "700", marginBottom: 5 }], children: "RECENT TRANSACTIONS" }),
-          recentLedger.map((entry, index) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", paddingVertical: 7, borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
-            /* @__PURE__ */ jsx(View, { style: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: (entry.amount >= 0 ? T.green : T.orange) + "22", marginRight: 8 }, children: /* @__PURE__ */ jsx(Ionicons, { name: entry.amount >= 0 ? "arrow-down" : "arrow-up", size: 14, color: entry.amount >= 0 ? T.green : T.orange }) }),
-            /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], numberOfLines: 1, children: entry.description || ledgerCategoryLabels[entry.category] || "Transaction" }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontWeight: "700", marginBottom: 5 }], children: "RECENT TRANSACTIONS" }),
+          recentLedger.map((entry, index) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", paddingVertical: 7, borderTopWidth: index === 0 ? 0 : StyleSheet2.hairlineWidth, borderTopColor: T.border }, children: [
+            /* @__PURE__ */ jsx2(View2, { style: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: (entry.amount >= 0 ? T.green : T.orange) + "22", marginRight: 8 }, children: /* @__PURE__ */ jsx2(Ionicons, { name: entry.amount >= 0 ? "arrow-down" : "arrow-up", size: 14, color: entry.amount >= 0 ? T.green : T.orange }) }),
+            /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], numberOfLines: 1, children: entry.description || ledgerCategoryLabels[entry.category] || "Transaction" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: [
                 "Day ",
                 entry.day || 0,
                 " \xB7 ",
@@ -11865,59 +12007,59 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 money2(entry.balance || 0)
               ] })
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: entry.amount >= 0 ? T.green : T.red, fontWeight: "800" }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: entry.amount >= 0 ? T.green : T.red, fontWeight: "800" }], children: [
               entry.amount >= 0 ? "+" : "-",
               money2(Math.abs(entry.amount))
             ] })
           ] }, entry.id || `${entry.day}-${index}`))
-        ] }) : /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 12 }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center" }], children: "Nothing recorded yet. Every contract payment, wage, material order and repair lands here automatically \u2014 start a job and the ledger fills itself." }) })
+        ] }) : /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 12 }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center" }], children: "Nothing recorded yet. Every contract payment, wage, material order and repair lands here automatically \u2014 start a job and the ledger fills itself." }) })
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1, marginBottom: 8 }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.cyan }], children: "\u{1F3E6} Reserve Savings" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan }], children: money2(game.savings || 0) })
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1, marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.cyan }], children: "\u{1F3E6} Reserve Savings" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.cyan }], children: money2(game.savings || 0) })
         ] }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: (game.savings || 0) > 0 ? `Earning ${money2(Math.round((game.savings || 0) * 12e-4))}/day \xB7 4.4% annual` : "Deposit to earn 4.4% annual interest on reserves." }),
-        /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, children: [1e3, 5e3, 1e4, 5e4, 1e5].map((p) => /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.chip, { marginRight: 6, borderColor: savingsAmt === String(p) ? T.cyan : T.border }], onPress: () => setSavingsAmt(String(p)), children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: savingsAmt === String(p) ? T.cyan : T.sub }], children: money2(p) }) }, p)) }),
-        /* @__PURE__ */ jsx(TextInput, { style: [styles.input, col, { marginBottom: 8 }], value: savingsAmt, onChangeText: setSavingsAmt, keyboardType: "numeric", placeholder: "Custom amount", placeholderTextColor: T.sub }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: (game.savings || 0) > 0 ? `Earning ${money2(Math.round((game.savings || 0) * 12e-4))}/day \xB7 4.4% annual` : "Deposit to earn 4.4% annual interest on reserves." }),
+        /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, children: [1e3, 5e3, 1e4, 5e4, 1e5].map((p) => /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.chip, { marginRight: 6, borderColor: savingsAmt === String(p) ? T.cyan : T.border }], onPress: () => setSavingsAmt(String(p)), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: savingsAmt === String(p) ? T.cyan : T.sub }], children: money2(p) }) }, p)) }),
+        /* @__PURE__ */ jsx2(TextInput, { style: [styles2.input, col, { marginBottom: 8 }], value: savingsAmt, onChangeText: setSavingsAmt, keyboardType: "numeric", placeholder: "Custom amount", placeholderTextColor: T.sub }),
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8 }, children: [
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { flex: 1, backgroundColor: game.cash >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? T.cyan : T.panel2, borderColor: T.cyan }],
+              style: [styles2.btn, { flex: 1, backgroundColor: game.cash >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? T.cyan : T.panel2, borderColor: T.cyan }],
               onPress: () => {
                 handleSavingsDeposit(parseInt(savingsAmt) || 0);
                 setSavingsAmt("");
               },
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? "#000" : T.sub }], children: "Deposit \u2192" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? "#000" : T.sub }], children: "Deposit \u2192" })
             }
           ),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { flex: 1, backgroundColor: (game.savings || 0) >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? T.green : T.panel2, borderColor: T.green }],
+              style: [styles2.btn, { flex: 1, backgroundColor: (game.savings || 0) >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? T.green : T.panel2, borderColor: T.green }],
               onPress: () => {
                 handleSavingsWithdraw(parseInt(savingsAmt) || 0);
                 setSavingsAmt("");
               },
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: (game.savings || 0) >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? "#fff" : T.sub }], children: "\u2190 Withdraw" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: (game.savings || 0) >= (parseInt(savingsAmt) || 0) && (parseInt(savingsAmt) || 0) > 0 ? "#fff" : T.sub }], children: "\u2190 Withdraw" })
             }
           )
         ] })
       ] }),
-      (game.taxDue || 0) > 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 1.5 }], children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.red }], children: [
+      (game.taxDue || 0) > 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 1.5 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.red }], children: [
           "\u26A0 Tax Due: ",
           money2(game.taxDue)
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           "Overdue ",
           game.taxOverdueDays,
           " day(s). Business freezes at 14 days."
         ] }),
-        game.taxOverdueDays > 0 && /* @__PURE__ */ jsxs(View, { style: { marginTop: 6 }, children: [
-          /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, height: 8 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.round(game.taxOverdueDays / 14 * 100)}%`, backgroundColor: game.taxOverdueDays >= 10 ? T.red : T.orange, height: 8 }] }) }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: game.taxOverdueDays >= 10 ? T.red : T.orange, marginTop: 2, fontWeight: "600" }], children: [
+        game.taxOverdueDays > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 6 }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, height: 8 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.round(game.taxOverdueDays / 14 * 100)}%`, backgroundColor: game.taxOverdueDays >= 10 ? T.red : T.orange, height: 8 }] }) }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: game.taxOverdueDays >= 10 ? T.red : T.orange, marginTop: 2, fontWeight: "600" }], children: [
             "Day ",
             game.taxOverdueDays,
             " of 14 \u2014 ",
@@ -11927,26 +12069,26 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             " until freeze"
           ] })
         ] }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, backgroundColor: game.cash >= (game.taxDue || 0) ? T.red : T.panel2, borderColor: T.red }],
+            style: [styles2.btn, { marginTop: 8, backgroundColor: game.cash >= (game.taxDue || 0) ? T.red : T.panel2, borderColor: T.red }],
             onPress: handlePayTax,
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= (game.taxDue || 0) ? "#fff" : T.red }], children: "Pay Tax Bill" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= (game.taxDue || 0) ? "#fff" : T.red }], children: "Pay Tax Bill" })
           }
         )
       ] }),
-      game.loans.length > 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Active Loans" }),
-        game.loans.map((loan) => /* @__PURE__ */ jsxs(View, { style: { marginBottom: 10 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", gap: 8 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { flex: 1 }], numberOfLines: 1, children: loan.label }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.orange }], numberOfLines: 1, children: [
+      game.loans.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Active Loans" }),
+        game.loans.map((loan) => /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 10 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", gap: 8 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { flex: 1 }], numberOfLines: 1, children: loan.label }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.orange }], numberOfLines: 1, children: [
               money2(loan.remainingBalance),
               " left"
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
             loan.weeksLeft,
             " weeks \xB7 ",
             money2(loan.weeklyPayment),
@@ -11956,20 +12098,20 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             const maxWeeks = 52;
             const pct = Math.min(100, Math.round(loan.weeksLeft / maxWeeks * 100));
             const barColor = loan.weeksLeft <= 4 ? T.green : loan.weeksLeft <= 13 ? T.orange : T.red;
-            return /* @__PURE__ */ jsxs(View, { style: { marginTop: 4 }, children: [
-              /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${pct}%`, backgroundColor: barColor }] }) }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, marginTop: 2, fontSize: 10 }], children: loan.weeksLeft <= 4 ? `Almost done \u2014 ${loan.weeksLeft} wk${loan.weeksLeft !== 1 ? "s" : ""} left` : `${loan.weeksLeft} weeks remaining` })
+            return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 4 }, children: [
+              /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${pct}%`, backgroundColor: barColor }] }) }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, marginTop: 2, fontSize: 10 }], children: loan.weeksLeft <= 4 ? `Almost done \u2014 ${loan.weeksLeft} wk${loan.weeksLeft !== 1 ? "s" : ""} left` : `${loan.weeksLeft} weeks remaining` })
             ] });
           })(),
-          loan.missedPayments > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+          loan.missedPayments > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
             loan.missedPayments,
             " missed payment(s)"
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 6, marginTop: 6 }, children: [
-            /* @__PURE__ */ jsx(
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 6, marginTop: 6 }, children: [
+            /* @__PURE__ */ jsx2(
               TextInput,
               {
-                style: [styles.input, col, { flex: 1, marginBottom: 0, paddingVertical: 4 }],
+                style: [styles2.input, col, { flex: 1, marginBottom: 0, paddingVertical: 4 }],
                 value: loanPayAmts[loan.id] || "",
                 onChangeText: (v) => setLoanPayAmts((prev) => ({ ...prev, [loan.id]: v })),
                 keyboardType: "numeric",
@@ -11977,27 +12119,27 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 placeholderTextColor: T.sub
               }
             ),
-            /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.smallBtn, { borderWidth: 1, borderColor: T.cyan, paddingHorizontal: 14 }],
+                style: [styles2.smallBtn, { borderWidth: 1, borderColor: T.cyan, paddingHorizontal: 14 }],
                 onPress: () => {
                   handleLoanPartialPayment(loan.id, parseInt(loanPayAmts[loan.id]) || 0);
                   setLoanPayAmts((prev) => ({ ...prev, [loan.id]: "" }));
                 },
-                children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.cyan }], children: "Pay" })
+                children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.cyan }], children: "Pay" })
               }
             )
           ] }),
           (() => {
             const payoff = Math.round((loan.remainingBalance || 0) * 1.01);
             const canAfford = game.cash >= payoff;
-            return /* @__PURE__ */ jsx(
-              TouchableOpacity,
+            return /* @__PURE__ */ jsx2(
+              TouchableOpacity2,
               {
-                style: [styles.smallBtn, { marginTop: 4, borderWidth: 1, borderColor: canAfford ? T.green : T.border, backgroundColor: "transparent" }],
+                style: [styles2.smallBtn, { marginTop: 4, borderWidth: 1, borderColor: canAfford ? T.green : T.border, backgroundColor: "transparent" }],
                 onPress: () => handlePayoffLoan(loan.id, payoff),
-                children: /* @__PURE__ */ jsxs(Text, { style: [styles.smallBtnText, { color: canAfford ? T.green : T.sub }], children: [
+                children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.smallBtnText, { color: canAfford ? T.green : T.sub }], children: [
                   "Pay Off Early \u2014 ",
                   money2(payoff),
                   !canAfford ? ` (need ${money2(payoff - game.cash)} more)` : " \xB7 1% fee \xB7 Credit +5"
@@ -12007,42 +12149,42 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           })()
         ] }, loan.id))
       ] }),
-      !game.creditLine && (game.creditScore || 600) >= 680 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.purple, borderWidth: 1, marginBottom: 8 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.purple }], children: "\u{1F4B3} Business Line of Credit" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "$75,000 revolving \xB7 14% APR on drawn amount only \xB7 repay anytime" }),
-        /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { marginTop: 8, backgroundColor: T.purple, borderColor: T.purple }], onPress: handleOpenCreditLine, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Open Line of Credit" }) })
+      !game.creditLine && (game.creditScore || 600) >= 680 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.purple, borderWidth: 1, marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.purple }], children: "\u{1F4B3} Business Line of Credit" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "$75,000 revolving \xB7 14% APR on drawn amount only \xB7 repay anytime" }),
+        /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { marginTop: 8, backgroundColor: T.purple, borderColor: T.purple }], onPress: handleOpenCreditLine, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Open Line of Credit" }) })
       ] }),
-      game.creditLine && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.purple, borderWidth: 1.5, marginBottom: 8 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, { color: T.purple }], children: "\u{1F4B3} Line of Credit" }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Drawn" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.red }], children: money2(game.creditLine.drawn || 0) })
+      game.creditLine && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.purple, borderWidth: 1.5, marginBottom: 8 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, { color: T.purple }], children: "\u{1F4B3} Line of Credit" }),
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Drawn" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.red }], children: money2(game.creditLine.drawn || 0) })
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Available" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.green }], children: money2((game.creditLine.limit || 75e3) - (game.creditLine.drawn || 0)) })
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Available" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.green }], children: money2((game.creditLine.limit || 75e3) - (game.creditLine.drawn || 0)) })
         ] }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: (game.creditLine.drawn || 0) > 0 ? `Interest: ~${money2(Math.round((game.creditLine.drawn || 0) * 0.14 / 365))}/day` : "No interest until you draw funds." }),
-        /* @__PURE__ */ jsx(TextInput, { style: [styles.input, col, { marginBottom: 8 }], value: creditLineAmt, onChangeText: setCreditLineAmt, keyboardType: "numeric", placeholder: "Amount to draw or repay", placeholderTextColor: T.sub }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8 }, children: [
-          /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.smallBtn, { flex: 1, borderWidth: 1, borderColor: T.purple }], onPress: () => {
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }], children: (game.creditLine.drawn || 0) > 0 ? `Interest: ~${money2(Math.round((game.creditLine.drawn || 0) * 0.14 / 365))}/day` : "No interest until you draw funds." }),
+        /* @__PURE__ */ jsx2(TextInput, { style: [styles2.input, col, { marginBottom: 8 }], value: creditLineAmt, onChangeText: setCreditLineAmt, keyboardType: "numeric", placeholder: "Amount to draw or repay", placeholderTextColor: T.sub }),
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8 }, children: [
+          /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.smallBtn, { flex: 1, borderWidth: 1, borderColor: T.purple }], onPress: () => {
             handleDrawCreditLine(parseInt(creditLineAmt) || 0);
             setCreditLineAmt("");
-          }, children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.purple }], children: "Draw Funds" }) }),
-          /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.smallBtn, { flex: 1, borderWidth: 1, borderColor: T.green }], onPress: () => {
+          }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.purple }], children: "Draw Funds" }) }),
+          /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.smallBtn, { flex: 1, borderWidth: 1, borderColor: T.green }], onPress: () => {
             handleRepayCreditLine(parseInt(creditLineAmt) || 0);
             setCreditLineAmt("");
-          }, children: /* @__PURE__ */ jsx(Text, { style: [styles.smallBtnText, { color: T.green }], children: "Repay" }) })
+          }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.smallBtnText, { color: T.green }], children: "Repay" }) })
         ] })
       ] }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Available Financing" }),
-      loanOffers.map((product) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: product.label }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.green }], children: money2(product.principal) })
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Available Financing" }),
+      loanOffers.map((product) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: product.label }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.green }], children: money2(product.principal) })
         ] }),
-        product.eligible ? /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        product.eligible ? /* @__PURE__ */ jsxs2(Fragment, { children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
             product.apr,
             "% APR \xB7 ",
             product.weeks,
@@ -12051,24 +12193,24 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             "/week \xB7 Total ",
             money2(product._offer.totalRepayment)
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontSize: 10, marginTop: 3 }], children: product._offer.approvalReason }),
-          product.collateralRequired && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange, fontSize: 10, marginTop: 2 }], children: "Secured financing \xB7 collateral required" })
-        ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red }], children: "Not currently eligible" }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { fontSize: 10, marginTop: 3 }], children: product.declineReasons[0] || `Needs ${product.minCredit}+ credit score.` })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontSize: 10, marginTop: 3 }], children: product._offer.approvalReason }),
+          product.collateralRequired && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 10, marginTop: 2 }], children: "Secured financing \xB7 collateral required" })
+        ] }) : /* @__PURE__ */ jsxs2(Fragment, { children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red }], children: "Not currently eligible" }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { fontSize: 10, marginTop: 3 }], children: product.declineReasons[0] || `Needs ${product.minCredit}+ credit score.` })
         ] }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, backgroundColor: product.eligible ? T.blue : T.panel2, borderColor: product.eligible ? T.blue : T.border }],
+            style: [styles2.btn, { marginTop: 8, backgroundColor: product.eligible ? T.blue : T.panel2, borderColor: product.eligible ? T.blue : T.border }],
             onPress: () => handleTakeLoan(product),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: product.eligible ? "#fff" : T.sub }], children: product.eligible ? "Accept Financing" : "View Requirements" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: product.eligible ? "#fff" : T.sub }], children: product.eligible ? "Accept Financing" : "View Requirements" })
           }
         )
       ] }, product.id)),
-      loanOffers.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }], children: "No lender will underwrite you yet. Credit score rises when you finish contracts on time and stay out of overdraft \u2014 the first loan products unlock as it climbs." }),
-      /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 10 }], children: [
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col], children: [
+      loanOffers.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", paddingVertical: 16 }], children: "No lender will underwrite you yet. Credit score rises when you finish contracts on time and stay out of overdraft \u2014 the first loan products unlock as it climbs." }),
+      /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border, marginBottom: 10 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col], children: [
           "Reputation: ",
           game.reputation,
           " \u2014 ",
@@ -12076,29 +12218,29 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           " ",
           repTier.label
         ] }),
-        /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 6, height: 8 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.min(100, game.reputation)}%`, backgroundColor: T.purple, height: 8 }] }) }),
+        /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 6, height: 8 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.min(100, game.reputation)}%`, backgroundColor: T.purple, height: 8 }] }) }),
         [
           { threshold: 20, effect: "Unlock residential contracts" },
           { threshold: 40, effect: "Better loan terms, more contract variety" },
           { threshold: 60, effect: "Commercial mega-contracts unlock" },
           { threshold: 80, effect: "Stadium contract available" },
           { threshold: 95, effect: "WildBear City Plaza unlocked" }
-        ].map((r) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }, children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: game.reputation >= r.threshold ? T.green : T.sub }], children: [
+        ].map((r) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: game.reputation >= r.threshold ? T.green : T.sub }], children: [
             game.reputation >= r.threshold ? "\u2705" : "\u25CB",
             " Rep ",
             r.threshold
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: game.reputation >= r.threshold ? T.green : T.sub }], children: r.effect })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: game.reputation >= r.threshold ? T.green : T.sub }], children: r.effect })
         ] }, r.threshold))
       ] }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Materials Inventory" }),
-      /* @__PURE__ */ jsx(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: MATERIAL_DEFS.map((m) => /* @__PURE__ */ jsxs(View, { style: [styles.finRow, { borderBottomColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 5 }, children: [
-          /* @__PURE__ */ jsx(Ionicons, { name: m.icon, size: 13, color: T.text }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, col], children: m.label })
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Materials Inventory" }),
+      /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: MATERIAL_DEFS.map((m) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.finRow, { borderBottomColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 5 }, children: [
+          /* @__PURE__ */ jsx2(Ionicons, { name: m.icon, size: 13, color: T.text }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, col], children: m.label })
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
           game.materials[m.id] || 0,
           " ",
           m.unit,
@@ -12108,14 +12250,14 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           m.unit
         ] })
       ] }, m.id)) }),
-      /* @__PURE__ */ jsxs(View, { style: { marginTop: 18, marginBottom: 18 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Insurance Coverage" }),
+      /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 18, marginBottom: 18 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Insurance Coverage" }),
         (() => {
           const activePlan = INSURANCE_PLANS.find((p) => p.id === (game.insurancePlanId || "none"));
-          return /* @__PURE__ */ jsxs(Fragment, { children: [
-            !activePlan || game.insurancePlanId === "none" ? /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.red + "22", borderColor: T.red, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10 }, children: /* @__PURE__ */ jsx(Text, { style: { color: T.red, fontWeight: "bold", fontSize: 13 }, children: "\u26A0 No insurance \u2014 accidents are 100% your cost" }) }) : /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.cyan + "18", borderColor: T.cyan, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan }], children: activePlan.label }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+          return /* @__PURE__ */ jsxs2(Fragment, { children: [
+            !activePlan || game.insurancePlanId === "none" ? /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.red + "22", borderColor: T.red, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10 }, children: /* @__PURE__ */ jsx2(Text2, { style: { color: T.red, fontWeight: "bold", fontSize: 13 }, children: "\u26A0 No insurance \u2014 accidents are 100% your cost" }) }) : /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.cyan + "18", borderColor: T.cyan, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.cyan }], children: activePlan.label }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 "Coverage: ",
                 Math.round(activePlan.coverage * 100),
                 "%  \xB7  Deductible: ",
@@ -12127,17 +12269,17 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             ] }),
             INSURANCE_PLANS.map((plan) => {
               const isActive = plan.id === (game.insurancePlanId || "none");
-              return /* @__PURE__ */ jsxs(TouchableOpacity, { onPress: () => handleBuyInsurance(plan.id), style: { backgroundColor: isActive ? T.cyan + "22" : T.panel, borderColor: isActive ? T.cyan : T.border, borderWidth: isActive ? 1.5 : 1, borderRadius: 8, padding: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: { color: isActive ? T.cyan : T.text, fontWeight: "bold", fontSize: 13 }, children: [
+              return /* @__PURE__ */ jsxs2(TouchableOpacity2, { onPress: () => handleBuyInsurance(plan.id), style: { backgroundColor: isActive ? T.cyan + "22" : T.panel, borderColor: isActive ? T.cyan : T.border, borderWidth: isActive ? 1.5 : 1, borderRadius: 8, padding: 11, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: { color: isActive ? T.cyan : T.text, fontWeight: "bold", fontSize: 13 }, children: [
                     plan.label,
                     isActive ? "  \u2713" : ""
                   ] }),
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: plan.desc })
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: plan.desc })
                 ] }),
-                /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end", marginLeft: 10 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: { color: isActive ? T.cyan : T.text, fontWeight: "600", fontSize: 12 }, children: plan.monthlyPremium > 0 ? money2(plan.monthlyPremium) + "/mo" : "Free" }),
-                  plan.id !== "none" && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end", marginLeft: 10 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: { color: isActive ? T.cyan : T.text, fontWeight: "600", fontSize: 12 }, children: plan.monthlyPremium > 0 ? money2(plan.monthlyPremium) + "/mo" : "Free" }),
+                  plan.id !== "none" && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                     Math.round(plan.coverage * 100),
                     "% cov \xB7 ",
                     money2(plan.deductible),
@@ -12149,38 +12291,38 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           ] });
         })()
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: { marginBottom: 18 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Safety & Compliance" }),
-        /* @__PURE__ */ jsxs(View, { style: [styles.card, { marginBottom: 10 }], children: [
-          /* @__PURE__ */ jsxs(View, { style: { marginBottom: 12 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "Safety Score" }),
-              /* @__PURE__ */ jsxs(Text, { style: { fontWeight: "bold", fontSize: 13, color: (game.safetyScore ?? 0) >= 70 ? T.green : (game.safetyScore ?? 0) >= 40 ? T.orange : T.red }, children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 18 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Safety & Compliance" }),
+        /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { marginBottom: 10 }], children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 12 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "Safety Score" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: { fontWeight: "bold", fontSize: 13, color: (game.safetyScore ?? 0) >= 70 ? T.green : (game.safetyScore ?? 0) >= 40 ? T.orange : T.red }, children: [
                 game.safetyScore ?? 0,
                 "/100"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: { height: 8, backgroundColor: T.track, borderRadius: 4, overflow: "hidden" }, children: /* @__PURE__ */ jsx(View, { style: { height: 8, borderRadius: 4, width: `${Math.min(game.safetyScore ?? 0, 100)}%`, backgroundColor: (game.safetyScore ?? 0) >= 70 ? T.green : (game.safetyScore ?? 0) >= 40 ? T.orange : T.red } }) })
+            /* @__PURE__ */ jsx2(View2, { style: { height: 8, backgroundColor: T.track, borderRadius: 4, overflow: "hidden" }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 8, borderRadius: 4, width: `${Math.min(game.safetyScore ?? 0, 100)}%`, backgroundColor: (game.safetyScore ?? 0) >= 70 ? T.green : (game.safetyScore ?? 0) >= 40 ? T.orange : T.red } }) })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { marginBottom: 12 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "Compliance Score" }),
-              /* @__PURE__ */ jsxs(Text, { style: { fontWeight: "bold", fontSize: 13, color: (game.complianceScore ?? 0) >= 60 ? T.blue : (game.complianceScore ?? 0) >= 40 ? T.orange : T.red }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 12 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "Compliance Score" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: { fontWeight: "bold", fontSize: 13, color: (game.complianceScore ?? 0) >= 60 ? T.blue : (game.complianceScore ?? 0) >= 40 ? T.orange : T.red }, children: [
                 game.complianceScore ?? 0,
                 "/100"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: { height: 8, backgroundColor: T.track, borderRadius: 4, overflow: "hidden" }, children: /* @__PURE__ */ jsx(View, { style: { height: 8, borderRadius: 4, width: `${Math.min(game.complianceScore ?? 0, 100)}%`, backgroundColor: (game.complianceScore ?? 0) >= 60 ? T.blue : (game.complianceScore ?? 0) >= 40 ? T.orange : T.red } }) })
+            /* @__PURE__ */ jsx2(View2, { style: { height: 8, backgroundColor: T.track, borderRadius: 4, overflow: "hidden" }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 8, borderRadius: 4, width: `${Math.min(game.complianceScore ?? 0, 100)}%`, backgroundColor: (game.complianceScore ?? 0) >= 60 ? T.blue : (game.complianceScore ?? 0) >= 40 ? T.orange : T.red } }) })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "Safety Violations" }),
-            /* @__PURE__ */ jsx(Text, { style: { fontWeight: "bold", fontSize: 13, color: (game.safetyViolations ?? 0) > 0 ? T.red : T.green }, children: game.safetyViolations ?? 0 })
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "Safety Violations" }),
+            /* @__PURE__ */ jsx2(Text2, { style: { fontWeight: "bold", fontSize: 13, color: (game.safetyViolations ?? 0) > 0 ? T.red : T.green }, children: game.safetyViolations ?? 0 })
           ] }),
-          game.incidentHistory && game.incidentHistory.length > 0 && /* @__PURE__ */ jsxs(View, { style: { marginBottom: 10 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, marginBottom: 4 }], children: "Recent Incidents" }),
-            [...game.incidentHistory].slice(-3).reverse().map((inc, i) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 4, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: T.border }, children: [
-              /* @__PURE__ */ jsx(Text, { style: { color: inc.severity === 0 ? T.green : T.red, marginRight: 6, fontSize: 12 }, children: inc.severity === 0 ? "\u2713" : "\u26A0" }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol, { flex: 1 }], children: [
+          game.incidentHistory && game.incidentHistory.length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 10 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, marginBottom: 4 }], children: "Recent Incidents" }),
+            [...game.incidentHistory].slice(-3).reverse().map((inc, i) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 4, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: T.border }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: { color: inc.severity === 0 ? T.green : T.red, marginRight: 6, fontSize: 12 }, children: inc.severity === 0 ? "\u2713" : "\u26A0" }),
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol, { flex: 1 }], children: [
                 inc.desc,
                 " (Day ",
                 inc.day,
@@ -12188,47 +12330,47 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
               ] })
             ] }, i))
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8 }, children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontStyle: "italic" }], children: "Higher scores unlock Government contracts and better workers" }) })
+          /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.panel2, borderRadius: 6, padding: 8 }, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontStyle: "italic" }], children: "Higher scores unlock Government contracts and better workers" }) })
         ] })
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: { marginBottom: 18 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col], children: "Performance History" }),
-        !game.economicHistory || game.economicHistory.length < 2 ? /* @__PURE__ */ jsx(View, { style: [styles.card, { alignItems: "center", paddingVertical: 18 }], children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontStyle: "italic", textAlign: "center" }], children: "Tracking begins after first week of operations" }) }) : /* @__PURE__ */ jsxs(View, { style: [styles.card, { padding: 0, overflow: "hidden" }], children: [
-          /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", backgroundColor: T.panel2, paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: T.border }, children: ["Week", "Revenue", "Expenses", "Profit", "Rep"].map((h, i) => /* @__PURE__ */ jsx(Text, { style: [styles.sub, { flex: i === 0 ? 0.6 : 1, color: T.sub, fontWeight: "700", fontSize: 11, textAlign: i === 0 ? "left" : "right" }], children: h }, h)) }),
+      /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 18 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col], children: "Performance History" }),
+        !game.economicHistory || game.economicHistory.length < 2 ? /* @__PURE__ */ jsx2(View2, { style: [styles2.card, { alignItems: "center", paddingVertical: 18 }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontStyle: "italic", textAlign: "center" }], children: "Tracking begins after first week of operations" }) }) : /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { padding: 0, overflow: "hidden" }], children: [
+          /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", backgroundColor: T.panel2, paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: T.border }, children: ["Week", "Revenue", "Expenses", "Profit", "Rep"].map((h, i) => /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { flex: i === 0 ? 0.6 : 1, color: T.sub, fontWeight: "700", fontSize: 11, textAlign: i === 0 ? "left" : "right" }], children: h }, h)) }),
           (() => {
             const history = [...game.economicHistory].slice(-8).reverse();
             const maxAbsProfit = Math.max(1, ...history.map((r) => Math.abs(r.profit ?? 0)));
-            return history.map((row, i) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: i < Math.min((game.economicHistory || []).length, 8) - 1 ? 1 : 0, borderBottomColor: T.border, backgroundColor: i % 2 === 0 ? "transparent" : T.panel2 + "55" }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { flex: 0.6, color: T.sub, fontSize: 11 }], children: [
+            return history.map((row, i) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", paddingVertical: 7, paddingHorizontal: 10, borderBottomWidth: i < Math.min((game.economicHistory || []).length, 8) - 1 ? 1 : 0, borderBottomColor: T.border, backgroundColor: i % 2 === 0 ? "transparent" : T.panel2 + "55" }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { flex: 0.6, color: T.sub, fontSize: 11 }], children: [
                 "W",
                 row.week
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { flex: 1, color: T.text, fontSize: 11, textAlign: "right" }], children: money2(row.revenue) }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { flex: 1, color: T.text, fontSize: 11, textAlign: "right" }], children: money2(row.expenses) }),
-              /* @__PURE__ */ jsxs(View, { style: { flex: 1, alignItems: "flex-end" }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, { fontSize: 11, fontWeight: "700", color: (row.profit ?? 0) >= 0 ? T.green : T.red }], children: money2(row.profit) }),
-                /* @__PURE__ */ jsx(View, { style: { height: 2, width: `${Math.round(Math.abs(row.profit ?? 0) / maxAbsProfit * 100)}%`, backgroundColor: (row.profit ?? 0) >= 0 ? T.green : T.red, borderRadius: 1, marginTop: 2 } })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { flex: 1, color: T.text, fontSize: 11, textAlign: "right" }], children: money2(row.revenue) }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { flex: 1, color: T.text, fontSize: 11, textAlign: "right" }], children: money2(row.expenses) }),
+              /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, alignItems: "flex-end" }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { fontSize: 11, fontWeight: "700", color: (row.profit ?? 0) >= 0 ? T.green : T.red }], children: money2(row.profit) }),
+                /* @__PURE__ */ jsx2(View2, { style: { height: 2, width: `${Math.round(Math.abs(row.profit ?? 0) / maxAbsProfit * 100)}%`, backgroundColor: (row.profit ?? 0) >= 0 ? T.green : T.red, borderRadius: 1, marginTop: 2 } })
               ] }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { flex: 1, color: T.sub, fontSize: 11, textAlign: "right" }], children: row.reputation ?? "\u2014" })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { flex: 1, color: T.sub, fontSize: 11, textAlign: "right" }], children: row.reputation ?? "\u2014" })
             ] }, i));
           })()
         ] })
       ] })
     ] });
   }
-  return /* @__PURE__ */ jsxs(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: [
-    /* @__PURE__ */ jsx(StatusBar, { barStyle: theme === "dark" ? "light-content" : "dark-content", backgroundColor: T.bg }),
-    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, backgroundColor: T.panel, borderBottomColor: T.border }, children: [
-      onBackToHub && /* @__PURE__ */ jsx(TouchableOpacity, { onPress: onBackToHub, style: { flexDirection: "row", alignItems: "center", paddingRight: 12 }, children: /* @__PURE__ */ jsx(Text, { style: { color: T.sub, fontSize: 13, fontWeight: "600" }, children: "\u2039 Hub" }) }),
-      /* @__PURE__ */ jsx(Text, { style: { flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }, children: "ConstructionFlow" }),
-      /* @__PURE__ */ jsx(View, { style: { backgroundColor: (game.cash >= 0 ? T.green : T.red) + "22", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }, children: /* @__PURE__ */ jsx(Text, { style: { color: game.cash >= 0 ? T.green : T.red, fontSize: 12, fontWeight: "700" }, children: money2(game.cash) }) })
+  return /* @__PURE__ */ jsxs2(SafeAreaView, { style: { flex: 1, backgroundColor: T.bg }, children: [
+    /* @__PURE__ */ jsx2(StatusBar, { barStyle: theme === "dark" ? "light-content" : "dark-content", backgroundColor: T.bg }),
+    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, backgroundColor: T.panel, borderBottomColor: T.border }, children: [
+      onBackToHub && /* @__PURE__ */ jsx2(TouchableOpacity2, { onPress: onBackToHub, style: { flexDirection: "row", alignItems: "center", paddingRight: 12 }, children: /* @__PURE__ */ jsx2(Text2, { style: { color: T.sub, fontSize: 13, fontWeight: "600" }, children: "\u2039 Hub" }) }),
+      /* @__PURE__ */ jsx2(Text2, { style: { flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }, children: "ConstructionFlow" }),
+      /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: (game.cash >= 0 ? T.green : T.red) + "22", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }, children: /* @__PURE__ */ jsx2(Text2, { style: { color: game.cash >= 0 ? T.green : T.red, fontSize: 12, fontWeight: "700" }, children: money2(game.cash) }) })
     ] }),
-    game.pendingCelebration && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 24, alignItems: "center", borderColor: game.pendingCelebration.isOnTime ? T.green : T.orange, borderWidth: 2 }], children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 48, marginBottom: 8 }, children: game.pendingCelebration.isMajor ? "\u{1F3C6}" : game.pendingCelebration.isOnTime ? "\u2705" : "\u2714\uFE0F" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.h2, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingCelebration.isMajor ? "MAJOR CONTRACT COMPLETE!" : "Job Complete!" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: game.pendingCelebration.label }),
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }, children: money2(game.pendingCelebration.earned) }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: [
+    game.pendingCelebration && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 24, alignItems: "center", borderColor: game.pendingCelebration.isOnTime ? T.green : T.orange, borderWidth: 2 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 48, marginBottom: 8 }, children: game.pendingCelebration.isMajor ? "\u{1F3C6}" : game.pendingCelebration.isOnTime ? "\u2705" : "\u2714\uFE0F" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingCelebration.isMajor ? "MAJOR CONTRACT COMPLETE!" : "Job Complete!" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: game.pendingCelebration.label }),
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }, children: money2(game.pendingCelebration.earned) }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: [
         "paid by ",
         game.pendingCelebration.client
       ] }),
@@ -12236,106 +12378,106 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         const ec = game.pendingCelebration.economics;
         const profitable = ec.netProfit >= 0;
         const toneColor = { positive: T.green, negative: T.red, neutral: T.text };
-        return /* @__PURE__ */ jsxs(View, { style: { width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }, children: [
-          /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }, children: "WHAT THIS JOB MADE" }),
-          buildProjectProfitLines(ec, money2).map((line, i) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, flex: 1 }], numberOfLines: 1, children: line.label }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: toneColor[line.tone] || T.text, fontWeight: "700" }], children: line.value })
+        return /* @__PURE__ */ jsxs2(View2, { style: { width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }, children: "WHAT THIS JOB MADE" }),
+          buildProjectProfitLines(ec, money2).map((line, i) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, flex: 1 }], numberOfLines: 1, children: line.label }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: toneColor[line.tone] || T.text, fontWeight: "700" }], children: line.value })
           ] }, i)),
-          /* @__PURE__ */ jsx(View, { style: { height: 1, backgroundColor: T.border, marginVertical: 8 } }),
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: "Net profit" }),
-            /* @__PURE__ */ jsxs(Text, { style: { color: profitable ? T.green : T.red, fontSize: 20, fontWeight: "900" }, children: [
+          /* @__PURE__ */ jsx2(View2, { style: { height: 1, backgroundColor: T.border, marginVertical: 8 } }),
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: "Net profit" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: { color: profitable ? T.green : T.red, fontSize: 20, fontWeight: "900" }, children: [
               profitable ? "" : "\u2212",
               money2(Math.abs(ec.netProfit))
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 2 }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 11, marginTop: 2 }], children: [
             ec.marginPercent,
             "% margin",
             ec.depositPaid > 0 ? ` \xB7 ${money2(ec.depositPaid)} of this arrived as the deposit at mobilisation` : ""
           ] }),
-          game.pendingCelebration.costsPartial && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange, fontSize: 11, marginTop: 6 }], children: "\u26A0 This job was already running before cost tracking started \u2014 the costs above cover only part of it." }),
-          game.pendingCelebration.isFirstProject && /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 11, marginTop: 8, fontStyle: "italic" }], children: OVERHEAD_NOTE }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.cyan, fontSize: 12, marginTop: 8 }], children: getProjectReinvestmentHint(ec.netProfit) })
+          game.pendingCelebration.costsPartial && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange, fontSize: 11, marginTop: 6 }], children: "\u26A0 This job was already running before cost tracking started \u2014 the costs above cover only part of it." }),
+          game.pendingCelebration.isFirstProject && /* @__PURE__ */ jsxs2(Fragment, { children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 11, marginTop: 8, fontStyle: "italic" }], children: OVERHEAD_NOTE }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 12, marginTop: 8 }], children: getProjectReinvestmentHint(ec.netProfit) })
           ] })
         ] });
       })(),
-      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 12, marginBottom: 16 }, children: [
-        game.pendingCelebration.isOnTime && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.green + "22" }], children: /* @__PURE__ */ jsx(Text, { style: [styles.statusPillText, { color: T.green }], children: "\u2705 On Time" }) }),
-        game.pendingCelebration.repGained > 0 && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.purple + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: T.purple }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 12, marginBottom: 16 }, children: [
+        game.pendingCelebration.isOnTime && /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.green + "22" }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.statusPillText, { color: T.green }], children: "\u2705 On Time" }) }),
+        game.pendingCelebration.repGained > 0 && /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.purple + "22" }], children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.statusPillText, { color: T.purple }], children: [
           "+",
           game.pendingCelebration.repGained,
           " Rep"
         ] }) }),
-        game.pendingCelebration.qualityBonus > 0 && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.cyan + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: T.cyan }], children: [
+        game.pendingCelebration.qualityBonus > 0 && /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.cyan + "22" }], children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.statusPillText, { color: T.cyan }], children: [
           "\u2B50 Quality +",
           money2(game.pendingCelebration.qualityBonus)
         ] }) }),
-        game.pendingCelebration.penalty > 0 && /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.red + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: T.red }], children: [
+        game.pendingCelebration.penalty > 0 && /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.red + "22" }], children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.statusPillText, { color: T.red }], children: [
           "\u26A0 ",
           money2(game.pendingCelebration.penalty),
           " penalty"
         ] }) })
       ] }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { backgroundColor: T.green, borderColor: T.green, width: "100%" }],
+          style: [styles2.btn, { backgroundColor: T.green, borderColor: T.green, width: "100%" }],
           onPress: () => update((g) => {
             g.pendingCelebration = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Continue" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Continue" })
         }
       )
     ] }) }) }),
-    game.pendingDecision && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T[game.pendingDecision.tone] || T.border, borderWidth: 2 }], children: [
-      /* @__PURE__ */ jsx(Text, { style: [col, { fontSize: 28, textAlign: "center", marginBottom: 8 }], children: game.pendingDecision.title }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.body, col, { textAlign: "center", marginBottom: 16 }], children: game.pendingDecision.desc }),
-      (game.pendingDecision.options || []).map((opt, i) => /* @__PURE__ */ jsxs(
-        TouchableOpacity,
+    game.pendingDecision && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T[game.pendingDecision.tone] || T.border, borderWidth: 2 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [col, { fontSize: 28, textAlign: "center", marginBottom: 8 }], children: game.pendingDecision.title }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.body, col, { textAlign: "center", marginBottom: 16 }], children: game.pendingDecision.desc }),
+      (game.pendingDecision.options || []).map((opt, i) => /* @__PURE__ */ jsxs2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 8, backgroundColor: i === 0 ? T[game.pendingDecision.tone] || T.blue : T.panel2, borderColor: i === 0 ? T[game.pendingDecision.tone] || T.blue : T.strongBorder, borderWidth: i === 0 ? 0 : 1.5 }],
+          style: [styles2.btn, { marginBottom: 8, backgroundColor: i === 0 ? T[game.pendingDecision.tone] || T.blue : T.panel2, borderColor: i === 0 ? T[game.pendingDecision.tone] || T.blue : T.strongBorder, borderWidth: i === 0 ? 0 : 1.5 }],
           onPress: () => update((g) => {
             const evtDef = DECISION_EVENTS.find((e) => e.id === g.pendingDecision?.id) || EMPLOYEE_EVENTS.find((e) => e.id === g.pendingDecision?.id);
             if (evtDef?.options?.[i]?.apply) evtDef.options[i].apply(g);
             g.pendingDecision = null;
           }),
           children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: i === 0 ? "#000" : T.text, fontWeight: "800" }], children: opt.label }),
-            opt.sub && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: i === 0 ? "rgba(0,0,0,0.65)" : T.sub, textAlign: "center", marginTop: 2 }], children: opt.sub })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: i === 0 ? "#000" : T.text, fontWeight: "800" }], children: opt.label }),
+            opt.sub && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: i === 0 ? "rgba(0,0,0,0.65)" : T.sub, textAlign: "center", marginTop: 2 }], children: opt.sub })
           ]
         },
         i
       ))
     ] }) }) }),
-    game.pendingStory && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 28, alignItems: "center", borderColor: T.yellow, borderWidth: 2 }], children: [
-      /* @__PURE__ */ jsx(Ionicons, { name: game.pendingStory.icon, size: 52, color: T.yellow, style: { marginBottom: 12 } }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.h2, col, { textAlign: "center", marginBottom: 8 }], children: game.pendingStory.title }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.body, col, { textAlign: "center", marginBottom: 20 }], children: game.pendingStory.body }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+    game.pendingStory && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 28, alignItems: "center", borderColor: T.yellow, borderWidth: 2 }], children: [
+      /* @__PURE__ */ jsx2(Ionicons, { name: game.pendingStory.icon, size: 52, color: T.yellow, style: { marginBottom: 12 } }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, col, { textAlign: "center", marginBottom: 8 }], children: game.pendingStory.title }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.body, col, { textAlign: "center", marginBottom: 20 }], children: game.pendingStory.body }),
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { backgroundColor: T.yellow, borderColor: T.yellow, width: "100%" }],
+          style: [styles2.btn, { backgroundColor: T.yellow, borderColor: T.yellow, width: "100%" }],
           onPress: () => update((g) => {
             g.pendingStory = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#000" }], children: "Noted" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#000" }], children: "Noted" })
         }
       )
     ] }) }) }),
-    game.pendingBreakdown && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T.red, borderWidth: 2 }], children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 28, textAlign: "center", marginBottom: 4 }, children: "\u{1F527} Vehicle Breakdown" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingBreakdown.equipName }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 16 }], children: [
+    game.pendingBreakdown && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T.red, borderWidth: 2 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 28, textAlign: "center", marginBottom: 4 }, children: "\u{1F527} Vehicle Breakdown" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingBreakdown.equipName }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 16 }], children: [
         "Broke down on ",
         game.pendingBreakdown.siteLabel
       ] }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 8, backgroundColor: T.green, borderColor: T.green }],
+          style: [styles2.btn, { marginBottom: 8, backgroundColor: T.green, borderColor: T.green }],
           onPress: () => update((g) => {
             const bd = g.pendingBreakdown;
             const equip = g.equipment.find((e) => e.id === bd.equipId);
@@ -12347,16 +12489,16 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             addLog2(g, `\u{1F527} ${bd.equipName} repaired for ${money2(bd.repairCost)} \u2014 back online.`);
             g.pendingBreakdown = null;
           }),
-          children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: "#000" }], children: [
+          children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: "#000" }], children: [
             "Repair On-Site \u2014 ",
             money2(game.pendingBreakdown.repairCost)
           ] })
         }
       ),
-      /* @__PURE__ */ jsxs(
-        TouchableOpacity,
+      /* @__PURE__ */ jsxs2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.orange, borderWidth: 1.5 }],
+          style: [styles2.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.orange, borderWidth: 1.5 }],
           onPress: () => update((g) => {
             const bd = g.pendingBreakdown;
             const equip = g.equipment.find((e) => e.id === bd.equipId);
@@ -12367,15 +12509,15 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             g.pendingBreakdown = null;
           }),
           children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.text }], children: "Push Through \u2014 Risk further damage" }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: "No cost \xB7 condition \u221225 \xB7 high breakdown risk" })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.text }], children: "Push Through \u2014 Risk further damage" }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: "No cost \xB7 condition \u221225 \xB7 high breakdown risk" })
           ]
         }
       ),
-      /* @__PURE__ */ jsxs(
-        TouchableOpacity,
+      /* @__PURE__ */ jsxs2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.blue, borderWidth: 1.5 }],
+          style: [styles2.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.blue, borderWidth: 1.5 }],
           onPress: () => update((g) => {
             const bd = g.pendingBreakdown;
             const equip = g.equipment.find((e) => e.id === bd.equipId);
@@ -12388,15 +12530,15 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             g.pendingBreakdown = null;
           }),
           children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.text }], children: "Delay Repair \u2014 Pull from site for later" }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: "No cost \xB7 repair later from Vehicles tab" })
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.text }], children: "Delay Repair \u2014 Pull from site for later" }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: "No cost \xB7 repair later from Vehicles tab" })
           ]
         }
       ),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 4, backgroundColor: T.panel2, borderColor: T.red }],
+          style: [styles2.btn, { marginBottom: 4, backgroundColor: T.panel2, borderColor: T.red }],
           onPress: () => update((g) => {
             const bd = g.pendingBreakdown;
             const equip = g.equipment.find((e) => e.id === bd.equipId);
@@ -12410,41 +12552,41 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             addLog2(g, `\u{1F5D1}\uFE0F ${bd.equipName} scrapped \u2014 recovered ${money2(scrapValue)}.`);
             g.pendingBreakdown = null;
           }),
-          children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: T.red }], children: [
+          children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: T.red }], children: [
             "Scrap & Replace \u2014 Recover ",
             money2(Math.round((game.equipment.find((e) => e.id === game.pendingBreakdown.equipId)?.price || 0) * 0.15 * (game.equipment.find((e) => e.id === game.pendingBreakdown.equipId)?.condition || 0) / 100))
           ] })
         }
       )
     ] }) }) }),
-    game.pendingInspection && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, {
+    game.pendingInspection && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, {
       margin: 28,
       alignItems: "center",
       borderColor: game.pendingInspection.outcome === "pass" ? T.green : game.pendingInspection.outcome === "minor" ? T.yellow : T.red,
       borderWidth: 2
     }], children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 48, marginBottom: 8 }, children: game.pendingInspection.outcome === "pass" ? "\u2705" : game.pendingInspection.outcome === "minor" ? "\u{1F50D}" : "\u274C" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.h2, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingInspection.outcome === "pass" ? "Inspection Passed!" : game.pendingInspection.outcome === "minor" ? "Minor Corrections Required" : "Major Inspection Failure" }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 8 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 48, marginBottom: 8 }, children: game.pendingInspection.outcome === "pass" ? "\u2705" : game.pendingInspection.outcome === "minor" ? "\u{1F50D}" : "\u274C" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingInspection.outcome === "pass" ? "Inspection Passed!" : game.pendingInspection.outcome === "minor" ? "Minor Corrections Required" : "Major Inspection Failure" }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.sub, textAlign: "center", marginBottom: 8 }], children: [
         game.pendingInspection.phaseName,
         " \xB7 ",
         game.pendingInspection.siteLabel
       ] }),
-      game.pendingInspection.outcome === "pass" && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, textAlign: "center", marginBottom: 12 }], children: "Work passed all checks. Reputation +2, Credit +1." }),
-      game.pendingInspection.outcome === "minor" && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.yellow, textAlign: "center", marginBottom: 12 }], children: [
+      game.pendingInspection.outcome === "pass" && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, textAlign: "center", marginBottom: 12 }], children: "Work passed all checks. Reputation +2, Credit +1." }),
+      game.pendingInspection.outcome === "minor" && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.yellow, textAlign: "center", marginBottom: 12 }], children: [
         "Remediation cost: ",
         money2(game.pendingInspection.penaltyApplied),
         ". Minor setback on next phase."
       ] }),
-      game.pendingInspection.outcome === "major" && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, textAlign: "center", marginBottom: 12 }], children: [
+      game.pendingInspection.outcome === "major" && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red, textAlign: "center", marginBottom: 12 }], children: [
         "Major defects found. Cost: ",
         money2(game.pendingInspection.penaltyApplied),
         ". Site paused. Rep -3."
       ] }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, {
+          style: [styles2.btn, {
             backgroundColor: game.pendingInspection.outcome === "pass" ? T.green : game.pendingInspection.outcome === "minor" ? T.yellow : T.red,
             borderColor: "transparent",
             width: "100%"
@@ -12452,69 +12594,69 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
           onPress: () => update((g) => {
             g.pendingInspection = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.pendingInspection.outcome === "minor" ? "#000" : "#fff" }], children: game.pendingInspection.outcome === "pass" ? "Excellent!" : "Understood" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.pendingInspection.outcome === "minor" ? "#000" : "#fff" }], children: game.pendingInspection.outcome === "pass" ? "Excellent!" : "Understood" })
         }
       )
     ] }) }) }),
-    game.pendingOfflineSummary && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center", backgroundColor: "rgba(0,0,0,0.82)" }], children: /* @__PURE__ */ jsxs(View, { style: { margin: 16, backgroundColor: T.panel, borderRadius: 20, borderWidth: 2, borderColor: T.strongBorder, overflow: "hidden" }, children: [
-      /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.green, paddingVertical: 18, alignItems: "center" }, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, marginBottom: 4 }, children: "\u{1F3D7}\uFE0F" }),
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 20, fontWeight: "900", color: "#000" }, children: "While You Were Away" }),
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 3 }, children: game.pendingOfflineSummary.elapsedDays > 0 ? `${game.pendingOfflineSummary.elapsedDays} game day${game.pendingOfflineSummary.elapsedDays !== 1 ? "s" : ""} of work continued` : "A short while passed" })
+    game.pendingOfflineSummary && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center", backgroundColor: "rgba(0,0,0,0.82)" }], children: /* @__PURE__ */ jsxs2(View2, { style: { margin: 16, backgroundColor: T.panel, borderRadius: 20, borderWidth: 2, borderColor: T.strongBorder, overflow: "hidden" }, children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.green, paddingVertical: 18, alignItems: "center" }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 32, marginBottom: 4 }, children: "\u{1F3D7}\uFE0F" }),
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 20, fontWeight: "900", color: "#000" }, children: "While You Were Away" }),
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 3 }, children: game.pendingOfflineSummary.elapsedDays > 0 ? `${game.pendingOfflineSummary.elapsedDays} game day${game.pendingOfflineSummary.elapsedDays !== 1 ? "s" : ""} of work continued` : "A short while passed" })
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: { padding: 16 }, children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "NET CASH" }),
-            /* @__PURE__ */ jsxs(Text, { style: { fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }, children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { padding: 16 }, children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 8 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "NET CASH" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: { fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }, children: [
               game.pendingOfflineSummary.cashDelta >= 0 ? "+" : "",
               money2(game.pendingOfflineSummary.cashDelta)
             ] })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: T.cyan }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "CASH NOW" }),
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashNow >= 0 ? T.cyan : T.red }, children: money2(game.pendingOfflineSummary.cashNow) })
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: T.cyan }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "CASH NOW" }),
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashNow >= 0 ? T.cyan : T.red }, children: money2(game.pendingOfflineSummary.cashNow) })
           ] })
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginBottom: 12 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.orange }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "JOBS DONE" }),
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 19, fontWeight: "800", color: T.orange }, children: game.pendingOfflineSummary.jobsDelta })
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginBottom: 12 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.orange }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "JOBS DONE" }),
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 19, fontWeight: "800", color: T.orange }, children: game.pendingOfflineSummary.jobsDelta })
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.purple }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "REP" }),
-            /* @__PURE__ */ jsxs(Text, { style: { fontSize: 19, fontWeight: "800", color: T.purple }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.purple }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "REP" }),
+            /* @__PURE__ */ jsxs2(Text2, { style: { fontSize: 19, fontWeight: "800", color: T.purple }, children: [
               game.pendingOfflineSummary.repDelta >= 0 ? "+" : "",
               game.pendingOfflineSummary.repDelta
             ] })
           ] }),
-          (game.pendingOfflineSummary.overheadPerDay || 0) > 0 && /* @__PURE__ */ jsxs(View, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.red }, children: [
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "BURN/DAY" }),
-            /* @__PURE__ */ jsx(Text, { style: { fontSize: 15, fontWeight: "800", color: T.red }, children: money2(game.pendingOfflineSummary.overheadPerDay) })
+          (game.pendingOfflineSummary.overheadPerDay || 0) > 0 && /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.red }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }, children: "BURN/DAY" }),
+            /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 15, fontWeight: "800", color: T.red }, children: money2(game.pendingOfflineSummary.overheadPerDay) })
           ] })
         ] }),
-        (game.pendingOfflineSummary.logsWhileAway || []).length > 0 && /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }, children: [
-          /* @__PURE__ */ jsx(Text, { style: { fontSize: 11, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }, children: "WHAT HAPPENED" }),
-          (game.pendingOfflineSummary.logsWhileAway || []).map((entry, i) => /* @__PURE__ */ jsx(Text, { style: { fontSize: 12, color: T.text, lineHeight: 18, marginBottom: 3 }, children: entry }, i))
+        (game.pendingOfflineSummary.logsWhileAway || []).length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 11, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }, children: "WHAT HAPPENED" }),
+          (game.pendingOfflineSummary.logsWhileAway || []).map((entry, i) => /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 12, color: T.text, lineHeight: 18, marginBottom: 3 }, children: entry }, i))
         ] }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
             style: { backgroundColor: T.green, borderRadius: 12, paddingVertical: 14, alignItems: "center" },
             onPress: () => update((g) => {
               g.pendingOfflineSummary = null;
             }),
-            children: /* @__PURE__ */ jsx(Text, { style: { fontSize: 16, fontWeight: "900", color: "#000", letterSpacing: 0.5 }, children: "Get Back to Work \u2192" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 16, fontWeight: "900", color: "#000", letterSpacing: 0.5 }, children: "Get Back to Work \u2192" })
           }
         )
       ] })
     ] }) }) }),
-    game.pendingCeremony && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 20, alignItems: "center", borderColor: T.yellow, borderWidth: 3 }], children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 56, marginBottom: 10 }, children: "\u{1F3C6}" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.h2, { color: T.yellow, textAlign: "center", marginBottom: 6 }], children: "LANDMARK PROJECT COMPLETE!" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingCeremony.label }),
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, fontWeight: "900", color: T.green, marginBottom: 4 }, children: money2(game.pendingCeremony.revenue) }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
+    game.pendingCeremony && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 20, alignItems: "center", borderColor: T.yellow, borderWidth: 3 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 56, marginBottom: 10 }, children: "\u{1F3C6}" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.h2, { color: T.yellow, textAlign: "center", marginBottom: 6 }], children: "LANDMARK PROJECT COMPLETE!" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingCeremony.label }),
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 32, fontWeight: "900", color: T.green, marginBottom: 4 }, children: money2(game.pendingCeremony.revenue) }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
         "Day ",
         game.pendingCeremony.day,
         " \xB7 ",
@@ -12523,45 +12665,45 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         game.pendingCeremony.equipmentCount,
         " equipment"
       ] }),
-      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 10, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }, children: [
-        /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.yellow + "22" }], children: /* @__PURE__ */ jsxs(Text, { style: [styles.statusPillText, { color: T.yellow }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 10, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }, children: [
+        /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.yellow + "22" }], children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.statusPillText, { color: T.yellow }], children: [
           "+",
           game.pendingCeremony.repGained,
           " Reputation"
         ] }) }),
-        /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.purple + "22" }], children: /* @__PURE__ */ jsx(Text, { style: [styles.statusPillText, { color: T.purple }], children: "Major Milestone" }) })
+        /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.purple + "22" }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.statusPillText, { color: T.purple }], children: "Major Milestone" }) })
       ] }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 16, fontStyle: "italic" }], children: [
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 16, fontStyle: "italic" }], children: [
         "A defining moment for ",
         game.companyName,
         ". This project will be remembered."
       ] }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { backgroundColor: T.yellow, borderColor: T.yellow, width: "100%" }],
+          style: [styles2.btn, { backgroundColor: T.yellow, borderColor: T.yellow, width: "100%" }],
           onPress: () => update((g) => {
             g.pendingCeremony = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#000", fontWeight: "900" }], children: "Accept the Award" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#000", fontWeight: "900" }], children: "Accept the Award" })
         }
       )
     ] }) }) }),
-    game.pendingVeteranEvent && /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs(View, { style: [styles.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T.yellow, borderWidth: 2 }], children: [
-      /* @__PURE__ */ jsx(Text, { style: { fontSize: 28, textAlign: "center", marginBottom: 8 }, children: "\u2B50 Veteran Recognition" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingVeteranEvent.workerName }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
+    game.pendingVeteranEvent && /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "slide", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "flex-end" }], children: /* @__PURE__ */ jsxs2(View2, { style: [styles2.modalCard, { margin: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: T.yellow, borderWidth: 2 }], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 28, textAlign: "center", marginBottom: 8 }, children: "\u2B50 Veteran Recognition" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { textAlign: "center", marginBottom: 4 }], children: game.pendingVeteranEvent.workerName }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
         game.pendingVeteranEvent.jobsCompleted,
         " jobs completed \xB7 Skill ",
         game.pendingVeteranEvent.skill
       ] }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.body, col, { textAlign: "center", marginBottom: 16 }], children: "One of your most experienced builders. How do you recognize their contribution?" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.body, col, { textAlign: "center", marginBottom: 16 }], children: "One of your most experienced builders. How do you recognize their contribution?" }),
       (() => {
         const _canAfford = game.cash >= game.pendingVeteranEvent.retainCost;
-        return /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        return /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginBottom: 8, backgroundColor: _canAfford ? T.green : T.panel2, borderColor: _canAfford ? T.green : T.border, opacity: _canAfford ? 1 : 0.55 }],
+            style: [styles2.btn, { marginBottom: 8, backgroundColor: _canAfford ? T.green : T.panel2, borderColor: _canAfford ? T.green : T.border, opacity: _canAfford ? 1 : 0.55 }],
             onPress: () => {
               const ev = game.pendingVeteranEvent;
               if (!_canAfford) {
@@ -12583,17 +12725,17 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
                 g.pendingVeteranEvent = null;
               });
             },
-            children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: _canAfford ? "#fff" : T.sub }], children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: _canAfford ? "#fff" : T.sub }], children: [
               "Pay Retention Bonus \u2014 ",
               money2(game.pendingVeteranEvent.retainCost)
             ] })
           }
         );
       })(),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginBottom: 8, backgroundColor: T.cyan, borderColor: T.cyan }],
+          style: [styles2.btn, { marginBottom: 8, backgroundColor: T.cyan, borderColor: T.cyan }],
           onPress: () => update((g) => {
             const ev = g.pendingVeteranEvent;
             const w = (g.crew || []).find((c) => c.id === ev.workerId);
@@ -12606,13 +12748,13 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             }
             g.pendingVeteranEvent = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Promote to Field Superintendent (+12% wage)" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Promote to Field Superintendent (+12% wage)" })
         }
       ),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { borderColor: T.sub }],
+          style: [styles2.btn, { borderColor: T.sub }],
           onPress: () => update((g) => {
             const ev = g.pendingVeteranEvent;
             const w = (g.crew || []).find((c) => c.id === ev.workerId);
@@ -12625,7 +12767,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
             }
             g.pendingVeteranEvent = null;
           }),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.sub }], children: "Graceful Farewell (+3 rep, +$500 referral)" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.sub }], children: "Graceful Farewell (+3 rep, +$500 referral)" })
         }
       )
     ] }) }) }),
@@ -12634,60 +12776,60 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
       }];
       const _shuffled = [...LEGACY_PERKS].sort(() => Math.random() - 0.5).slice(0, 3);
       const bestWorker = [...game.crew || []].sort((a, b) => (b.skill || 0) - (a.skill || 0))[0];
-      return /* @__PURE__ */ jsx(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx(View, { style: [styles.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsx(View, { style: [styles.modalCard, { borderColor: T.yellow, borderWidth: 2, maxHeight: "90%" }], children: /* @__PURE__ */ jsxs(ScrollView, { showsVerticalScrollIndicator: false, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 36, textAlign: "center", marginBottom: 4 }, children: "\u{1F451}" }),
-        /* @__PURE__ */ jsx(Text, { style: { color: T.yellow, fontWeight: "900", fontSize: 20, textAlign: "center", marginBottom: 4 }, children: "DYNASTY COMPLETE" }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.text, textAlign: "center", marginBottom: 16 }], children: [
+      return /* @__PURE__ */ jsx2(Modal, { transparent: true, animationType: "fade", visible: true, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalOverlay, { justifyContent: "center" }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalCard, { borderColor: T.yellow, borderWidth: 2, maxHeight: "90%" }], children: /* @__PURE__ */ jsxs2(ScrollView, { showsVerticalScrollIndicator: false, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 36, textAlign: "center", marginBottom: 4 }, children: "\u{1F451}" }),
+        /* @__PURE__ */ jsx2(Text2, { style: { color: T.yellow, fontWeight: "900", fontSize: 20, textAlign: "center", marginBottom: 4 }, children: "DYNASTY COMPLETE" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.text, textAlign: "center", marginBottom: 16 }], children: [
           "You built the #1 construction empire in America \u2014 debt-free, Generation ",
           game.generation || 1,
           "."
         ] }),
-        /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 16 }, children: [
           { label: "Days Played", val: `Day ${game.day}` },
           { label: "Total Revenue", val: money2(game.revenue || 0) },
           { label: "Jobs Completed", val: `${game.completedJobs || 0}` },
           { label: "Best Worker", val: bestWorker ? `${bestWorker.name} (Skill ${bestWorker.skill || 75})` : "\u2014" },
           { label: "Rivals Acquired", val: `${(game.acquiredRivals || []).length}` }
-        ].map((r) => /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: r.label }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.text, fontWeight: "700" }], children: r.val })
+        ].map((r) => /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: r.label }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.text, fontWeight: "700" }], children: r.val })
         ] }, r.label)) }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { textAlign: "center", marginBottom: 10 }], children: "Choose your Legacy Perk" }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { textAlign: "center", marginBottom: 10 }], children: "Choose your Legacy Perk" }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginBottom: 12 }], children: [
           "This bonus carries into Generation ",
           (game.generation || 1) + 1,
           " and stacks with each new dynasty."
         ] }),
-        _shuffled.map((perk) => /* @__PURE__ */ jsxs(
-          TouchableOpacity,
+        _shuffled.map((perk) => /* @__PURE__ */ jsxs2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.yellow, borderWidth: 1 }],
+            style: [styles2.btn, { marginBottom: 8, backgroundColor: T.panel2, borderColor: T.yellow, borderWidth: 1 }],
             onPress: () => {
               const next = startNewGeneration(game, perk.id);
               saveGame(next);
               setGame(next);
             },
             children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.yellow }], children: perk.label }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: perk.desc })
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.yellow }], children: perk.label }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, textAlign: "center", marginTop: 2 }], children: perk.desc })
             ]
           },
           perk.id
         )),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
             style: { paddingVertical: 12, alignItems: "center" },
             onPress: () => update((g) => {
               g._pendingPrestige = false;
               g.hallOfFame.prestigeReached = g.day;
             }),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub }], children: "Keep playing this save instead \u2192" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub }], children: "Keep playing this save instead \u2192" })
           }
         )
       ] }) }) }) });
     })(),
-    /* @__PURE__ */ jsxs(View, { style: { flex: 1, paddingBottom: Platform.select({ ios: 88, android: 76, default: 70 }) }, children: [
+    /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, paddingBottom: Platform.select({ ios: 88, android: 76, default: 70 }) }, children: [
       tab === "Home" && renderHome(),
       tab === "Bids" && renderBids(),
       tab === "Sites" && renderSites(),
@@ -12696,7 +12838,7 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
       tab === "Finance" && renderFinance(),
       tab === "Empire" && renderEmpire()
     ] }),
-    /* @__PURE__ */ jsx(View, { style: [styles.tabBar, { backgroundColor: T.tabBar, borderColor: T.border }], children: TABS.map((t) => {
+    /* @__PURE__ */ jsx2(View2, { style: [styles2.tabBar, { backgroundColor: T.tabBar, borderColor: T.border }], children: TABS.map((t) => {
       const active = tab === t;
       const badgeVal = {
         Bids: getOpenContracts(game).length,
@@ -12721,22 +12863,22 @@ Tip: assign more crew to finish faster \u2014 but watch your daily wage bill.`,
         Empire: { active: "trophy", inactive: "trophy-outline" }
       };
       const iconName = active ? TAB_ICONS[t]?.active : TAB_ICONS[t]?.inactive;
-      return /* @__PURE__ */ jsxs(TouchableOpacity, { style: styles.tabItem, onPress: () => setTab(t), activeOpacity: 0.75, children: [
-        !!badgeVal && /* @__PURE__ */ jsx(View, { style: [styles.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }], children: /* @__PURE__ */ jsx(Text, { style: styles.badgeText, children: badgeVal }) }),
-        /* @__PURE__ */ jsx(Ionicons, { name: iconName, size: 20, color: active ? T.green : T.sub }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }], children: t }),
-        active ? /* @__PURE__ */ jsx(View, { style: [styles.tabDot, { backgroundColor: T.green }] }) : /* @__PURE__ */ jsx(View, { style: [styles.tabDot, { backgroundColor: "transparent" }] })
+      return /* @__PURE__ */ jsxs2(TouchableOpacity2, { style: styles2.tabItem, onPress: () => setTab(t), activeOpacity: 0.75, children: [
+        !!badgeVal && /* @__PURE__ */ jsx2(View2, { style: [styles2.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }], children: /* @__PURE__ */ jsx2(Text2, { style: styles2.badgeText, children: badgeVal }) }),
+        /* @__PURE__ */ jsx2(Ionicons, { name: iconName, size: 20, color: active ? T.green : T.sub }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }], children: t }),
+        active ? /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: T.green }] }) : /* @__PURE__ */ jsx2(View2, { style: [styles2.tabDot, { backgroundColor: "transparent" }] })
       ] }, t);
     }) })
   ] });
 }
 var CONTRACT_CATEGORIES = ["All", "Residential", "Commercial", "Infrastructure", "Government", "Mega"];
 function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categoryFilter, onSetFilter, idleCrew, idleEquip, onStartSite, onBuyMaterials, onSetBidStyle }) {
-  const [selectedContract, setSelectedContract] = useState(null);
-  const [selectedCrewIds, setSelectedCrewIds] = useState([]);
-  const [selectedEquipIds, setSelectedEquipIds] = useState([]);
-  const [materialModal, setMaterialModal] = useState(null);
-  const [buyQty, setBuyQty] = useState("10");
+  const [selectedContract, setSelectedContract] = useState2(null);
+  const [selectedCrewIds, setSelectedCrewIds] = useState2([]);
+  const [selectedEquipIds, setSelectedEquipIds] = useState2([]);
+  const [materialModal, setMaterialModal] = useState2(null);
+  const [buyQty, setBuyQty] = useState2("10");
   const contract = selectedContract ? (game.contracts || []).find((c) => c.id === selectedContract) : null;
   const blockReason = contract ? getAssignBlockReason(contract, selectedCrewIds, selectedEquipIds, game) : null;
   function toggleCrew(id) {
@@ -12787,44 +12929,44 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
     setBuyQty(String(Math.max(1, needed - have)));
   }
   const riskColors = ["", T.green, T.cyan, T.yellow, T.orange, T.red];
-  return /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-    /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 120 }, children: [
-      /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col], children: [
+  return /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+    /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 120 }, children: [
+      /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col], children: [
         openContracts.length,
         "/",
         allOpenCount,
         " Contract",
         allOpenCount !== 1 ? "s" : ""
       ] }) }),
-      /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 10 }, children: CONTRACT_CATEGORIES.map((cat) => /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 10 }, children: CONTRACT_CATEGORIES.map((cat) => /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.chip, { marginRight: 6, color: categoryFilter === cat ? "#fff" : T.sub, borderColor: categoryFilter === cat ? T.orange : T.border, backgroundColor: categoryFilter === cat ? T.orange : T.panel2, paddingVertical: 5, paddingHorizontal: 10 }],
+          style: [styles2.chip, { marginRight: 6, color: categoryFilter === cat ? "#fff" : T.sub, borderColor: categoryFilter === cat ? T.orange : T.border, backgroundColor: categoryFilter === cat ? T.orange : T.panel2, paddingVertical: 5, paddingHorizontal: 10 }],
           onPress: () => onSetFilter(cat),
-          children: /* @__PURE__ */ jsx(Text, { style: { color: categoryFilter === cat ? "#fff" : T.sub, fontSize: 12, fontWeight: "600" }, children: cat })
+          children: /* @__PURE__ */ jsx2(Text2, { style: { color: categoryFilter === cat ? "#fff" : T.sub, fontSize: 12, fontWeight: "600" }, children: cat })
         },
         cat
       )) }),
-      openContracts.length === 0 && /* @__PURE__ */ jsxs(View, { style: { alignItems: "center", padding: 24 }, children: [
-        /* @__PURE__ */ jsx(Text, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F4CB}" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 6 }], children: categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available" }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: categoryFilter !== "All" ? `Nothing in ${categoryFilter} right now \u2014 other categories may still have work.` : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones." }),
-        categoryFilter !== "All" && /* @__PURE__ */ jsx(
-          TouchableOpacity,
+      openContracts.length === 0 && /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "center", padding: 24 }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 32, marginBottom: 8 }, children: "\u{1F4CB}" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.sub, textAlign: "center", marginBottom: 6 }], children: categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available" }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: categoryFilter !== "All" ? `Nothing in ${categoryFilter} right now \u2014 other categories may still have work.` : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones." }),
+        categoryFilter !== "All" && /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { backgroundColor: T.orange, borderColor: T.orange }],
+            style: [styles2.btn, { backgroundColor: T.orange, borderColor: T.orange }],
             onPress: () => onSetFilter("All"),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Show All Contracts" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Show All Contracts" })
           }
         )
       ] }),
       openContracts.map((c) => {
         const isSelected = selectedContract === c.id;
         const def = CONTRACT_DEFS.find((d) => d.id === c.defId);
-        return /* @__PURE__ */ jsxs(
-          TouchableOpacity,
+        return /* @__PURE__ */ jsxs2(
+          TouchableOpacity2,
           {
-            style: [styles.card, {
+            style: [styles2.card, {
               backgroundColor: T.panel,
               borderColor: isSelected ? T.orange : T.border,
               borderWidth: isSelected ? 2 : 1
@@ -12836,13 +12978,13 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
             },
             activeOpacity: 0.8,
             children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flex: 1, marginRight: 8 }, children: [
-                  /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }, children: [
-                    /* @__PURE__ */ jsx(Text, { style: [styles.label, col], numberOfLines: 1, children: c.label }),
-                    /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, color: T.purple, borderWidth: 1, borderColor: T.purple, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: c.category || "Commercial" })
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flex: 1, marginRight: 8 }, children: [
+                  /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }, children: [
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], numberOfLines: 1, children: c.label }),
+                    /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, color: T.purple, borderWidth: 1, borderColor: T.purple, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }, children: c.category || "Commercial" })
                   ] }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                     c.client,
                     (() => {
                       const bidCity = CITIES.find((ct) => ct.id === (c.cityId || "salem"));
@@ -12850,50 +12992,50 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                       return bidCity ? ` \xB7 ${bidCity.name}${isHome ? " \u{1F3E0}" : ""}` : "";
                     })()
                   ] }),
-                  /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 2, marginTop: 4 }, children: c.phases.map((ph, i) => {
+                  /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 2, marginTop: 4 }, children: c.phases.map((ph, i) => {
                     const pv = PHASE_VISUALS[ph] || { emoji: "\u{1F3D7}\uFE0F" };
-                    return /* @__PURE__ */ jsx(Text, { style: { fontSize: 12 }, children: pv.emoji }, i);
+                    return /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 12 }, children: pv.emoji }, i);
                   }) })
                 ] }),
-                /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.green }], children: money2(c.value) }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub }], children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.green }], children: money2(c.value) }),
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub }], children: [
                     money2(Math.round(c.value / Math.max(1, c.durationDays))),
                     "/day"
                   ] }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: riskColors[c.risk] || T.sub }], children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: riskColors[c.risk] || T.sub }], children: [
                     "Risk: ",
                     "\u25CF".repeat(c.risk),
                     "\u25CB".repeat(5 - c.risk)
                   ] })
                 ] })
               ] }),
-              c.isWeeklyRush && /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.yellow + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 6, borderWidth: 1, borderColor: T.yellow }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.yellow, fontWeight: "700", fontSize: 10 }], children: [
+              c.isWeeklyRush && /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.yellow + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 6, borderWidth: 1, borderColor: T.yellow }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.yellow, fontWeight: "700", fontSize: 10 }], children: [
                 "\u26A1 WEEKEND RUSH \u2014 2\xD7 Pay \xB7 Expires Day ",
                 c.expiresDay
               ] }) }),
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" }, children: [
-                /* @__PURE__ */ jsxs(Text, { style: [styles.chip, { color: T.blue, borderColor: T.blue }], children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" }, children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.chip, { color: T.blue, borderColor: T.blue }], children: [
                   "\u{1F477} Min ",
                   c.crewMin
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.chip, { color: T.orange, borderColor: T.orange }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.chip, { color: T.orange, borderColor: T.orange }], children: [
                   "\u{1F69C} Tier ",
                   c.minTier,
                   "+"
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.chip, { color: T.purple, borderColor: T.purple }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.chip, { color: T.purple, borderColor: T.purple }], children: [
                   c.durationDays,
                   "d target"
                 ] }),
-                def?.repReward > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.chip, { color: T.cyan, borderColor: T.cyan }], children: [
+                def?.repReward > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.chip, { color: T.cyan, borderColor: T.cyan }], children: [
                   "+",
                   def.repReward,
                   " rep"
                 ] }),
-                c.isChainUnlock && /* @__PURE__ */ jsx(Text, { style: [styles.chip, { color: T.yellow, borderColor: T.yellow, fontWeight: "700" }], children: "\u{1F513} Chain Unlock" })
+                c.isChainUnlock && /* @__PURE__ */ jsx2(Text2, { style: [styles2.chip, { color: T.yellow, borderColor: T.yellow, fontWeight: "700" }], children: "\u{1F513} Chain Unlock" })
               ] }),
-              c.interestedRival && c.status === "Open" && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red, fontSize: 10, marginTop: 3, fontWeight: "600" }], children: [
+              c.interestedRival && c.status === "Open" && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10, marginTop: 3, fontWeight: "600" }], children: [
                 "\u{1F525} ",
                 c.interestedRival,
                 " is also bidding \u2014 don't wait"
@@ -12903,14 +13045,14 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                 if (daysLeft > 7) return null;
                 const color = daysLeft <= 2 ? T.red : daysLeft <= 4 ? T.orange : T.yellow;
                 const pct = Math.max(0, Math.round(daysLeft / 7 * 100));
-                return /* @__PURE__ */ jsxs(View, { style: { marginTop: 4 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color, fontWeight: daysLeft <= 2 ? "700" : "400" }], children: daysLeft <= 0 ? "\u26A0 Expires today" : daysLeft === 1 ? "\u23F1 Expires tomorrow" : `\u23F1 Expires in ${daysLeft} days` }),
-                  /* @__PURE__ */ jsx(View, { style: { height: 2, backgroundColor: T.track, borderRadius: 1, marginTop: 3 }, children: /* @__PURE__ */ jsx(View, { style: { height: 2, width: `${pct}%`, backgroundColor: color, borderRadius: 1 } }) })
+                return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 4 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color, fontWeight: daysLeft <= 2 ? "700" : "400" }], children: daysLeft <= 0 ? "\u26A0 Expires today" : daysLeft === 1 ? "\u23F1 Expires tomorrow" : `\u23F1 Expires in ${daysLeft} days` }),
+                  /* @__PURE__ */ jsx2(View2, { style: { height: 2, backgroundColor: T.track, borderRadius: 1, marginTop: 3 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 2, width: `${pct}%`, backgroundColor: color, borderRadius: 1 } }) })
                 ] });
               })(),
-              c.isChainUnlock && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow, marginTop: 4, fontStyle: "italic" }], children: "Unlocked by completing a previous contract \u2014 limited time offer." }),
-              isSelected && /* @__PURE__ */ jsxs(View, { style: { marginTop: 14 }, children: [
-                /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: c.desc }),
+              c.isChainUnlock && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.yellow, marginTop: 4, fontStyle: "italic" }], children: "Unlocked by completing a previous contract \u2014 limited time offer." }),
+              isSelected && /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 14 }, children: [
+                /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: c.desc }),
                 (() => {
                   const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
                   const BID_MULT = { aggressive: 0.82, standard: 1, premium: 1.28 };
@@ -12933,38 +13075,38 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                     avgEquipmentCostPerDay: avgEquipCost
                   });
                   const estProfit = est.netProfit;
-                  return /* @__PURE__ */ jsxs(View, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }, children: [
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Contract value" }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.green, fontWeight: "700" }], children: money2(effectiveValue) })
+                  return /* @__PURE__ */ jsxs2(View2, { style: { backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }, children: [
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Contract value" }),
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.green, fontWeight: "700" }], children: money2(effectiveValue) })
                     ] }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Est. materials" }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.materials) })
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Est. materials" }),
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange }], children: money2(est.materials) })
                     ] }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                         "Est. crew wages (",
                         est.crewDays,
                         " crew-days)"
                       ] }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.labor) })
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange }], children: money2(est.labor) })
                     ] }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                         "Est. equipment (",
                         est.equipmentDays,
                         " machine-days)"
                       ] }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: money2(est.equipment) })
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange }], children: money2(est.equipment) })
                     ] }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.text, fontWeight: "700" }], children: "Est. profit" }),
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: estProfit >= 0 ? T.cyan : T.red, fontWeight: "700" }], children: money2(estProfit) })
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", paddingTop: 4, borderTopWidth: StyleSheet2.hairlineWidth, borderTopColor: T.border }, children: [
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.text, fontWeight: "700" }], children: "Est. profit" }),
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: estProfit >= 0 ? T.cyan : T.red, fontWeight: "700" }], children: money2(estProfit) })
                     ] }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: "Deadline penalty" }),
-                      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 }, children: [
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: "Deadline penalty" }),
+                      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
                         money2(c.penaltyPerDay),
                         "/day late"
                       ] })
@@ -12972,17 +13114,17 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                     (() => {
                       const marginPct = est.marginPercent;
                       const barColor = marginPct < 0 ? T.red : marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
-                      return /* @__PURE__ */ jsxs(View, { style: { marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }, children: [
-                        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
-                          /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 10 }], children: "Profit margin" }),
-                          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: barColor, fontSize: 10, fontWeight: "600" }], children: [
+                      return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet2.hairlineWidth, borderTopColor: T.border }, children: [
+                        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }, children: [
+                          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 10 }], children: "Profit margin" }),
+                          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: barColor, fontSize: 10, fontWeight: "600" }], children: [
                             marginPct,
                             "%"
                           ] })
                         ] }),
-                        /* @__PURE__ */ jsx(View, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx(View, { style: { height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 } }) }),
-                        marginPct < 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.red, fontSize: 10, marginTop: 4 }], children: "\u26A0 At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation." }),
-                        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }], children: [
+                        /* @__PURE__ */ jsx2(View2, { style: { height: 4, backgroundColor: T.track, borderRadius: 2 }, children: /* @__PURE__ */ jsx2(View2, { style: { height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 } }) }),
+                        marginPct < 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.red, fontSize: 10, marginTop: 4 }], children: "\u26A0 At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation." }),
+                        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }], children: [
                           "Estimate assumes ",
                           c.durationDays,
                           "d at minimum crew. Delays, weather and repairs come out of this margin."
@@ -12991,16 +13133,16 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                     })()
                   ] });
                 })(),
-                Object.keys(c.materials || {}).length > 0 && /* @__PURE__ */ jsxs(View, { style: { marginBottom: 10 }, children: [
-                  /* @__PURE__ */ jsx(Text, { style: [styles.label, col, { marginBottom: 4 }], children: "Materials Needed" }),
+                Object.keys(c.materials || {}).length > 0 && /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 10 }, children: [
+                  /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: "Materials Needed" }),
                   Object.entries(c.materials).map(([matId, needed]) => {
                     const have = game.materials[matId] || 0;
                     const mat = MATERIAL_DEFS.find((m) => m.id === matId);
                     const ok = have >= needed;
-                    return /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
-                      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 3 }, children: [
-                        mat?.icon && /* @__PURE__ */ jsx(Ionicons, { name: mat.icon, size: 11, color: ok ? T.green : T.red }),
-                        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: ok ? T.green : T.red }], children: [
+                    return /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }, children: [
+                      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 3 }, children: [
+                        mat?.icon && /* @__PURE__ */ jsx2(Ionicons, { name: mat.icon, size: 11, color: ok ? T.green : T.red }),
+                        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: ok ? T.green : T.red }], children: [
                           mat?.label,
                           ": ",
                           have,
@@ -13010,39 +13152,39 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                           mat?.unit
                         ] })
                       ] }),
-                      !ok && /* @__PURE__ */ jsx(
-                        TouchableOpacity,
+                      !ok && /* @__PURE__ */ jsx2(
+                        TouchableOpacity2,
                         {
-                          style: [styles.smallBtn, { backgroundColor: T.orange }],
+                          style: [styles2.smallBtn, { backgroundColor: T.orange }],
                           onPress: () => openBuyModal(matId),
-                          children: /* @__PURE__ */ jsx(Text, { style: styles.smallBtnText, children: "Buy" })
+                          children: /* @__PURE__ */ jsx2(Text2, { style: styles2.smallBtnText, children: "Buy" })
                         }
                       )
                     ] }, matId);
                   })
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.label, col, { marginBottom: 4 }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col, { marginBottom: 4 }], children: [
                   "Assign Crew (",
                   selectedCrewIds.length,
                   " selected, need ",
                   c.crewMin,
                   ")"
                 ] }),
-                idleCrew.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: "No idle crew available \u2014 hire more in the Crew tab." }),
+                idleCrew.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange }], children: "No idle crew available \u2014 hire more in the Crew tab." }),
                 idleCrew.map((w) => {
                   const sel = selectedCrewIds.includes(w.id);
-                  return /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                  return /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
-                      style: [styles.rowItem, { backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : T.border }],
+                      style: [styles2.rowItem, { backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : T.border }],
                       onPress: () => toggleCrew(w.id),
                       children: [
-                        /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 4 }, children: [
-                            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], numberOfLines: 1, children: w.name }),
-                            (w.certifications || []).length > 0 && /* @__PURE__ */ jsx(Text, { style: { fontSize: 12 }, children: "\u{1F393}" })
+                        /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 4 }, children: [
+                            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], numberOfLines: 1, children: w.name }),
+                            (w.certifications || []).length > 0 && /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 12 }, children: "\u{1F393}" })
                           ] }),
-                          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                             w.role,
                             " \xB7 Skill ",
                             w.skill,
@@ -13050,45 +13192,45 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                             w.trait.label
                           ] })
                         ] }),
-                        /* @__PURE__ */ jsx(View, { style: [styles.selDot, { backgroundColor: sel ? T.orange : T.border }] })
+                        /* @__PURE__ */ jsx2(View2, { style: [styles2.selDot, { backgroundColor: sel ? T.orange : T.border }] })
                       ]
                     },
                     w.id
                   );
                 }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.label, col, { marginTop: 12, marginBottom: 4 }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, col, { marginTop: 12, marginBottom: 4 }], children: [
                   "Assign Equipment (",
                   selectedEquipIds.length,
                   " selected, need ",
                   c.equipMin,
                   ")"
                 ] }),
-                idleEquip.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.orange }], children: "No idle vehicles \u2014 buy machines in the Vehicles tab." }),
+                idleEquip.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.orange }], children: "No idle vehicles \u2014 buy machines in the Vehicles tab." }),
                 idleEquip.map((e) => {
                   const sel = selectedEquipIds.includes(e.id);
                   const tierOk = e.tier >= c.minTier;
-                  return /* @__PURE__ */ jsxs(
-                    TouchableOpacity,
+                  return /* @__PURE__ */ jsxs2(
+                    TouchableOpacity2,
                     {
-                      style: [styles.rowItem, { backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : tierOk ? T.border : T.red, opacity: tierOk ? 1 : 0.6 }],
+                      style: [styles2.rowItem, { backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : tierOk ? T.border : T.red, opacity: tierOk ? 1 : 0.6 }],
                       onPress: () => tierOk && toggleEquip(e.id),
                       children: [
-                        /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-                          /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: e.name }),
-                          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+                        /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+                          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: e.name }),
+                          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                             "Tier ",
                             e.tier,
                             " \xB7 Cond ",
                             Math.round(e.condition),
                             "%"
                           ] }),
-                          !tierOk && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.red }], children: [
+                          !tierOk && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.red }], children: [
                             "Needs Tier ",
                             c.minTier,
                             "+"
                           ] })
                         ] }),
-                        /* @__PURE__ */ jsx(View, { style: [styles.selDot, { backgroundColor: sel ? T.orange : T.border }] })
+                        /* @__PURE__ */ jsx2(View2, { style: [styles2.selDot, { backgroundColor: sel ? T.orange : T.border }] })
                       ]
                     },
                     e.id
@@ -13102,27 +13244,27 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
                   ];
                   const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
                   const activeMultiplier = BID_OPTIONS.find((o) => o.key === bidStyle)?.multiplier ?? 1;
-                  return /* @__PURE__ */ jsxs(View, { style: { marginTop: 10 }, children: [
-                    /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, marginBottom: 6, fontSize: 11 }], children: "Bid Strategy" }),
-                    /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", gap: 6, marginBottom: 8 }, children: BID_OPTIONS.map((opt) => {
+                  return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 10 }, children: [
+                    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, marginBottom: 6, fontSize: 11 }], children: "Bid Strategy" }),
+                    /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", gap: 6, marginBottom: 8 }, children: BID_OPTIONS.map((opt) => {
                       const active = bidStyle === opt.key;
-                      return /* @__PURE__ */ jsxs(TouchableOpacity, { onPress: () => onSetBidStyle(c.id, opt.key), style: { flex: 1, paddingVertical: 7, paddingHorizontal: 4, borderRadius: 7, borderWidth: 1.5, borderColor: opt.color, backgroundColor: active ? opt.color + "33" : "transparent", alignItems: "center" }, children: [
-                        /* @__PURE__ */ jsx(Text, { style: { fontWeight: "bold", fontSize: 12, color: active ? opt.color : T.sub }, children: opt.label }),
-                        /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }, children: opt.sub })
+                      return /* @__PURE__ */ jsxs2(TouchableOpacity2, { onPress: () => onSetBidStyle(c.id, opt.key), style: { flex: 1, paddingVertical: 7, paddingHorizontal: 4, borderRadius: 7, borderWidth: 1.5, borderColor: opt.color, backgroundColor: active ? opt.color + "33" : "transparent", alignItems: "center" }, children: [
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontWeight: "bold", fontSize: 12, color: active ? opt.color : T.sub }, children: opt.label }),
+                        /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }, children: opt.sub })
                       ] }, opt.key);
                     }) }),
-                    /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", backgroundColor: T.panel2, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }, children: [
-                      /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.sub, fontSize: 12 }], children: "Effective Value" }),
-                      /* @__PURE__ */ jsx(Text, { style: { color: T.text, fontWeight: "bold", fontSize: 12 }, children: `$${Math.round(c.value * activeMultiplier).toLocaleString()}` })
+                    /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", backgroundColor: T.panel2, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }, children: [
+                      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 12 }], children: "Effective Value" }),
+                      /* @__PURE__ */ jsx2(Text2, { style: { color: T.text, fontWeight: "bold", fontSize: 12 }, children: `$${Math.round(c.value * activeMultiplier).toLocaleString()}` })
                     ] })
                   ] });
                 })(),
-                /* @__PURE__ */ jsx(
-                  TouchableOpacity,
+                /* @__PURE__ */ jsx2(
+                  TouchableOpacity2,
                   {
-                    style: [styles.btn, { marginTop: 14, backgroundColor: !blockReason ? T.green : T.panel2, borderColor: !blockReason ? T.green : T.border }],
+                    style: [styles2.btn, { marginTop: 14, backgroundColor: !blockReason ? T.green : T.panel2, borderColor: !blockReason ? T.green : T.border }],
                     onPress: handleConfirm,
-                    children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: !blockReason ? "#fff" : T.sub }], children: blockReason || "\u2705 Mobilise & Start Site" })
+                    children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: !blockReason ? "#fff" : T.sub }], children: blockReason || "\u2705 Mobilise & Start Site" })
                   }
                 )
               ] })
@@ -13131,24 +13273,24 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
           c.id
         );
       }),
-      getActiveSites(game).length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Active Sites" }),
+      getActiveSites(game).length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Active Sites" }),
         getActiveSites(game).map((site) => {
           const pct = (site.currentPhaseIdx / site.phases.length + site.phaseProgress / 100 / site.phases.length) * 100;
-          return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.label, col], numberOfLines: 1, children: site.label }),
-              /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: site.status === "Paused" ? T.orange : T.cyan }], children: site.status === "Paused" ? "\u23F8 Paused" : site.phases[site.currentPhaseIdx] || "Done" })
+          return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], numberOfLines: 1, children: site.label }),
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: site.status === "Paused" ? T.orange : T.cyan }], children: site.status === "Paused" ? "\u23F8 Paused" : site.phases[site.currentPhaseIdx] || "Done" })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 6 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.round(pct)}%`, backgroundColor: T.green }] }) }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 6 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.round(pct)}%`, backgroundColor: T.green }] }) }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               Math.round(pct),
               "% \xB7 ",
               site.assignedCrewIds.length,
               " crew \xB7 Deadline Day ",
               site.deadlineDay
             ] }),
-            site.chaosHistory?.slice(0, 2).map((e, i) => /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange, marginTop: 2 }], children: [
+            site.chaosHistory?.slice(0, 2).map((e, i) => /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange, marginTop: 2 }], children: [
               "\u26A0 ",
               e.text
             ] }, i))
@@ -13156,35 +13298,35 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
         })
       ] })
     ] }),
-    /* @__PURE__ */ jsx(Modal, { visible: !!materialModal, transparent: true, animationType: "slide", onRequestClose: () => setMaterialModal(null), children: /* @__PURE__ */ jsx(View, { style: styles.modalOverlay, children: /* @__PURE__ */ jsx(View, { style: [styles.modalCard, { backgroundColor: T.panel, borderColor: T.border }], children: materialModal && (() => {
+    /* @__PURE__ */ jsx2(Modal, { visible: !!materialModal, transparent: true, animationType: "slide", onRequestClose: () => setMaterialModal(null), children: /* @__PURE__ */ jsx2(View2, { style: styles2.modalOverlay, children: /* @__PURE__ */ jsx2(View2, { style: [styles2.modalCard, { backgroundColor: T.panel, borderColor: T.border }], children: materialModal && (() => {
       const mat = MATERIAL_DEFS.find((m) => m.id === materialModal.matId);
       const price = game.materialPrices[materialModal.matId] || mat?.basePrice || 100;
       const qty = parseInt(buyQty) || 0;
       const total = price * qty;
-      return /* @__PURE__ */ jsxs(Fragment, { children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }, children: [
-          mat?.icon && /* @__PURE__ */ jsx(Ionicons, { name: mat.icon, size: 20, color: T.text }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.h2, col], children: [
+      return /* @__PURE__ */ jsxs2(Fragment, { children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }, children: [
+          mat?.icon && /* @__PURE__ */ jsx2(Ionicons, { name: mat.icon, size: 20, color: T.text }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.h2, col], children: [
             "Buy ",
             mat?.label
           ] })
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           "Current stock: ",
           materialModal.have,
           " ",
           mat?.unit
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           "Market price: ",
           money2(price),
           "/",
           mat?.unit
         ] }),
-        /* @__PURE__ */ jsx(
+        /* @__PURE__ */ jsx2(
           TextInput,
           {
-            style: [styles.input, { color: T.text, borderColor: T.border, backgroundColor: T.panel2, marginTop: 12 }],
+            style: [styles2.input, { color: T.text, borderColor: T.border, backgroundColor: T.panel2, marginTop: 12 }],
             value: buyQty,
             onChangeText: setBuyQty,
             keyboardType: "numeric",
@@ -13192,21 +13334,21 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
             placeholderTextColor: T.sub
           }
         ),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.label, { color: T.green, marginTop: 8 }], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.label, { color: T.green, marginTop: 8 }], children: [
           "Total: ",
           money2(total)
         ] }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", gap: 10, marginTop: 14 }, children: [
-          /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { flex: 1, borderColor: T.border }], onPress: () => setMaterialModal(null), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, col], children: "Cancel" }) }),
-          /* @__PURE__ */ jsx(
-            TouchableOpacity,
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", gap: 10, marginTop: 14 }, children: [
+          /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { flex: 1, borderColor: T.border }], onPress: () => setMaterialModal(null), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, col], children: "Cancel" }) }),
+          /* @__PURE__ */ jsx2(
+            TouchableOpacity2,
             {
-              style: [styles.btn, { flex: 1, backgroundColor: game.cash >= total ? T.green : T.panel2, borderColor: T.green }],
+              style: [styles2.btn, { flex: 1, backgroundColor: game.cash >= total ? T.green : T.panel2, borderColor: T.green }],
               onPress: () => {
                 onBuyMaterials(materialModal.matId, qty);
                 setMaterialModal(null);
               },
-              children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= total ? "#fff" : T.red }], children: "Buy" })
+              children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= total ? "#fff" : T.red }], children: "Buy" })
             }
           )
         ] })
@@ -13215,18 +13357,18 @@ The site will stall when it starts. You can buy them in the Sites tab. Start any
   ] });
 }
 function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch }) {
-  const [specialtyFilter, setSpecialtyFilter] = useState("All");
+  const [specialtyFilter, setSpecialtyFilter] = useState2("All");
   const office = OFFICES[game.officeIndex || 0];
   const moodColor = (v) => v >= 70 ? T.green : v >= 45 ? T.yellow : T.red;
-  return /* @__PURE__ */ jsxs(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
-    /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginBottom: 8 }], children: "Post Job Ads" }),
-    JOB_POSTINGS.map((posting) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-      /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: posting.label }),
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.orange }], children: money2(posting.cost) })
+  return /* @__PURE__ */ jsxs2(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 14, paddingBottom: 100 }, children: [
+    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginBottom: 8 }], children: "Post Job Ads" }),
+    JOB_POSTINGS.map((posting) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+      /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: posting.label }),
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.orange }], children: money2(posting.cost) })
       ] }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: posting.desc }),
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: posting.desc }),
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
         "Adds ",
         posting.count,
         " candidate(s) \xB7 Skill ",
@@ -13234,79 +13376,79 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         "\u2013",
         posting.skillMax
       ] }),
-      /* @__PURE__ */ jsx(
-        TouchableOpacity,
+      /* @__PURE__ */ jsx2(
+        TouchableOpacity2,
         {
-          style: [styles.btn, { marginTop: 8, backgroundColor: game.cash >= posting.cost ? T.blue : T.panel2, borderColor: T.blue }],
+          style: [styles2.btn, { marginTop: 8, backgroundColor: game.cash >= posting.cost ? T.blue : T.panel2, borderColor: T.blue }],
           onPress: () => onPostJob(posting),
-          children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: game.cash >= posting.cost ? "#fff" : T.sub }], children: "Post Ad" })
+          children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: game.cash >= posting.cost ? "#fff" : T.sub }], children: "Post Ad" })
         }
       )
     ] }, posting.id)),
-    game.applicants.length === 0 && /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", padding: 16, fontStyle: "italic" }], children: "Post a job to attract applicants." }),
-    game.applicants.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-      /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 6 }], children: [
+    game.applicants.length === 0 && /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", padding: 16, fontStyle: "italic" }], children: "Post a job to attract applicants." }),
+    game.applicants.length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+      /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 6 }], children: [
         "Applicants (",
         game.applicants.length,
         ")"
       ] }),
-      /* @__PURE__ */ jsx(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, children: ["All", ...CREW_SPECIALTIES].map((spec) => /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.chip, { marginRight: 6, borderColor: specialtyFilter === spec ? T.purple : T.border }], onPress: () => setSpecialtyFilter(spec), children: /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: specialtyFilter === spec ? T.purple : T.sub, fontWeight: specialtyFilter === spec ? "700" : "400" }], children: spec }) }, spec)) }),
-      game.applicants.filter((a) => specialtyFilter === "All" || (a.specialty || "General") === specialtyFilter).map((a) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], numberOfLines: 1, children: a.name }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      /* @__PURE__ */ jsx2(ScrollView, { horizontal: true, showsHorizontalScrollIndicator: false, style: { marginBottom: 8 }, children: ["All", ...CREW_SPECIALTIES].map((spec) => /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.chip, { marginRight: 6, borderColor: specialtyFilter === spec ? T.purple : T.border }], onPress: () => setSpecialtyFilter(spec), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: specialtyFilter === spec ? T.purple : T.sub, fontWeight: specialtyFilter === spec ? "700" : "400" }], children: spec }) }, spec)) }),
+      game.applicants.filter((a) => specialtyFilter === "All" || (a.specialty || "General") === specialtyFilter).map((a) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], numberOfLines: 1, children: a.name }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               a.role,
               " \xB7 ",
               a.trait.label
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               "Skill ",
               a.skill,
               " \xB7 ",
               money2(a.desiredWage),
               "/day"
             ] }),
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4 }, children: [
-              /* @__PURE__ */ jsx(Text, { style: [styles.chip, { color: T.purple, borderColor: T.purple }], children: a.specialty || "General" }),
-              a.quality && /* @__PURE__ */ jsx(Text, { style: [styles.chip, { color: T.yellow, borderColor: T.yellow }], children: a.quality })
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4 }, children: [
+              /* @__PURE__ */ jsx2(Text2, { style: [styles2.chip, { color: T.purple, borderColor: T.purple }], children: a.specialty || "General" }),
+              a.quality && /* @__PURE__ */ jsx2(Text2, { style: [styles2.chip, { color: T.yellow, borderColor: T.yellow }], children: a.quality })
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: { alignItems: "flex-end", marginLeft: 8 }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+          /* @__PURE__ */ jsx2(View2, { style: { alignItems: "flex-end", marginLeft: 8 }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
             "Signing: ",
             money2(a.signingBonus)
           ] }) })
         ] }),
-        /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, backgroundColor: T.green, borderColor: T.green }],
+            style: [styles2.btn, { marginTop: 8, backgroundColor: T.green, borderColor: T.green }],
             onPress: () => onHire(a),
             disabled: game.crew.length >= office.crewCap,
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: game.crew.length >= office.crewCap ? "Crew Cap Reached" : `Hire \u2014 ${money2(a.signingBonus)} signing bonus` })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: game.crew.length >= office.crewCap ? "Crew Cap Reached" : `Hire \u2014 ${money2(a.signingBonus)} signing bonus` })
           }
         )
       ] }, a.id))
     ] }),
-    /* @__PURE__ */ jsxs(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: [
+    /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: [
       "Crew (",
       game.crew.length,
       "/",
       office.crewCap,
       ")"
     ] }),
-    game.crew.some((w) => (w.stamina ?? 50) < 40) && /* @__PURE__ */ jsx(
-      TouchableOpacity,
+    game.crew.some((w) => (w.stamina ?? 50) < 40) && /* @__PURE__ */ jsx2(
+      TouchableOpacity2,
       {
-        style: [styles.btn, { marginBottom: 10, backgroundColor: T.cyan + "22", borderColor: T.cyan }],
+        style: [styles2.btn, { marginBottom: 10, backgroundColor: T.cyan + "22", borderColor: T.cyan }],
         onPress: () => onRestAllTired && onRestAllTired(),
-        children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.cyan }], children: "\u{1F634} Rest All Tired Workers (stamina < 40)" })
+        children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.cyan }], children: "\u{1F634} Rest All Tired Workers (stamina < 40)" })
       }
     ),
-    game.crew.length === 0 && /* @__PURE__ */ jsxs(View, { style: { alignItems: "center", padding: 16 }, children: [
-      /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }], children: "No crew on the books" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: "A site can't start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for." }),
-      /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }], onPress: onPostJob, children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: "#fff" }], children: "Post a Job Ad" }) })
+    game.crew.length === 0 && /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "center", padding: 16 }, children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.sub, textAlign: "center", marginBottom: 4 }], children: "No crew on the books" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { textAlign: "center", marginBottom: 12 }], children: "A site can't start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for." }),
+      /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { backgroundColor: T.cyan, borderColor: T.cyan }], onPress: onPostJob, children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: "#fff" }], children: "Post a Job Ad" }) })
     ] }),
     game.crew.map((w) => {
       const trait = w.trait || {};
@@ -13319,11 +13461,11 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
       if (trait.label === "Team Leader") traitEffects.push({ label: "Team +8% progress", color: T.purple });
       if (trait.label === "Frequent No-Show") traitEffects.push({ label: "Unreliable presence", color: T.red });
       if ((trait.wagePressure || 1) > 1.12) traitEffects.push({ label: `High wage demand`, color: T.orange });
-      return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: w.name }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: w.name }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               w.role,
               " \xB7 Lv",
               w.level || 1,
@@ -13333,44 +13475,44 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
             (() => {
               const curLvl = WORKER_LEVELS.find((l) => l.level === (w.level || 1));
               const nextLvl = WORKER_LEVELS.find((l) => l.level === (w.level || 1) + 1);
-              if (!nextLvl) return /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: T.yellow, fontSize: 10 }], children: "\u2B50 Max Level" });
+              if (!nextLvl) return /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: T.yellow, fontSize: 10 }], children: "\u2B50 Max Level" });
               const xpProgress = Math.min(1, ((w.xp || 0) - curLvl.xpRequired) / (nextLvl.xpRequired - curLvl.xpRequired));
-              return /* @__PURE__ */ jsxs(View, { style: { marginTop: 3, marginBottom: 2 }, children: [
-                /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.sub, fontSize: 9 }], children: [
+              return /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 3, marginBottom: 2 }, children: [
+                /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.sub, fontSize: 9 }], children: [
                     "XP ",
                     w.xp || 0,
                     " / ",
                     nextLvl.xpRequired
                   ] }),
-                  /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 9 }], children: [
+                  /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 9 }], children: [
                     "Next: ",
                     nextLvl.label
                   ] })
                 ] }),
-                /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 2 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.round(xpProgress * 100)}%`, backgroundColor: T.cyan, height: 4 }] }) })
+                /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 2 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.round(xpProgress * 100)}%`, backgroundColor: T.cyan, height: 4 }] }) })
               ] });
             })(),
-            /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, children: /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-              /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+            /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, children: /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+              /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                   "Skill \xB7 ",
                   money2(w.wagePerDay),
                   "/day"
                 ] }),
-                /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: w.skill >= 100 ? T.green : w.skill >= 70 ? T.blue : T.orange }], children: [
+                /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: w.skill >= 100 ? T.green : w.skill >= 70 ? T.blue : T.orange }], children: [
                   w.skill,
                   "/150"
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 2 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.min(100, Math.round(w.skill / 150 * 100))}%`, backgroundColor: w.skill >= 100 ? T.green : w.skill >= 70 ? T.blue : T.orange }] }) })
+              /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 2 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.min(100, Math.round(w.skill / 150 * 100))}%`, backgroundColor: w.skill >= 100 ? T.green : w.skill >= 70 ? T.blue : T.orange }] }) })
             ] }) }),
             (() => {
               const daysWorked = game.day - (w.hireDay || game.day);
               const jobsDone = w.jobsCompleted || 0;
               const loyalty = w.loyalty ?? 0;
               if (daysWorked > 0 || jobsDone > 0) {
-                return /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: loyalty >= 80 ? T.yellow : loyalty >= 40 ? T.cyan : T.sub, fontSize: 10, marginTop: 1 }], children: [
+                return /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: loyalty >= 80 ? T.yellow : loyalty >= 40 ? T.cyan : T.sub, fontSize: 10, marginTop: 1 }], children: [
                   loyalty >= 80 ? "\u2B50 " : "",
                   "Hired Day ",
                   w.hireDay || 0,
@@ -13385,134 +13527,134 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               return null;
             })()
           ] }),
-          /* @__PURE__ */ jsxs(View, { style: { alignItems: "flex-end" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, { color: w.status === "Active" ? T.orange : w.status === "Idle" ? T.green : T.sub }], children: w.status }),
+          /* @__PURE__ */ jsxs2(View2, { style: { alignItems: "flex-end" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, { color: w.status === "Active" ? T.orange : w.status === "Idle" ? T.green : T.sub }], children: w.status }),
             w.status === "Active" && (() => {
               const workingSite = (game.activeSites || []).find((s) => (s.assignedCrewIds || []).includes(w.id));
-              return workingSite ? /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10, marginTop: 2 }], children: [
+              return workingSite ? /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 10, marginTop: 2 }], children: [
                 "\u{1F3D7}\uFE0F ",
                 workingSite.label
               ] }) : null;
             })(),
-            /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: T.panel2, marginTop: 4 }], children: /* @__PURE__ */ jsx(Text, { style: [styles.statusPillText, { color: T.text }], children: trait.label || "\u2014" }) })
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: T.panel2, marginTop: 4 }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.statusPillText, { color: T.text }], children: trait.label || "\u2014" }) })
           ] })
         ] }),
-        traitEffects.length > 0 && /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }, children: traitEffects.map((e, i) => /* @__PURE__ */ jsx(View, { style: [styles.statusPill, { backgroundColor: e.color + "22" }], children: /* @__PURE__ */ jsx(Text, { style: [styles.statusPillText, { color: e.color }], children: e.label }) }, i)) }),
+        traitEffects.length > 0 && /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }, children: traitEffects.map((e, i) => /* @__PURE__ */ jsx2(View2, { style: [styles2.statusPill, { backgroundColor: e.color + "22" }], children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.statusPillText, { color: e.color }], children: e.label }) }, i)) }),
         [
           { label: "Mood", val: w.mood, color: moodColor(w.mood) },
           { label: "Stamina", val: w.stamina, color: (w.stamina ?? 50) < 20 ? T.red : (w.stamina ?? 50) < 40 ? T.orange : T.cyan },
           { label: "Loyalty", val: w.loyalty ?? 0, color: (w.loyalty ?? 0) >= 70 ? T.yellow : (w.loyalty ?? 0) >= 40 ? T.green : T.red }
-        ].map((stat) => /* @__PURE__ */ jsxs(View, { style: { marginTop: 6 }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: stat.label }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: stat.color }], children: [
+        ].map((stat) => /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 6 }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: stat.label }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: stat.color }], children: [
               Math.round(stat.val),
               "/100"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${Math.max(0, Math.min(100, stat.val))}%`, backgroundColor: stat.color }] }) })
+          /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${Math.max(0, Math.min(100, stat.val))}%`, backgroundColor: stat.color }] }) })
         ] }, stat.label)),
-        (w.certifications || []).length > 0 && /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }, children: (w.certifications || []).map((cert) => {
+        (w.certifications || []).length > 0 && /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }, children: (w.certifications || []).map((cert) => {
           const prog = TRAINING_PROGRAMS2.find((p) => p.certId === cert);
-          return /* @__PURE__ */ jsx(View, { style: { backgroundColor: T.blue + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.blue }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { fontSize: 9, color: T.blue, fontWeight: "700" }], children: [
+          return /* @__PURE__ */ jsx2(View2, { style: { backgroundColor: T.blue + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.blue }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { fontSize: 9, color: T.blue, fontWeight: "700" }], children: [
             "\u{1F393} ",
             prog?.label || cert
           ] }) }, cert);
         }) }),
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
-          /* @__PURE__ */ jsxs(
-            TouchableOpacity,
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, children: [
+          /* @__PURE__ */ jsxs2(
+            TouchableOpacity2,
             {
               style: { flex: 1, minWidth: 80, backgroundColor: T.green + "22", borderRadius: 7, borderWidth: 1, borderColor: T.green, paddingVertical: 6, alignItems: "center" },
               onPress: () => onRaiseWage && onRaiseWage(w.id),
               children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, fontWeight: "700", color: T.green }, children: "Raise Wage" }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "+10%" })
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, fontWeight: "700", color: T.green }, children: "Raise Wage" }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "+10%" })
               ]
             }
           ),
-          /* @__PURE__ */ jsxs(
-            TouchableOpacity,
+          /* @__PURE__ */ jsxs2(
+            TouchableOpacity2,
             {
               style: { flex: 1, minWidth: 80, backgroundColor: T.orange + "22", borderRadius: 7, borderWidth: 1, borderColor: T.orange, paddingVertical: 6, alignItems: "center" },
               onPress: () => onLowerWage && onLowerWage(w.id),
               children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, fontWeight: "700", color: T.orange }, children: "Lower Wage" }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "-10%" })
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, fontWeight: "700", color: T.orange }, children: "Lower Wage" }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "-10%" })
               ]
             }
           ),
-          /* @__PURE__ */ jsxs(
-            TouchableOpacity,
+          /* @__PURE__ */ jsxs2(
+            TouchableOpacity2,
             {
               style: { flex: 1, minWidth: 80, backgroundColor: T.yellow + "22", borderRadius: 7, borderWidth: 1, borderColor: T.yellow, paddingVertical: 6, alignItems: "center" },
               onPress: () => onGiveBonus && onGiveBonus(w.id),
               children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, fontWeight: "700", color: T.yellow }, children: "Give Bonus" }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "2\xD7 daily" })
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, fontWeight: "700", color: T.yellow }, children: "Give Bonus" }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "2\xD7 daily" })
               ]
             }
           ),
-          w.status !== "Resting" && (w.stamina ?? 50) < 80 && /* @__PURE__ */ jsxs(
-            TouchableOpacity,
+          w.status !== "Resting" && (w.stamina ?? 50) < 80 && /* @__PURE__ */ jsxs2(
+            TouchableOpacity2,
             {
               style: { flex: 1, minWidth: 80, backgroundColor: T.cyan + "22", borderRadius: 7, borderWidth: 1, borderColor: T.cyan, paddingVertical: 6, alignItems: "center" },
               onPress: () => onRest && onRest(w.id),
               children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, fontWeight: "700", color: T.cyan }, children: "Rest" }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "\u219280 stamina" })
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, fontWeight: "700", color: T.cyan }, children: "Rest" }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "\u219280 stamina" })
               ]
             }
           ),
-          w.lastLunchDay !== game.day && /* @__PURE__ */ jsxs(
-            TouchableOpacity,
+          w.lastLunchDay !== game.day && /* @__PURE__ */ jsxs2(
+            TouchableOpacity2,
             {
               style: { flex: 1, minWidth: 80, backgroundColor: T.orange + "22", borderRadius: 7, borderWidth: 1, borderColor: T.orange, paddingVertical: 6, alignItems: "center" },
               onPress: () => onBuyLunch && onBuyLunch(w.id),
               children: [
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 10, fontWeight: "700", color: T.orange }, children: "Buy Lunch" }),
-                /* @__PURE__ */ jsx(Text, { style: { fontSize: 9, color: T.sub }, children: "$25 \xB7 mood+8" })
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 10, fontWeight: "700", color: T.orange }, children: "Buy Lunch" }),
+                /* @__PURE__ */ jsx2(Text2, { style: { fontSize: 9, color: T.sub }, children: "$25 \xB7 mood+8" })
               ]
             }
           )
         ] }),
-        w.status !== "Active" && (w.level || 1) >= 3 && (w.skill || 0) >= 70 && !w.role?.startsWith("Senior") && /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        w.status !== "Active" && (w.level || 1) >= 3 && (w.skill || 0) >= 70 && !w.role?.startsWith("Senior") && /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 6, backgroundColor: T.purple + "22", borderColor: T.purple }],
+            style: [styles2.btn, { marginTop: 6, backgroundColor: T.purple + "22", borderColor: T.purple }],
             onPress: () => onPromote && onPromote(w.id),
-            children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: T.purple }], children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: T.purple }], children: [
               "Promote to Senior ",
               w.role,
               " \u2014 $500"
             ] })
           }
         ),
-        w.status !== "Active" && w.status !== "Resting" && /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        w.status !== "Active" && w.status !== "Resting" && /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, borderColor: T.red }],
+            style: [styles2.btn, { marginTop: 8, borderColor: T.red }],
             onPress: () => Alert.alert("Fire Worker", `Let go of ${w.name}?`, [
               { text: "Cancel", style: "cancel" },
               { text: "Fire", style: "destructive", onPress: () => onFire(w.id) }
             ]),
-            children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.red }], children: "Let Go" })
+            children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.red }], children: "Let Go" })
           }
         ),
-        w.status === "Resting" && /* @__PURE__ */ jsx(View, { style: { marginTop: 6, backgroundColor: T.cyan + "18", borderRadius: 6, padding: 6, borderWidth: 1, borderColor: T.cyan }, children: /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, fontSize: 10 }], children: [
+        w.status === "Resting" && /* @__PURE__ */ jsx2(View2, { style: { marginTop: 6, backgroundColor: T.cyan + "18", borderRadius: 6, padding: 6, borderWidth: 1, borderColor: T.cyan }, children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, fontSize: 10 }], children: [
           "\u{1F634} Resting \u2014 stamina recovering to ",
           w.restUntilStamina || 80
         ] }) })
       ] }, w.id);
     }),
-    game.crew.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Training Programs" }),
-      /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "Invest in crew skill and unlock certifications. Worker must be idle." }),
-      TRAINING_PROGRAMS2.map((prog) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: prog.label }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+    game.crew.length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Training Programs" }),
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "Invest in crew skill and unlock certifications. Worker must be idle." }),
+      TRAINING_PROGRAMS2.map((prog) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: prog.label }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
               "Skill +",
               prog.skillBonus,
               " \xB7 ",
@@ -13520,20 +13662,20 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               " days \xB7 Cert: ",
               prog.certId
             ] }),
-            prog.wagePressure > 0 && /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+            prog.wagePressure > 0 && /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
               "Wage pressure +",
               Math.round(prog.wagePressure * 100),
               "% after completion"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: game.cash >= prog.cost ? T.green : T.red }], children: money2(prog.cost) })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: game.cash >= prog.cost ? T.green : T.red }], children: money2(prog.cost) })
         ] }),
-        game.crew.filter((w) => w.status === "Idle" && !(game.trainingQueue || []).some((t) => t.workerId === w.id)).slice(0, 3).map((w) => /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        game.crew.filter((w) => w.status === "Idle" && !(game.trainingQueue || []).some((t) => t.workerId === w.id)).slice(0, 3).map((w) => /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 6, backgroundColor: game.cash >= prog.cost ? T.blue : T.panel2, borderColor: T.blue }],
+            style: [styles2.btn, { marginTop: 6, backgroundColor: game.cash >= prog.cost ? T.blue : T.panel2, borderColor: T.blue }],
             onPress: () => onTrain && onTrain(w.id, prog.id),
-            children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: game.cash >= prog.cost ? "#fff" : T.sub }], children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: game.cash >= prog.cost ? "#fff" : T.sub }], children: [
               "Train ",
               w.name.split(" ")[0],
               " \u2014 ",
@@ -13543,41 +13685,41 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
           w.id
         ))
       ] }, prog.id)),
-      (game.trainingQueue || []).length > 0 && /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 1 }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.cyan, marginBottom: 6 }], children: "In Training" }),
+      (game.trainingQueue || []).length > 0 && /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 1 }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.cyan, marginBottom: 6 }], children: "In Training" }),
         (game.trainingQueue || []).map((t) => {
           const w = game.crew.find((c) => c.id === t.workerId);
           const prog = TRAINING_PROGRAMS2.find((p) => p.id === t.programId);
           const totalDays = prog?.duration || 1;
           const doneDays = totalDays - (t.daysLeft || 0);
           const pct = Math.round(doneDays / totalDays * 100);
-          return /* @__PURE__ */ jsxs(View, { style: { marginBottom: 8 }, children: [
-            /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+          return /* @__PURE__ */ jsxs2(View2, { style: { marginBottom: 8 }, children: [
+            /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
                 w?.name || "Worker",
                 " \u2014 ",
                 prog?.label || t.programId
               ] }),
-              /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+              /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
                 t.daysLeft,
                 "d left"
               ] })
             ] }),
-            /* @__PURE__ */ jsx(View, { style: [styles.progressTrack, { backgroundColor: T.track, marginTop: 3 }], children: /* @__PURE__ */ jsx(View, { style: [styles.progressFill, { width: `${pct}%`, backgroundColor: T.cyan }] }) })
+            /* @__PURE__ */ jsx2(View2, { style: [styles2.progressTrack, { backgroundColor: T.track, marginTop: 3 }], children: /* @__PURE__ */ jsx2(View2, { style: [styles2.progressFill, { width: `${pct}%`, backgroundColor: T.cyan }] }) })
           ] }, t.id);
         })
       ] })
     ] }),
-    /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Hire Subcontractors" }),
-    /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "Temporary crews \u2014 faster progress, higher cost, lower reliability." }),
+    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Hire Subcontractors" }),
+    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "Temporary crews \u2014 faster progress, higher cost, lower reliability." }),
     SUBCONTRACTOR_TYPES.map((def) => {
       const active = (game.subcontractors || []).find((sc) => sc.typeId === def.id);
-      return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-            /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: def.label }),
-            /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: def.desc }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+      return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: def.label }),
+            /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: def.desc }),
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
               "Skill ",
               def.skill,
               " \xB7 ",
@@ -13588,24 +13730,24 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               def.durationDays,
               " days"
             ] }),
-            /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+            /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
               "Reliability: ",
               Math.round(def.reliability * 100),
               "%"
             ] })
           ] }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, { color: T.orange }], children: money2(def.hireCost) })
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, { color: T.orange }], children: money2(def.hireCost) })
         ] }),
-        active ? /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan, marginTop: 8 }], children: [
+        active ? /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan, marginTop: 8 }], children: [
           "\u2705 Active \u2014 ",
           active.daysLeft,
           " day(s) left"
-        ] }) : /* @__PURE__ */ jsx(
-          TouchableOpacity,
+        ] }) : /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, backgroundColor: game.cash >= def.hireCost ? T.cyan : T.panel2, borderColor: T.cyan }],
+            style: [styles2.btn, { marginTop: 8, backgroundColor: game.cash >= def.hireCost ? T.cyan : T.panel2, borderColor: T.cyan }],
             onPress: () => onHireSubcontractor(def.id),
-            children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: game.cash >= def.hireCost ? "#fff" : T.sub }], children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: game.cash >= def.hireCost ? "#fff" : T.sub }], children: [
               "Hire for ",
               def.durationDays,
               " days"
@@ -13614,17 +13756,17 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         )
       ] }, def.id);
     }),
-    (game.subcontractors || []).length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Active Subcontractors" }),
-      game.subcontractors.map((sc) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel2, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsxs(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: sc.name }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+    (game.subcontractors || []).length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Active Subcontractors" }),
+      game.subcontractors.map((sc) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel2, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsxs2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: sc.name }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
             sc.daysLeft,
             "d left"
           ] })
         ] }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           sc.role,
           " \xB7 ",
           sc.count,
@@ -13635,11 +13777,11 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         ] })
       ] }, sc.id))
     ] }),
-    game.officeStaff.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-      /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Office Staff" }),
-      game.officeStaff.map((s) => /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: s.name }),
-        /* @__PURE__ */ jsxs(Text, { style: [styles.sub, subCol], children: [
+    game.officeStaff.length > 0 && /* @__PURE__ */ jsxs2(Fragment, { children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Office Staff" }),
+      game.officeStaff.map((s) => /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: s.name }),
+        /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, subCol], children: [
           s.role,
           " \xB7 ",
           money2(s.wagePerDay),
@@ -13647,15 +13789,15 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         ] })
       ] }, s.id))
     ] }),
-    /* @__PURE__ */ jsx(Text, { style: [styles.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Project Managers" }),
-    /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol, { marginBottom: 8 }], children: "PMs speed up sites, reduce delays, and senior PMs auto-manage stalled jobs." }),
+    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sectionTitle, col, { marginTop: 16, marginBottom: 8 }], children: "Project Managers" }),
+    /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol, { marginBottom: 8 }], children: "PMs speed up sites, reduce delays, and senior PMs auto-manage stalled jobs." }),
     PM_TIERS.map((def) => {
       const hired = (game.projectManagers || []).find((pm) => pm.typeId === def.id);
-      return /* @__PURE__ */ jsxs(View, { style: [styles.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
-        /* @__PURE__ */ jsx(View, { style: { flexDirection: "row", justifyContent: "space-between" }, children: /* @__PURE__ */ jsxs(View, { style: { flex: 1 }, children: [
-          /* @__PURE__ */ jsx(Text, { style: [styles.label, col], children: def.name }),
-          /* @__PURE__ */ jsx(Text, { style: [styles.sub, subCol], children: def.desc }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.cyan }], children: [
+      return /* @__PURE__ */ jsxs2(View2, { style: [styles2.card, { backgroundColor: T.panel, borderColor: T.border }], children: [
+        /* @__PURE__ */ jsx2(View2, { style: { flexDirection: "row", justifyContent: "space-between" }, children: /* @__PURE__ */ jsxs2(View2, { style: { flex: 1 }, children: [
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.label, col], children: def.name }),
+          /* @__PURE__ */ jsx2(Text2, { style: [styles2.sub, subCol], children: def.desc }),
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.cyan }], children: [
             "Delay -",
             Math.round(def.delayReduce * 100),
             "% \xB7 Margin +",
@@ -13663,24 +13805,24 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
             "%",
             def.autoManage ? " \xB7 Auto-manages" : ""
           ] }),
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.orange }], children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.orange }], children: [
             money2(def.wagePerDay),
             "/day \xB7 Hire: ",
             money2(def.hireCost)
           ] })
         ] }) }),
-        hired ? /* @__PURE__ */ jsxs(View, { style: { marginTop: 8 }, children: [
-          /* @__PURE__ */ jsxs(Text, { style: [styles.sub, { color: T.green }], children: [
+        hired ? /* @__PURE__ */ jsxs2(View2, { style: { marginTop: 8 }, children: [
+          /* @__PURE__ */ jsxs2(Text2, { style: [styles2.sub, { color: T.green }], children: [
             "\u2705 On staff: ",
             hired.name
           ] }),
-          /* @__PURE__ */ jsx(TouchableOpacity, { style: [styles.btn, { marginTop: 6, borderColor: T.red }], onPress: () => onFirePM(hired.id), children: /* @__PURE__ */ jsx(Text, { style: [styles.btnText, { color: T.red }], children: "Let Go" }) })
-        ] }) : /* @__PURE__ */ jsx(
-          TouchableOpacity,
+          /* @__PURE__ */ jsx2(TouchableOpacity2, { style: [styles2.btn, { marginTop: 6, borderColor: T.red }], onPress: () => onFirePM(hired.id), children: /* @__PURE__ */ jsx2(Text2, { style: [styles2.btnText, { color: T.red }], children: "Let Go" }) })
+        ] }) : /* @__PURE__ */ jsx2(
+          TouchableOpacity2,
           {
-            style: [styles.btn, { marginTop: 8, backgroundColor: game.cash >= def.hireCost ? T.blue : T.panel2, borderColor: T.blue }],
+            style: [styles2.btn, { marginTop: 8, backgroundColor: game.cash >= def.hireCost ? T.blue : T.panel2, borderColor: T.blue }],
             onPress: () => onHirePM(def.id),
-            children: /* @__PURE__ */ jsxs(Text, { style: [styles.btnText, { color: game.cash >= def.hireCost ? "#fff" : T.sub }], children: [
+            children: /* @__PURE__ */ jsxs2(Text2, { style: [styles2.btnText, { color: game.cash >= def.hireCost ? "#fff" : T.sub }], children: [
               "Hire \u2014 ",
               money2(def.hireCost)
             ] })
@@ -13690,7 +13832,7 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
     })
   ] });
 }
-var styles = StyleSheet.create({
+var styles2 = StyleSheet2.create({
   card: { borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 10 },
   h2: { fontSize: 18, fontWeight: "700" },
   label: { fontSize: 15, fontWeight: "600" },
@@ -13717,7 +13859,7 @@ var styles = StyleSheet.create({
   chip: { fontSize: 11, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   rowItem: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 6 },
   selDot: { width: 16, height: 16, borderRadius: 8, marginLeft: 8 },
-  finRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth },
+  finRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderBottomWidth: StyleSheet2.hairlineWidth },
   input: { borderWidth: 1, borderRadius: 8, padding: 10, fontSize: 16 },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
   modalCard: { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, padding: 20, backgroundColor: "#111a0f" },

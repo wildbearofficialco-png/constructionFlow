@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
+import CollapsibleSection from "../../components/CollapsibleSection.js";
 import {
   tickEmployeePersonalities,
   applyDailyPersonalityEvents,
@@ -6395,13 +6396,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
         {/* ── On-Time Streak ───────────────────────────────────────────────── */}
         {((game.onTimeStreak||0) >= 1 || (game.bestStreak||0) >= 3) && (
-          <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5 }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={[styles.label, col]}>🔥 On-Time Streak</Text>
-              <View style={{ backgroundColor: T.orange+"33", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 }}>
-                <Text style={{ color: T.orange, fontWeight: "700", fontSize: 13 }}>{game.onTimeStreak||0} in a row</Text>
-              </View>
-            </View>
+          <CollapsibleSection
+            title="🔥 On-Time Streak"
+            summary={`${game.onTimeStreak||0} in a row · best ${game.bestStreak||0}`}
+            persistKey="home_ontime_streak"
+            colors={{ background: T.panel, border: T.orange, text: T.text, sub: T.sub, accent: T.orange }}
+          >
             {(() => {
               const milestones = [3, 5, 10, 20];
               const streak = game.onTimeStreak || 0;
@@ -6418,7 +6418,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </>
               );
             })()}
-          </View>
+          </CollapsibleSection>
         )}
 
         {/* ── Weekly Challenge ─────────────────────────────────────────────── */}
@@ -6501,9 +6501,14 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const rels = game.clientRelationships || {};
           const activeClients = CLIENT_ROSTER.filter(c => rels[c.id]?.jobsDone > 0);
           if (activeClients.length === 0) return null;
+          const _loyalClients = activeClients.filter(c => (rels[c.id]?.loyalty || 0) >= 40).length;
           return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
-              <Text style={[styles.sectionTitle, col]}>🤝 Client Relationships</Text>
+            <CollapsibleSection
+              title="🤝 Client Relationships"
+              summary={`${activeClients.length} client${activeClients.length !== 1 ? "s" : ""}${_loyalClients > 0 ? ` · ${_loyalClients} paying a loyalty bonus` : ""}`}
+              persistKey="home_client_relationships"
+              colors={{ background: T.panel, border: T.border, text: T.text, sub: T.sub, accent: T.cyan }}
+            >
               {CLIENT_ROSTER.map(cl => {
                 const rel = rels[cl.id] || { loyalty: 0, jobsDone: 0 };
                 if (rel.jobsDone === 0) return null;
@@ -6528,7 +6533,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                 );
               })}
-            </View>
+            </CollapsibleSection>
           );
         })()}
 
