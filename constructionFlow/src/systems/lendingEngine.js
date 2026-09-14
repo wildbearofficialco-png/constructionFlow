@@ -4,7 +4,7 @@
 // returns a plain result, which is what makes qualification boundaries and repayment math
 // independently unit-testable without spinning up a whole game object.
 
-import { getLendingProduct, REPOSSESSION_MISSED_PAYMENT_THRESHOLD } from "../data/lendingProducts";
+import { getLendingProduct, REPOSSESSION_MISSED_PAYMENT_THRESHOLD } from "../data/lendingProducts.js";
 
 // borrowerProfile shape (all optional; sane defaults applied):
 //   creditScore        — 300-850ish, same scale the game already uses

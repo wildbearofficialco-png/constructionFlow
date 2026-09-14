@@ -3,6 +3,7 @@
 // All costs in the game scale off these modifiers — nothing is hard-coded.
 
 import { uid, rand, pick, clamp, addLog } from "./utils.js";
+import { reconcileUnloggedCashMovement } from "./financialLedger.js";
 
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
 
@@ -51,6 +52,10 @@ export function initEconomy(game) {
 }
 
 export function tickEconomy(game) {
+  // Capture any cash movement produced elsewhere since the previous economy tick.
+  // Explicit ledger writers refresh the snapshot, so this only fills genuine gaps.
+  reconcileUnloggedCashMovement(game);
+
   if (!game.economy) initEconomy(game);
   const eco = game.economy;
   const day = game.day || 0;

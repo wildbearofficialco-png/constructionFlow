@@ -137,3 +137,17 @@ export {
   getZonePayoutMult,
   getTerritoryStatus,
 } from "./territorySystem.js";
+
+export {
+  PROJECT_COST_CATEGORIES,
+  OVERHEAD_NOTE,
+  createProjectCostLedger,
+  ensureProjectCostLedger,
+  accrueProjectCost,
+  accrueProjectCrewDay,
+  getTotalProjectCost,
+  buildProjectEconomics,
+  getProjectReinvestmentHint,
+  buildProjectProfitLines,
+  estimateProjectCosts,
+} from "./projectEconomics.js";
