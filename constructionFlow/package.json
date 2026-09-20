@@ -39,7 +39,12 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "jest"
+    "typecheck": "tsc --noEmit",
+    "doctor": "expo-doctor",
+    "test": "jest",
+    "verify": "npm run lint && npm run typecheck && npm test",
+    "build:ios": "npx eas-cli@latest build --platform ios --profile production",
+    "submit:ios": "npx eas-cli@latest submit --platform ios --profile production --latest"
   },
   "private": true,
   "jest": {

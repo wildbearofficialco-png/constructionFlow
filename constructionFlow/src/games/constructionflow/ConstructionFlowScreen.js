@@ -2039,6 +2039,7 @@ function applyIncident(g, severity) {
   const netCost = applyInsuranceClaim(g, rawCost);
   g.cash -= netCost;
   g.expenses += netCost;
+  if (netCost > 0) recordTransaction(g, "fines", -netCost, `Safety incident (level ${severity})`);
   g.incidentHistory.push({ day: g.day, severity, desc: "Safety incident level " + severity });
   if (g.incidentHistory.length > 50) g.incidentHistory = g.incidentHistory.slice(-50);
 }
@@ -3048,14 +3049,39 @@ function checkSaveIntegrity(savedData) {
   return { valid: issues.length === 0, issues, migrationNeeded };
 }
 
+// Contracts were the only unbounded collection in the save: every contract the player won
+// and every contract a rival took stayed in g.contracts forever, while logs, opsFeed,
+// eventLog and ledger are all capped. Measured growth was linear — 745 entries and a 446 KB
+// save by day 300, and every clone() (one per tick AND one per player tap) deep-copies the
+// lot. Bound the closed-contract history the way the other collections are bounded.
+//
+// Nothing outside the Bids list reads a closed contract except by id, via site.contractId,
+// so anything a live site still points at is kept regardless of age. The tail kept beyond
+// that is far longer than getTutorialStepIndex()'s "has the player ever bid?" check needs.
+const CONTRACT_HISTORY_KEEP = 40;
+
+export function pruneContractHistory(g) {
+  if (!Array.isArray(g.contracts)) return;
+  const currentDay = g.day || 1;
+  if (currentDay <= 10) return;
+  const liveContractIds = new Set((g.activeSites || []).map((s) => s.contractId));
+  const kept = [];
+  const history = [];
+  for (const c of g.contracts) {
+    if (c.status === "Open" || liveContractIds.has(c.id)) { kept.push(c); continue; }
+    // Contracts a rival snapped up are pure noise once they are well past expiry.
+    if (c.status === "Taken" && (c.expiresDay || 0) < currentDay - 10) continue;
+    history.push(c);
+  }
+  // history keeps insertion order, so its tail is the most recent.
+  g.contracts = [...kept, ...history.slice(-CONTRACT_HISTORY_KEEP)];
+}
+
 function cleanStaleState(g) {
   if (Array.isArray(g.logs))     g.logs = g.logs.slice(0, 25);
   if (Array.isArray(g.opsFeed))  g.opsFeed = g.opsFeed.slice(0, 20);
   g.eventLog = (g.eventLog || []).slice(0, 50);
-  if (Array.isArray(g.contracts) && g.day > 10) {
-    const currentDay = g.day || 1;
-    g.contracts = g.contracts.filter((c) => c.status !== "Taken" || (c.expiresDay || 0) >= currentDay - 10);
-  }
+  pruneContractHistory(g);
   if (Array.isArray(g.activeSites)) {
     for (const site of g.activeSites) {
       if (Array.isArray(site.chaosHistory)) site.chaosHistory = site.chaosHistory.slice(0, 10);
@@ -3611,6 +3637,7 @@ export function gameTick(prev) {
         }
         // Remediation is a cost this project caused — it belongs in this project's P&L.
         accrueProjectCost(site, "incidents", inspPenalty);
+        if (inspPenalty > 0) recordTransaction(g, "fines", -inspPenalty, `${site.label}: ${completedPhaseName} remediation`);
         g.pendingInspection = { siteId: site.id, siteLabel: site.label, phaseName: completedPhaseName, outcome: inspOutcome, penaltyApplied: inspPenalty };
       }
 
@@ -3632,6 +3659,7 @@ export function gameTick(prev) {
         g.cash += earned;
         g.revenue += earned;
         g.weeklyStats.revenue += earned;
+        if (earned > 0) recordTransaction(g, "contracts", earned, `${site.label}: final payment`);
         g.completedJobs = (g.completedJobs || 0) + 1;
         if (!g.cityJobsWon) g.cityJobsWon = {};
         const completedCityKey = site.cityId || "salem";
@@ -3649,6 +3677,7 @@ export function gameTick(prev) {
           qualityBonus = Math.round(earned * (effectiveQuality - 1.0) * 0.4);
           g.cash += qualityBonus;
           g.revenue += qualityBonus;
+          if (qualityBonus > 0) recordTransaction(g, "bonuses", qualityBonus, `${site.label}: quality bonus`);
         }
         // What the project actually made, not just what it paid out. `site.costs` has been
         // accumulating materials, crew-days, machine-days and on-site problems since
@@ -3776,6 +3805,7 @@ export function gameTick(prev) {
           g.cash -= site.completionBonus;
           g.expenses += site.completionBonus;
           g.weeklyStats.expenses += site.completionBonus;
+          recordTransaction(g, "payroll", -site.completionBonus, `${site.label}: crew completion bonus`);
           for (const id of (site.assignedCrewIds || [])) {
             const w = g.crew.find(c => c.id === id);
             if (w) { w.mood = Math.min(100, (w.mood ?? 50) + 15); w.loyalty = Math.min(100, (w.loyalty ?? 50) + 8); }
@@ -3984,6 +4014,7 @@ export function gameTick(prev) {
       const streakBonus = Math.min(500, (g.consecutiveLoginDays||1) * 50);
       if ((g.consecutiveLoginDays||0) >= 3) {
         g.cash += streakBonus;
+        recordTransaction(g, "bonuses", streakBonus, `${g.consecutiveLoginDays}-day login streak bonus`);
         addLog(g, `🎯 ${g.consecutiveLoginDays}-day streak! Bonus: ${money(streakBonus)}.`);
       }
     } else if (daysSinceLogin > 2) {
@@ -4008,6 +4039,13 @@ export function gameTick(prev) {
     g.cash -= totalOverhead;
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
+
+    // Daily overhead is the single largest line in the game's cash flow. Split it into the
+    // three things it actually is, so Finance shows "Payroll / Property / Equipment"
+    // instead of one "Uncategorized operating expense" from the reconciler.
+    if (Math.round(dailyPayroll) > 0) recordTransaction(g, "payroll", -Math.round(dailyPayroll), "Daily crew and office payroll");
+    if (Math.round(dailyRent) > 0) recordTransaction(g, "property", -Math.round(dailyRent), `${office.name}: daily rent`);
+    if (Math.round(equipCost) > 0) recordTransaction(g, "equipment", -Math.round(equipCost), "Equipment daily running cost");
 
     // Attribute today's crew and machine cost to the projects those people and machines
     // are actually standing on. Attribution only — the cash already left in the sweep
@@ -4138,9 +4176,12 @@ export function gameTick(prev) {
     while (g.contracts.filter((c) => c.status === "Open").length < 5) {
       g.contracts.push(createContract(g));
     }
-    // Expire old contracts — preserve all non-Open entries, cap Open pool at 7
+    // Expire old contracts — cap the Open pool at 7, then bound the closed history. This
+    // ran only on app load before, so a long uninterrupted session grew the save without
+    // limit; a live session needs the same bound the loader applies.
     const openPool = g.contracts.filter((c) => c.status === "Open");
     g.contracts = [...g.contracts.filter((c) => c.status !== "Open"), ...openPool.slice(0, 7)];
+    pruneContractHistory(g);
 
     // Material price fluctuation
     for (const m of MATERIAL_DEFS) {
@@ -4176,6 +4217,7 @@ export function gameTick(prev) {
         if (loan.weeksLeft <= 0) continue;
         if (g.cash >= loan.weeklyPayment) {
           g.cash -= loan.weeklyPayment;
+          recordTransaction(g, "financing", -loan.weeklyPayment, `${loan.label}: weekly repayment`);
           loan.remainingBalance = Math.max(0, loan.remainingBalance - loan.weeklyPayment);
           loan.weeksLeft -= 1;
           if (loan.weeksLeft <= 0) addLog(g, `✅ Loan "${loan.label}" fully repaid!`);
@@ -4205,6 +4247,7 @@ export function gameTick(prev) {
           g.cash += _propIncome;
           g.revenue += _propIncome;
           g.weeklyStats.revenue = (g.weeklyStats.revenue || 0) + _propIncome;
+          recordTransaction(g, "property", _propIncome, "Weekly property income");
           addLog(g, `🏗️ Property income: +${money(_propIncome)} passive revenue from ${_ownedProps.length} propert${_ownedProps.length === 1 ? 'y' : 'ies'}.`);
         }
       }
@@ -4235,6 +4278,7 @@ export function gameTick(prev) {
         g.revenue += _savInt;
         g.weeklyStats.revenue += _savInt;
         g.weeklyStats.savingsInterest = (g.weeklyStats.savingsInterest || 0) + _savInt;
+        recordTransaction(g, "financing", _savInt, "Reserve savings interest");
         if (g.day % 7 === 0) addLog(g, `🏦 Reserve savings earned ${money(g.weeklyStats.savingsInterest || _savInt)} in interest this week. Balance: ${money(g.savings)}.`);
       }
     }
@@ -4246,6 +4290,12 @@ export function gameTick(prev) {
         g.creditLine.drawn = (g.creditLine.drawn || 0) + _clInt;
         g.expenses += _clInt;
         g.weeklyStats.expenses += _clInt;
+        // This interest is capitalised into the drawn balance rather than paid in cash, so
+        // it raises g.expenses without moving g.cash. Left unrecorded, the reconciler saw an
+        // unexplained expense AND an unexplained cash surplus and logged a phantom pair
+        // ("Uncategorized operating expense" + "Financing or balance transfer in") every
+        // single day a balance was drawn. Naming it here absorbs both.
+        recordTransaction(g, "financing", -_clInt, "Credit line interest charged");
       }
     }
 
@@ -4260,6 +4310,7 @@ export function gameTick(prev) {
       if (g.day <= 10 && g.cash < -500) {
         const grant = Math.abs(g.cash) + 1000;
         g.cash += grant;
+        recordTransaction(g, "bonuses", grant, "Startup emergency grant");
         addLog(g, `🆘 Emergency grant: +${money(grant)} — business is not allowed to die on Day ${g.day}.`);
       }
     }
@@ -4287,6 +4338,7 @@ export function gameTick(prev) {
       if (_curRank === 1 && !g._rankOneCelebrated) {
         g._rankOneCelebrated = true;
         g.cash += 10000; g.revenue += 10000;
+        recordTransaction(g, "bonuses", 10000, "National Rank #1 reward");
         g.reputation = Math.min(100, (g.reputation||0) + 3);
         addImportantNotice(g, "🏆 You are now the #1 construction company in America! +$10,000 + 3 rep.", "green");
         addLog(g, "🏆 Reached National Rank #1 — construction dynasty rising!");
@@ -4304,13 +4356,17 @@ export function gameTick(prev) {
         if (_val >= vm.v && !g._valuationMilestonesHit.includes(vm.label)) {
           g._valuationMilestonesHit.push(vm.label);
           g.cash += vm.reward; g.revenue += vm.reward;
+          recordTransaction(g, "bonuses", vm.reward, `${vm.label} valuation milestone`);
           g.reputation = Math.min(100, (g.reputation||0) + vm.rep);
           addImportantNotice(g, `💰 ${vm.label} valuation milestone! +${money(vm.reward)} + ${vm.rep} rep.`, "green");
         }
       }
       // Dynasty trigger: Level 10 + Rank #1 + no debt
       const _compLevel = COMPANY_LEVELS.slice().reverse().find(l => (g.reputation||0) >= l.repMin && (g.completedJobs||0) >= l.jobsMin && computeValuation(g) >= l.valMin) || COMPANY_LEVELS[0];
-      const _totalDebt = (g.loans||[]).reduce((s,l)=>s+(l.remaining||0),0);
+      // Loans carry `remainingBalance`; the old `l.remaining` read undefined on every loan,
+      // so this always summed to 0 and the debt-free condition below was never actually
+      // checked — Dynasty could be claimed with loans still outstanding.
+      const _totalDebt = (g.loans||[]).reduce((s,l)=>s+(l.remainingBalance||0),0);
       if (_compLevel.level >= 10 && _curRank === 1 && _totalDebt === 0 && !g._pendingPrestige && !g.hallOfFame?.prestigeReached) {
         g._pendingPrestige = true;
         addImportantNotice(g, "👑 Dynasty conditions met — Level 10, Rank #1, debt-free! Claim your Legacy on the Empire tab.", "green");
@@ -4328,6 +4384,7 @@ export function gameTick(prev) {
       if (plan && plan.monthlyPremium > 0) {
         g.cash -= plan.monthlyPremium;
         g.expenses += plan.monthlyPremium;
+        recordTransaction(g, "insurance", -plan.monthlyPremium, `${plan.label}: monthly premium`);
         addLog(g, `🛡️ Insurance premium paid: ${money(plan.monthlyPremium)} (${plan.label})`);
       }
     }
@@ -4405,6 +4462,7 @@ export function gameTick(prev) {
     if (subPayroll > 0) {
       g.cash -= subPayroll;
       g.expenses += subPayroll;
+      recordTransaction(g, "payroll", -Math.round(subPayroll), "Subcontractor day rates");
     }
     // Reliability check — unreliable subs may be absent
     for (const sc of g.subcontractors) {
@@ -4424,7 +4482,11 @@ export function gameTick(prev) {
     const activeEvent = g.activeMarketEvent ? MARKET_EVENTS.find((e) => e.id === g.activeMarketEvent) : null;
     if (activeEvent && activeEvent.equipDailyCostMult !== 1.0) {
       const surcharge = Math.round(g.equipment.reduce((s, e) => s + e.dailyCost, 0) * (activeEvent.equipDailyCostMult - 1));
-      if (surcharge > 0) { g.cash -= surcharge; g.expenses += surcharge; }
+      if (surcharge > 0) {
+        g.cash -= surcharge;
+        g.expenses += surcharge;
+        recordTransaction(g, "equipment", -surcharge, `${activeEvent.label}: equipment cost surcharge`);
+      }
     }
 
     // ── Regional office rent ───────────────────────────────────────────────────
@@ -4432,18 +4494,30 @@ export function gameTick(prev) {
       const def = REGIONAL_OFFICE_TYPES.find(t=>t.id===o.typeId);
       return s + (def ? def.dailyRent : 0);
     }, 0);
-    if (officeRent > 0) { g.cash -= officeRent; g.expenses += officeRent; }
+    if (officeRent > 0) {
+      g.cash -= officeRent;
+      g.expenses += officeRent;
+      recordTransaction(g, "property", -officeRent, "Regional office rent");
+    }
 
     // ── Property running costs ────────────────────────────────────────────────
     const propCost = (g.properties||[]).reduce((s,p) => {
       const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
       return s + (def ? def.dailyCost : 0);
     }, 0);
-    if (propCost > 0) { g.cash -= propCost; g.expenses += propCost; }
+    if (propCost > 0) {
+      g.cash -= propCost;
+      g.expenses += propCost;
+      recordTransaction(g, "property", -propCost, "Property running costs");
+    }
 
     // ── PM payroll ─────────────────────────────────────────────────────────────
     const pmPayroll = (g.projectManagers||[]).reduce((s,pm) => s + (pm.wagePerDay||0), 0);
-    if (pmPayroll > 0) { g.cash -= pmPayroll; g.expenses += pmPayroll; }
+    if (pmPayroll > 0) {
+      g.cash -= pmPayroll;
+      g.expenses += pmPayroll;
+      recordTransaction(g, "payroll", -pmPayroll, "Project manager payroll");
+    }
 
     // ── PM auto-management: senior PMs unpause stalled sites ──────────────────
     const hasAutoMgr = (g.projectManagers||[]).some(pm => {
@@ -4609,6 +4683,7 @@ export function gameTick(prev) {
           if (g.cash >= repCost) {
             g.cash -= repCost;
             g.expenses = (g.expenses || 0) + repCost;
+            recordTransaction(g, "maintenance", -repCost, `${eq.name}: auto-repair`);
             eq.condition = Math.min(100, (eq.condition || 0) + 40);
             if (eq.status === "Broken") eq.status = "Idle";
             addLog(g, `🔧 Auto-repaired ${eq.name} — ${money(repCost)}.`);
@@ -4638,6 +4713,7 @@ export function gameTick(prev) {
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[matId] = needed;
             accrueProjectCost(site, "materials", cost);
+            recordTransaction(g, "materials", -cost, `${site.label}: auto-purchased ${shortage} ${matId}`);
             addLog(g, `⚡ Auto-purchased ${shortage} ${matId} for "${site.label}" — ${money(cost)}.`);
           }
         }
@@ -4771,6 +4847,7 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
   for (let i = 0; i < clampedTicks; i++) {
     const cashBefore = g.cash;
     g = gameTick(g);
+    const cashAfterTick = g.cash;
     // Offline payroll protection: if a single tick would burn more than 50% of
     // a positive cash balance, cap the loss so the player doesn't log back in bankrupt
     if (cashBefore > 0 && g.cash < cashBefore * 0.5 && g.cash < 0) {
@@ -4779,6 +4856,14 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
     // Hard bankruptcy floor: never go below -$50,000
     if (g.cash < -50000) {
       g.cash = -50000;
+    }
+    // Both clamps hand cash back without touching g.expenses, so the ledger reconciler
+    // would otherwise see cash it cannot explain and file it as "Financing or balance
+    // transfer in" — a line that reads like a loan the player never took. Name it for
+    // what it is; recordTransaction also re-baselines the reconciler's snapshot.
+    const relief = Math.round(g.cash - cashAfterTick);
+    if (relief > 0) {
+      recordTransaction(g, "bonuses", relief, "Offline hardship relief");
     }
   }
 
@@ -5013,6 +5098,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.equipment.length >= totalEquipCap) { const a = buildCapacityAlert({ kind: "equipment", current: g.equipment.length, cap: totalEquipCap }); Alert.alert(a.title, a.body); return; }
       g.cash -= effectivePrice;
       g.expenses += effectivePrice;
+      recordTransaction(g, "equipment", -effectivePrice, `Bought ${isUsed ? "used " : ""}${item.name}`);
       const equip = createEquipment(item);
       if (isUsed) {
         equip.condition = rand(40, 68);
@@ -5071,6 +5157,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < cost) { alertInsufficientFunds(g, cost, "This repair"); return; }
       g.cash -= cost;
       g.expenses += cost;
+      recordTransaction(g, "maintenance", -cost, `${e.name}: repair and refuel`);
       e.condition = 100;
       e.fuel = e.fuelCap;
       e.status = "Idle";
@@ -5087,6 +5174,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const salePrice = Math.round(e.price * 0.45 * (e.condition / 100));
       g.cash += salePrice;
       g.revenue += salePrice;
+      recordTransaction(g, "sales", salePrice, `Sold ${e.name}`);
       g.equipment = g.equipment.filter((eq) => eq.id !== equipId);
       addLog(g, `💸 Sold ${e.name} for ${money(salePrice)}.`);
     });
@@ -5100,6 +5188,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < bonus) { alertInsufficientFunds(g, bonus, "This hire's signing bonus"); return; }
       g.cash -= bonus;
       g.expenses += bonus;
+      if (bonus > 0) recordTransaction(g, "payroll", -bonus, `${applicant.name}: signing bonus`);
       g.applicants = g.applicants.filter((a) => a.id !== applicant.id);
       const _newWorker = {
         ...createWorker(applicant.role),
@@ -5155,6 +5244,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < posting.cost) { alertInsufficientFunds(g, posting.cost, "This job ad"); return; }
       g.cash -= posting.cost;
       g.expenses += posting.cost;
+      recordTransaction(g, "payroll", -posting.cost, "Recruitment job advert");
       for (let i = 0; i < posting.count; i++) {
         g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, wageMin: posting.wageMin, wageMax: posting.wageMax, quality: posting.quality }));
       }
@@ -5176,6 +5266,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.expenses += totalCost;
       g.materials[matId] = (g.materials[matId] || 0) + qty;
       const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+      recordTransaction(g, "materials", -totalCost, `Bought ${qty} ${mat?.unit || "units"} of ${mat?.label || matId}`);
       addLog(g, `📦 Purchased ${qty} ${mat?.unit || "units"} of ${mat?.label || matId} for ${money(totalCost)}.`);
     });
   }, [update]);
@@ -5204,6 +5295,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + canBuy;
             budget -= cost;
             accrueProjectCost(site, "materials", cost);
+            recordTransaction(g, "materials", -cost, `${site.label}: ${canBuy} ${m.unit} of ${m.label}`);
             addLog(g, `📦 Partial buy: ${canBuy} ${m.unit} of ${m.label} for ${money(cost)}.`);
           }
         }
@@ -5211,6 +5303,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         g.cash -= totalCost;
         g.expenses += totalCost;
         accrueProjectCost(site, "materials", totalCost);
+        recordTransaction(g, "materials", -totalCost, `${site.label}: site materials`);
         for (const m of missing) {
           if (!site.materialsFulfilled) site.materialsFulfilled = {};
           site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -5338,6 +5431,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, "This subcontractor"); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
+      recordTransaction(g, "payroll", -def.hireCost, `${def.label}: subcontractor hire fee`);
       if (!g.subcontractors) g.subcontractors = [];
       g.subcontractors.push(createSubcontractor(typeId));
       addLog(g, `🤝 Hired ${def.label} for ${def.durationDays} days — ${money(def.hireCost)} upfront.`);
@@ -5400,6 +5494,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < g.taxDue) { alertInsufficientFunds(g, g.taxDue, "This tax bill"); return; }
       g.cash -= g.taxDue;
       g.expenses += g.taxDue;
+      recordTransaction(g, "taxes", -g.taxDue, "Tax bill paid");
       addLog(g, `✅ Tax bill of ${money(g.taxDue)} paid.`);
       g.taxDue = 0;
       g.taxOverdueDays = 0;
@@ -5418,6 +5513,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       }
       g.cash -= amt;
       g.savings = (g.savings || 0) + amt;
+      recordTransaction(g, "financing", -amt, "Transfer to reserve savings");
       addLog(g, `🏦 Deposited ${money(amt)} into savings. Reserve: ${money(g.savings)}.`);
     });
   }, [update]);
@@ -5432,6 +5528,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       }
       g.savings -= amt;
       g.cash += amt;
+      recordTransaction(g, "financing", amt, "Transfer from reserve savings");
       addLog(g, `🏦 Withdrew ${money(amt)} from savings. Reserve: ${money(g.savings)}.`);
     });
   }, [update]);
@@ -5452,6 +5549,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       }
       g.cash -= payoffAmount;
       g.expenses += payoffAmount;
+      recordTransaction(g, "financing", -payoffAmount, `${loan.label}: early payoff`);
       g.loans = g.loans.filter(l => l.id !== loanId);
       g.creditScore = Math.min(850, (g.creditScore || 600) + 5);
       addLog(g, `✅ "${loan.label}" paid off early. Credit +5.`);
@@ -5474,6 +5572,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const actualAmt = Math.min(amt, loan.remainingBalance);
       g.cash -= actualAmt;
       g.expenses += actualAmt;
+      recordTransaction(g, "financing", -actualAmt, `${loan.label}: extra payment`);
       loan.remainingBalance -= actualAmt;
       loan.weeksLeft = Math.max(0, Math.ceil(loan.remainingBalance / (loan.weeklyPayment || 1)));
       if (loan.remainingBalance <= 0) {
@@ -5506,6 +5605,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (amt <= 0) { Alert.alert("No Credit Available", "Credit limit reached."); return; }
       g.creditLine.drawn = (g.creditLine.drawn || 0) + amt;
       g.cash += amt;
+      recordTransaction(g, "financing", amt, "Credit line draw");
       addLog(g, `💳 Drew ${money(amt)} from credit line. Total drawn: ${money(g.creditLine.drawn)}.`);
     });
   }, [update]);
@@ -5518,6 +5618,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.creditLine.drawn -= amt;
       g.cash -= amt;
       g.expenses += amt;
+      recordTransaction(g, "financing", -amt, "Credit line repayment");
       if (g.creditLine.drawn <= 0) {
         g.creditLine.drawn = 0;
         addLog(g, `✅ Credit line fully repaid.`);
@@ -5534,6 +5635,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < next.cost) { alertInsufficientFunds(g, next.cost, next.name || "This office upgrade"); return; }
       g.cash -= next.cost;
       g.expenses += next.cost;
+      recordTransaction(g, "property", -next.cost, `Moved into ${next.name}`);
       g.officeIndex += 1;
       addLog(g, `🏢 Upgraded to ${next.name} — crew cap ${next.crewCap}, equip cap ${next.equipCap}.`);
     });
@@ -5577,6 +5679,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < def.cost) { alertInsufficientFunds(g, def.cost, def.name); return; }
       g.cash -= def.cost;
       g.expenses += def.cost;
+      recordTransaction(g, "property", -def.cost, `Bought ${def.name}`);
       if (!g.properties) g.properties = [];
       g.properties.push({ id: uid(), typeId, name: def.name, purchasedDay: g.day });
       addLog(g, `🏠 Purchased ${def.name} — ${def.desc}`);
@@ -5592,6 +5695,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, `Hiring a ${def.name || "project manager"}`); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
+      recordTransaction(g, "payroll", -def.hireCost, `${def.name}: hiring fee`);
       if (!g.projectManagers) g.projectManagers = [];
       g.projectManagers.push({ id: uid(), typeId: pmTypeId, name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`, wagePerDay: def.wagePerDay });
       addLog(g, `📋 ${def.name} hired — ${def.desc}`);
@@ -5628,6 +5732,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (alreadyEnrolled) { Alert.alert("Already Training", "This worker is already enrolled in a program."); return; }
       g.cash -= prog.cost;
       g.expenses += prog.cost;
+      recordTransaction(g, "payroll", -prog.cost, `${w.name}: ${prog.label} training`);
       if (!g.trainingQueue) g.trainingQueue = [];
       g.trainingQueue.push({ id: uid(), workerId, programId, daysLeft: prog.duration });
       addLog(g, `📚 ${w.name} enrolled in "${prog.label}" — completes in ${prog.duration} days.`);
@@ -5674,6 +5779,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const salePrice = Math.round((def?.cost||0) * (def?.resaleRate||0.8));
       g.cash += salePrice;
       g.revenue += salePrice;
+      recordTransaction(g, "sales", salePrice, `Sold ${def?.name || "property"}`);
       g.properties = g.properties.filter(p => p.id !== propId);
       addLog(g, `💸 Sold ${def?.name||"property"} for ${money(salePrice)}.`);
     });
@@ -5948,7 +6054,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   if (!loaded || !game) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: THEMES.dark.bg, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: THEMES.dark.text, fontSize: 18 }}>Loading ConstructionFlow…</Text>
+        <Text style={{ color: THEMES.dark.text, fontSize: 18 }}>Loading Construction Flow…</Text>
       </SafeAreaView>
     );
   }
@@ -6045,7 +6151,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       <SafeAreaView style={{ flex: 1, backgroundColor: T.bg }}>
         <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 60, flexGrow: 1, justifyContent: "center" }}>
           <Text style={{ fontSize: 36, textAlign: "center", marginBottom: 4 }}>🏗️</Text>
-          <Text style={{ color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }}>ConstructionFlow</Text>
+          <Text style={{ color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }}>Construction Flow</Text>
           <Text style={{ color: T.sub, fontSize: 14, textAlign: "center", marginBottom: 32 }}>Build a construction empire from the ground up.</Text>
 
           {/* Step indicator */}
@@ -9104,7 +9210,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             <Text style={{ color: T.sub, fontSize: 13, fontWeight: "600" }}>‹ Hub</Text>
           </TouchableOpacity>
         )}
-        <Text style={{ flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }}>ConstructionFlow</Text>
+        <Text style={{ flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }}>Construction Flow</Text>
         <View style={{ backgroundColor: (game.cash >= 0 ? T.green : T.red) + "22", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
           <Text style={{ color: game.cash >= 0 ? T.green : T.red, fontSize: 12, fontWeight: "700" }}>{money(game.cash)}</Text>
         </View>
