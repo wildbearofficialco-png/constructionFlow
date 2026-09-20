@@ -1,13 +1,38 @@
 {
   "expo": {
-    "name": "constructionFlow",
-    "slug": "constructionFlow",
+    "name": "Construction Flow",
+    "slug": "constructionflow",
+    "owner": "wildbear",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/construction/icon.png",
     "scheme": "constructionflow",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#071224",
+    "primaryColor": "#f59e0b",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "co.wildbear.constructionflow",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          }
+        ]
+      }
+    },
     "android": {
+      "package": "co.wildbear.constructionflow",
+      "versionCode": 1,
+      "permissions": [],
       "adaptiveIcon": {
         "backgroundColor": "#f59e0b",
         "foregroundImage": "./assets/construction/adaptive-icon.png"
@@ -32,6 +57,11 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "72e9062c-b382-478a-b226-b3ea5559e117"
+      }
     }
   }
 }

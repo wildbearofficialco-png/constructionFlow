@@ -59,7 +59,7 @@ class AppErrorBoundary extends React.Component<
                 marginBottom: 10,
               }}
             >
-              ConstructionFlow hit a bump
+              Construction Flow hit a bump
             </Text>
             <Text
               style={{

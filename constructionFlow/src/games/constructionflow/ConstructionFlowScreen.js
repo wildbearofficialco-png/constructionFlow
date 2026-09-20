@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
+import CollapsibleSection from "../../components/CollapsibleSection.js";
 import {
   tickEmployeePersonalities,
   applyDailyPersonalityEvents,
@@ -21,6 +22,37 @@ import { tickPerformanceReviews, tickTeamMorale } from "../../systems/staffPerfo
 import { tickContractRFPs } from "../../systems/contractBidding.js";
 import { initAnalytics, tickAnalytics } from "../../systems/analyticsEngine.js";
 import { initTerritories, tickTerritories } from "../../systems/territorySystem.js";
+import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
+import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
+import { recordTransaction } from "../../systems/financialLedger.js";
+import {
+  getConstructionRegionalSnapshot,
+  applyRegionalContractValue,
+  applyRegionalMaterialPrice,
+  applyRegionalWage,
+} from "../../systems/constructionRegionalEconomy.js";
+import {
+  initEquipmentProfile,
+  tickEquipmentWear,
+  scheduleMaintenance,
+} from "../../systems/equipmentWear.js";
+import {
+  buildInsufficientFundsAlert,
+  buildAssignBlockAlert,
+  buildCreditTooLowAlert,
+  buildCapacityAlert,
+} from "../../systems/recoveryGuidance.js";
+import {
+  OVERHEAD_NOTE,
+  estimateProjectCosts,
+  createProjectCostLedger,
+  ensureProjectCostLedger,
+  accrueProjectCost,
+  accrueProjectCrewDay,
+  buildProjectEconomics,
+  getProjectReinvestmentHint,
+  buildProjectProfitLines,
+} from "../../systems/projectEconomics.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1820,15 +1852,43 @@ export const ACHIEVEMENTS_LIST = [
   { id:"big_contract",      title:"Big Score",          icon:"ribbon",             desc:"Win a government or mega contract",    check:(g)=>(g.legacyStats?.totalContractsWon||0)>=1&&(g.cityOffices||[]).length>=1 },
 ];
 
-const LOAN_PRODUCTS = [
-  { id: "micro",             label: "Emergency Micro Loan",    minCredit: 500, principal: 8000,   apr: 22, weeks: 8,   maxDebtFactor: 1.5 },
-  { id: "working",           label: "Working Capital Loan",    minCredit: 560, principal: 20000,  apr: 14, weeks: 16,  maxDebtFactor: 2.5 },
-  { id: "equipment",         label: "Equipment Finance Loan",  minCredit: 620, principal: 60000,  apr: 10, weeks: 28,  maxDebtFactor: 3.5 },
-  { id: "expansion",         label: "Growth Loan",             minCredit: 680, principal: 150000, apr: 8,  weeks: 40,  maxDebtFactor: 5.0 },
-  { id: "emergency_line",    label: "Emergency Credit Line",   minCredit: 500, principal: 5000,   apr: 22, weeks: 8,   maxDebtFactor: 1.5 },
-  { id: "equipment_finance", label: "Equipment Financing",     minCredit: 560, principal: 35000,  apr: 10, weeks: 52,  maxDebtFactor: 3.0 },
-  { id: "mega_bond",         label: "Infrastructure Bond",     minCredit: 720, principal: 500000, apr: 7,  weeks: 260, maxDebtFactor: 8.0 },
-];
+const LOAN_PRODUCTS = LENDING_PRODUCTS;
+
+function getLendingCollateral(g, product) {
+  const equipment = g.equipment || [];
+  const appraised = equipment.map((e) => ({
+    id: e.id,
+    value: Math.max(0, Math.round((e.price || 0) * ((e.condition ?? 100) / 100))),
+  }));
+  if (product?.collateralType === "vehicle") {
+    return appraised.sort((a, b) => b.value - a.value)[0] || { id: null, value: 0 };
+  }
+  if (product?.collateralType === "fleet") {
+    return { id: null, value: appraised.reduce((sum, e) => sum + e.value, 0) };
+  }
+  if (product?.collateralType === "company") {
+    return { id: null, value: Math.max(0, computeValuation(g)) };
+  }
+  return { id: null, value: 0 };
+}
+
+function buildBorrowerProfile(g, product) {
+  const collateral = getLendingCollateral(g, product);
+  const existingDebt = (g.loans || []).reduce((sum, loan) => sum + (loan.remainingBalance || 0), 0);
+  const missedPaymentCount = (g.loans || []).reduce((sum, loan) => sum + (loan.missedPayments || 0), 0);
+  const weeklyRevenue = g.weeklyStats?.revenue || 0;
+  const weeklyExpenses = g.weeklyStats?.expenses || 0;
+  return {
+    creditScore: g.creditScore || 600,
+    companyValue: Math.max(0, computeValuation(g)),
+    cashFlow: weeklyRevenue - weeklyExpenses,
+    existingDebt,
+    missedPaymentCount,
+    companyAgeDays: g.day || 0,
+    collateralValue: collateral.value,
+    economyMult: getConstructionRegionalSnapshot(g).lendingEconomyMult,
+  };
+}
 
 // ─── Job Postings ────────────────────────────────────────────────────────────────
 
@@ -1979,6 +2039,7 @@ function applyIncident(g, severity) {
   const netCost = applyInsuranceClaim(g, rawCost);
   g.cash -= netCost;
   g.expenses += netCost;
+  if (netCost > 0) recordTransaction(g, "fines", -netCost, `Safety incident (level ${severity})`);
   g.incidentHistory.push({ day: g.day, severity, desc: "Safety incident level " + severity });
   if (g.incidentHistory.length > 50) g.incidentHistory = g.incidentHistory.slice(-50);
 }
@@ -2050,7 +2111,8 @@ export function createContract(state, forcedDefId) {
   const contractCityId = pickContractCity(state);
   const baseDeadline = state.day + def.durationDays + rand(2, 6);
   const seasonMult = state.seasonContractMult || 1.0;
-  const enhanced = enhanceContractValue(def, state, { value: Math.round(def.baseValue * seasonMult), deadline: baseDeadline });
+  const regionAdjustedBase = applyRegionalContractValue(def.baseValue, state);
+  const enhanced = enhanceContractValue(def, state, { value: Math.round(regionAdjustedBase * seasonMult), deadline: baseDeadline });
 
   const contract = {
     id: uid(), defId: def.id, label: def.label, category: def.category || "Commercial",
@@ -2128,6 +2190,43 @@ function createLoanFromProduct(product, state) {
   };
 }
 
+// Shows the shared "not enough cash" alert, with the recovery routes that are actually open
+// to this company right now. Every affordability check in the game funnels through here so
+// the advice can never drift between screens.
+function alertInsufficientFunds(state, cost, purchase) {
+  const { title, body } = buildInsufficientFundsAlert({
+    cost,
+    purchase,
+    cash: state?.cash || 0,
+    savings: state?.savings || 0,
+    hasActiveSites: (state?.activeSites || []).length > 0,
+    creditScore: state?.creditScore || 600,
+    // Three concurrent loans is the game's own ceiling — do not advise borrowing at it.
+    canBorrow: (state?.loans || []).length < 3,
+    formatMoney: money,
+  });
+  Alert.alert(title, body);
+}
+
+// Classifies a block reason so the alert can name the route to fixing it. Kept next to the
+// reason strings themselves so the two cannot fall out of sync.
+function getAssignBlockKind(contract, crewIds, equipIds, state) {
+  if (!contract) return "none";
+  if (state.businessFrozen) return "frozen";
+  const def = CONTRACT_DEFS.find((d) => d.id === contract.defId) || {};
+  const bestTier = Math.max(0, ...equipIds.map((id) => {
+    const e = state.equipment.find((eq) => eq.id === id);
+    return e ? e.tier : 0;
+  }));
+  if (equipIds.length < (def.equipMin || 1)) return "equipment";
+  if (crewIds.length < (def.crewMin || 1)) return "crew";
+  if (bestTier < (def.minTier || 1)) return "tier";
+  for (const matId of Object.keys(contract.materials || {})) {
+    if ((state.materials[matId] || 0) < contract.materials[matId]) return "materials";
+  }
+  return "none";
+}
+
 function getAssignBlockReason(contract, crewIds, equipIds, state) {
   if (!contract) return "No contract selected.";
   if (state.businessFrozen) return "Business is frozen — resolve overdue taxes.";
@@ -2150,6 +2249,17 @@ function getAssignBlockReason(contract, crewIds, equipIds, state) {
   return null;
 }
 
+// The price one unit of a material costs right now, after regional pricing and the
+// player's bulk discount. Shared so that what a project is *charged* for a material and
+// what the shop *quotes* for it can never drift apart (WildBear standard: "displayed price
+// and charged price must use the same calculation path").
+function getMaterialUnitPrice(game, matId) {
+  const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+  const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+  const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
+  return Math.round(basePrice * (1 - (game ? getMaterialDiscount(game) : 0)));
+}
+
 // Returns array of { matId, label, icon, unit, needed, fulfilled, missing, pricePerUnit, costNormal, costEmergency }
 function getSiteMissingMaterials(site, contractDef, game) {
   if (!contractDef?.materials) return [];
@@ -2159,7 +2269,8 @@ function getSiteMissingMaterials(site, contractDef, game) {
     const shortfall = Math.max(0, needed - fulfilled);
     if (shortfall === 0) return acc;
     const mat = MATERIAL_DEFS.find(m => m.id === matId);
-    const basePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+    const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
+    const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
     const pricePerUnit = Math.round(basePrice * (1 - disc));
     acc.push({
       matId, needed, fulfilled, missing: shortfall,
@@ -2172,7 +2283,38 @@ function getSiteMissingMaterials(site, contractDef, game) {
   }, []);
 }
 
-function getNextBestAction(s) {
+// Which Getting Started step the player is on, derived purely from game state — there is no
+// stored tutorial cursor, so the card can never get out of step with what the player has
+// actually done. Extracted from renderHome so the bottom nav can mark the same tab the card
+// is pointing at, which is how FleetFlow guides its own first sixty seconds.
+export function getTutorialStepIndex(game) {
+  if (!game || game.tutorialDone) return -1;
+  const sites = game.activeSites || [];
+  const hasActiveSite = sites.length > 0;
+  const hasBid = (game.contracts || []).some((c) => c.status === "Active" || c.status === "Awarded");
+  const needsMaterials = hasActiveSite && sites.some((site) => {
+    const con = (game.contracts || []).find((c) => c.id === site.contractId);
+    const def = CONTRACT_DEFS.find((d) => d.id === con?.defId);
+    return def?.materials && Object.entries(def.materials).some(
+      ([id, qty]) => ((site.materialsFulfilled || {})[id] || 0) < qty,
+    );
+  });
+
+  if (hasActiveSite && !needsMaterials) return 3;
+  if (hasActiveSite && needsMaterials) return 2;
+  if (hasBid) return 1;
+  return 0;
+}
+
+// The tab the tutorial is currently sending the player to, or null when the tutorial is
+// done or the player is already looking at the right tab.
+export function getTutorialTargetTab(game) {
+  const step = getTutorialStepIndex(game);
+  if (step < 0) return null;
+  return step === 0 ? "Bids" : "Sites";
+}
+
+export function getNextBestAction(s) {
   // Priority 1: Business frozen / deep cash crisis
   if (s.businessFrozen) return { title: "Business Frozen", body: "Overdue taxes suspended operations. Pay now in Finance.", tone: "red", tab: "Finance" };
   if ((s.cash || 0) < -1000) return { title: "Cash Crisis", body: "Account is deep in the red. Win and complete jobs urgently.", tone: "red", tab: "Finance" };
@@ -2907,14 +3049,39 @@ function checkSaveIntegrity(savedData) {
   return { valid: issues.length === 0, issues, migrationNeeded };
 }
 
+// Contracts were the only unbounded collection in the save: every contract the player won
+// and every contract a rival took stayed in g.contracts forever, while logs, opsFeed,
+// eventLog and ledger are all capped. Measured growth was linear — 745 entries and a 446 KB
+// save by day 300, and every clone() (one per tick AND one per player tap) deep-copies the
+// lot. Bound the closed-contract history the way the other collections are bounded.
+//
+// Nothing outside the Bids list reads a closed contract except by id, via site.contractId,
+// so anything a live site still points at is kept regardless of age. The tail kept beyond
+// that is far longer than getTutorialStepIndex()'s "has the player ever bid?" check needs.
+const CONTRACT_HISTORY_KEEP = 40;
+
+export function pruneContractHistory(g) {
+  if (!Array.isArray(g.contracts)) return;
+  const currentDay = g.day || 1;
+  if (currentDay <= 10) return;
+  const liveContractIds = new Set((g.activeSites || []).map((s) => s.contractId));
+  const kept = [];
+  const history = [];
+  for (const c of g.contracts) {
+    if (c.status === "Open" || liveContractIds.has(c.id)) { kept.push(c); continue; }
+    // Contracts a rival snapped up are pure noise once they are well past expiry.
+    if (c.status === "Taken" && (c.expiresDay || 0) < currentDay - 10) continue;
+    history.push(c);
+  }
+  // history keeps insertion order, so its tail is the most recent.
+  g.contracts = [...kept, ...history.slice(-CONTRACT_HISTORY_KEEP)];
+}
+
 function cleanStaleState(g) {
   if (Array.isArray(g.logs))     g.logs = g.logs.slice(0, 25);
   if (Array.isArray(g.opsFeed))  g.opsFeed = g.opsFeed.slice(0, 20);
   g.eventLog = (g.eventLog || []).slice(0, 50);
-  if (Array.isArray(g.contracts) && g.day > 10) {
-    const currentDay = g.day || 1;
-    g.contracts = g.contracts.filter((c) => c.status !== "Taken" || (c.expiresDay || 0) >= currentDay - 10);
-  }
+  pruneContractHistory(g);
   if (Array.isArray(g.activeSites)) {
     for (const site of g.activeSites) {
       if (Array.isArray(site.chaosHistory)) site.chaosHistory = site.chaosHistory.slice(0, 10);
@@ -2953,6 +3120,7 @@ export function freshState() {
     cash: 75000, day: 1, gameMinutes: 480,
     reputation: 0, creditScore: 600,
     companyName: "New Build Co.",
+    ownerName: "Owner",
     theme: "dark",
     marketState: "Normal",
     businessFrozen: false,
@@ -3179,6 +3347,9 @@ export function migrateState(saved) {
   if (g._level10Celebrated  === undefined) g._level10Celebrated  = false;
   if (g._valuationMilestonesHit === undefined) g._valuationMilestonesHit = [];
   if (g.clientRelationships === undefined) g.clientRelationships = {};
+  // Company identity. Saves made before the owner was asked for keep playing with the
+  // neutral default rather than being sent back through setup.
+  if (typeof g.ownerName !== "string" || !g.ownerName.trim()) g.ownerName = "Owner";
   // Migrate active sites
   (g.activeSites || []).forEach(s => {
     if (!s._clientCheckins) s._clientCheckins = [];
@@ -3188,6 +3359,11 @@ export function migrateState(saved) {
     if (s.depositPaid      === undefined) s.depositPaid      = 0;
     if (s.completionBonus  === undefined) s.completionBonus  = 0;
     if (s.rushQualityPenalty === undefined) s.rushQualityPenalty = 0;
+    // Per-project P&L. A site that was already running before cost tracking existed gets an
+    // empty ledger and a `costsPartial` flag — it will accrue from today onward, and the
+    // completion screen says the breakdown covers only part of the job rather than
+    // presenting a too-good margin as fact.
+    ensureProjectCostLedger(s);
   });
   // Ensure crew have certifications field
   g.crew = (g.crew || []).map(w => w.certifications ? w : { ...w, certifications: [] });
@@ -3459,6 +3635,9 @@ export function gameTick(prev) {
           g.reputation = Math.max(0, (g.reputation || 0) - 3);
           addLog(g, `❌ ${site.label}: Major inspection failure — ${money(inspPenalty)} cost, site paused.`);
         }
+        // Remediation is a cost this project caused — it belongs in this project's P&L.
+        accrueProjectCost(site, "incidents", inspPenalty);
+        if (inspPenalty > 0) recordTransaction(g, "fines", -inspPenalty, `${site.label}: ${completedPhaseName} remediation`);
         g.pendingInspection = { siteId: site.id, siteLabel: site.label, phaseName: completedPhaseName, outcome: inspOutcome, penaltyApplied: inspPenalty };
       }
 
@@ -3480,6 +3659,7 @@ export function gameTick(prev) {
         g.cash += earned;
         g.revenue += earned;
         g.weeklyStats.revenue += earned;
+        if (earned > 0) recordTransaction(g, "contracts", earned, `${site.label}: final payment`);
         g.completedJobs = (g.completedJobs || 0) + 1;
         if (!g.cityJobsWon) g.cityJobsWon = {};
         const completedCityKey = site.cityId || "salem";
@@ -3497,7 +3677,20 @@ export function gameTick(prev) {
           qualityBonus = Math.round(earned * (effectiveQuality - 1.0) * 0.4);
           g.cash += qualityBonus;
           g.revenue += qualityBonus;
+          if (qualityBonus > 0) recordTransaction(g, "bonuses", qualityBonus, `${site.label}: quality bonus`);
         }
+        // What the project actually made, not just what it paid out. `site.costs` has been
+        // accumulating materials, crew-days, machine-days and on-site problems since
+        // mobilisation; none of it moves cash here, it is only being totalled.
+        const economics = buildProjectEconomics({
+          contractValue: site.totalValue,
+          depositPaid: site.depositPaid || 0,
+          penalty,
+          qualityBonus,
+          costs: ensureProjectCostLedger(site),
+        });
+        site.finalEconomics = economics;
+
         // Story triggers
         if (!g.pendingCelebration) {
           g.pendingCelebration = {
@@ -3505,6 +3698,13 @@ export function gameTick(prev) {
             earned: earned + qualityBonus, penalty, repGained,
             isOnTime: daysLate === 0, isMajor: (siteDef?.baseValue || 0) >= 100000,
             qualityBonus, day: g.day,
+            economics,
+            // The first completed project is the one moment a new player has a concrete
+            // example to learn the unit economics from, so it gets the full breakdown.
+            isFirstProject: (g.completedJobs || 0) === 1,
+            // Old saves have no cost history for projects already running, so the
+            // breakdown would be misleadingly rosy. Say so rather than quietly lying.
+            costsPartial: Boolean(site.costsPartial),
           };
         }
         // Company story milestones
@@ -3605,6 +3805,7 @@ export function gameTick(prev) {
           g.cash -= site.completionBonus;
           g.expenses += site.completionBonus;
           g.weeklyStats.expenses += site.completionBonus;
+          recordTransaction(g, "payroll", -site.completionBonus, `${site.label}: crew completion bonus`);
           for (const id of (site.assignedCrewIds || [])) {
             const w = g.crew.find(c => c.id === id);
             if (w) { w.mood = Math.min(100, (w.mood ?? 50) + 15); w.loyalty = Math.min(100, (w.loyalty ?? 50) + 8); }
@@ -3749,18 +3950,13 @@ export function gameTick(prev) {
       }
     }
 
-    // Equipment wear
+    // Fuel consumption stays site-specific. Condition wear/breakdowns are handled centrally
+    // by tickEquipmentWear() below so there is only one source of truth for maintenance.
     for (const id of site.assignedEquipmentIds) {
       const e = g.equipment.find((eq) => eq.id === id);
       if (!e) continue;
-      e.condition = Math.max(0, e.condition - (0.1 * MINS_PER_TICK / 60));
-      e.fuel = Math.max(0, e.fuel - (0.5 * MINS_PER_TICK / 60));
-      if (e.condition < 20 && e.status === "Active") {
-        e.status = "Maintenance";
-        e.assignedSiteId = null;
-        site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
-        addLog(g, `🔧 ${e.name} pulled from ${site.label} for emergency maintenance.`);
-      } else if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
+      e.fuel = Math.max(0, (e.fuel ?? e.fuelCap ?? 0) - (0.5 * MINS_PER_TICK / 60));
+      if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
         e.status = "Idle";
         e.assignedSiteId = null;
         site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
@@ -3818,6 +4014,7 @@ export function gameTick(prev) {
       const streakBonus = Math.min(500, (g.consecutiveLoginDays||1) * 50);
       if ((g.consecutiveLoginDays||0) >= 3) {
         g.cash += streakBonus;
+        recordTransaction(g, "bonuses", streakBonus, `${g.consecutiveLoginDays}-day login streak bonus`);
         addLog(g, `🎯 ${g.consecutiveLoginDays}-day streak! Bonus: ${money(streakBonus)}.`);
       }
     } else if (daysSinceLogin > 2) {
@@ -3842,6 +4039,42 @@ export function gameTick(prev) {
     g.cash -= totalOverhead;
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
+
+    // Daily overhead is the single largest line in the game's cash flow. Split it into the
+    // three things it actually is, so Finance shows "Payroll / Property / Equipment"
+    // instead of one "Uncategorized operating expense" from the reconciler.
+    if (Math.round(dailyPayroll) > 0) recordTransaction(g, "payroll", -Math.round(dailyPayroll), "Daily crew and office payroll");
+    if (Math.round(dailyRent) > 0) recordTransaction(g, "property", -Math.round(dailyRent), `${office.name}: daily rent`);
+    if (Math.round(equipCost) > 0) recordTransaction(g, "equipment", -Math.round(equipCost), "Equipment daily running cost");
+
+    // Attribute today's crew and machine cost to the projects those people and machines
+    // are actually standing on. Attribution only — the cash already left in the sweep
+    // above; this just records which job it belonged to, so completion can show a margin.
+    // Idle crew and parked equipment are deliberately unattributed: they are company
+    // overhead, and charging them to whichever project happens to be open would make a
+    // profitable job look like it lost money.
+    for (const _site of (g.activeSites || [])) {
+      if (_site.status === "Complete") continue;
+      let _siteWages = 0;
+      let _siteCrewCount = 0;
+      for (const _id of (_site.assignedCrewIds || [])) {
+        const _w = g.crew.find((w) => w.id === _id);
+        if (!_w || _w.onShift === false) continue;
+        _siteWages += (_w.wagePerDay || 0) * (1 + crewWageMod);
+        _siteCrewCount += 1;
+      }
+      let _siteEquip = 0;
+      let _siteEquipCount = 0;
+      for (const _id of (_site.assignedEquipmentIds || [])) {
+        const _e = g.equipment.find((e) => e.id === _id);
+        if (!_e) continue;
+        _siteEquip += _e.dailyCost || 0;
+        _siteEquipCount += 1;
+      }
+      accrueProjectCost(_site, "labor", Math.round(_siteWages));
+      accrueProjectCost(_site, "equipment", Math.round(_siteEquip));
+      accrueProjectCrewDay(_site, _siteCrewCount, _siteEquipCount);
+    }
 
     // Crew stamina recovery
     for (const w of g.crew) {
@@ -3943,9 +4176,12 @@ export function gameTick(prev) {
     while (g.contracts.filter((c) => c.status === "Open").length < 5) {
       g.contracts.push(createContract(g));
     }
-    // Expire old contracts — preserve all non-Open entries, cap Open pool at 7
+    // Expire old contracts — cap the Open pool at 7, then bound the closed history. This
+    // ran only on app load before, so a long uninterrupted session grew the save without
+    // limit; a live session needs the same bound the loader applies.
     const openPool = g.contracts.filter((c) => c.status === "Open");
     g.contracts = [...g.contracts.filter((c) => c.status !== "Open"), ...openPool.slice(0, 7)];
+    pruneContractHistory(g);
 
     // Material price fluctuation
     for (const m of MATERIAL_DEFS) {
@@ -3981,6 +4217,7 @@ export function gameTick(prev) {
         if (loan.weeksLeft <= 0) continue;
         if (g.cash >= loan.weeklyPayment) {
           g.cash -= loan.weeklyPayment;
+          recordTransaction(g, "financing", -loan.weeklyPayment, `${loan.label}: weekly repayment`);
           loan.remainingBalance = Math.max(0, loan.remainingBalance - loan.weeklyPayment);
           loan.weeksLeft -= 1;
           if (loan.weeksLeft <= 0) addLog(g, `✅ Loan "${loan.label}" fully repaid!`);
@@ -3993,22 +4230,9 @@ export function gameTick(prev) {
       g.loans = g.loans.filter((l) => l.weeksLeft > 0);
     }
 
-    // Equipment maintenance costs: condition < 50% → $10/day per equipment
-    const maintenanceCost = (g.equipment||[]).reduce((s,e)=>{
-      return s + (e.condition < 50 ? 10 : 0);
-    }, 0);
-    if (maintenanceCost > 0) {
-      g.cash -= maintenanceCost;
-      g.expenses += maintenanceCost;
-      g.weeklyStats.expenses += maintenanceCost;
-    }
-
-    // Equipment condition degrades 0.05% per tick (independent of site assignment)
-    for (const e of (g.equipment||[])) {
-      if (e.status !== "Active") {
-        e.condition = Math.max(0, e.condition - 0.05);
-      }
-    }
+    // Equipment wear/maintenance is centralized in equipmentWear.js. This replaces the old
+    // flat low-condition charge and idle-condition decay, avoiding double wear and double cost.
+    tickEquipmentWear(g);
 
     // Weekly tax (every 7 days)
     if (g.day % 7 === 0) {
@@ -4023,6 +4247,7 @@ export function gameTick(prev) {
           g.cash += _propIncome;
           g.revenue += _propIncome;
           g.weeklyStats.revenue = (g.weeklyStats.revenue || 0) + _propIncome;
+          recordTransaction(g, "property", _propIncome, "Weekly property income");
           addLog(g, `🏗️ Property income: +${money(_propIncome)} passive revenue from ${_ownedProps.length} propert${_ownedProps.length === 1 ? 'y' : 'ies'}.`);
         }
       }
@@ -4053,6 +4278,7 @@ export function gameTick(prev) {
         g.revenue += _savInt;
         g.weeklyStats.revenue += _savInt;
         g.weeklyStats.savingsInterest = (g.weeklyStats.savingsInterest || 0) + _savInt;
+        recordTransaction(g, "financing", _savInt, "Reserve savings interest");
         if (g.day % 7 === 0) addLog(g, `🏦 Reserve savings earned ${money(g.weeklyStats.savingsInterest || _savInt)} in interest this week. Balance: ${money(g.savings)}.`);
       }
     }
@@ -4064,6 +4290,12 @@ export function gameTick(prev) {
         g.creditLine.drawn = (g.creditLine.drawn || 0) + _clInt;
         g.expenses += _clInt;
         g.weeklyStats.expenses += _clInt;
+        // This interest is capitalised into the drawn balance rather than paid in cash, so
+        // it raises g.expenses without moving g.cash. Left unrecorded, the reconciler saw an
+        // unexplained expense AND an unexplained cash surplus and logged a phantom pair
+        // ("Uncategorized operating expense" + "Financing or balance transfer in") every
+        // single day a balance was drawn. Naming it here absorbs both.
+        recordTransaction(g, "financing", -_clInt, "Credit line interest charged");
       }
     }
 
@@ -4078,6 +4310,7 @@ export function gameTick(prev) {
       if (g.day <= 10 && g.cash < -500) {
         const grant = Math.abs(g.cash) + 1000;
         g.cash += grant;
+        recordTransaction(g, "bonuses", grant, "Startup emergency grant");
         addLog(g, `🆘 Emergency grant: +${money(grant)} — business is not allowed to die on Day ${g.day}.`);
       }
     }
@@ -4105,6 +4338,7 @@ export function gameTick(prev) {
       if (_curRank === 1 && !g._rankOneCelebrated) {
         g._rankOneCelebrated = true;
         g.cash += 10000; g.revenue += 10000;
+        recordTransaction(g, "bonuses", 10000, "National Rank #1 reward");
         g.reputation = Math.min(100, (g.reputation||0) + 3);
         addImportantNotice(g, "🏆 You are now the #1 construction company in America! +$10,000 + 3 rep.", "green");
         addLog(g, "🏆 Reached National Rank #1 — construction dynasty rising!");
@@ -4122,13 +4356,17 @@ export function gameTick(prev) {
         if (_val >= vm.v && !g._valuationMilestonesHit.includes(vm.label)) {
           g._valuationMilestonesHit.push(vm.label);
           g.cash += vm.reward; g.revenue += vm.reward;
+          recordTransaction(g, "bonuses", vm.reward, `${vm.label} valuation milestone`);
           g.reputation = Math.min(100, (g.reputation||0) + vm.rep);
           addImportantNotice(g, `💰 ${vm.label} valuation milestone! +${money(vm.reward)} + ${vm.rep} rep.`, "green");
         }
       }
       // Dynasty trigger: Level 10 + Rank #1 + no debt
       const _compLevel = COMPANY_LEVELS.slice().reverse().find(l => (g.reputation||0) >= l.repMin && (g.completedJobs||0) >= l.jobsMin && computeValuation(g) >= l.valMin) || COMPANY_LEVELS[0];
-      const _totalDebt = (g.loans||[]).reduce((s,l)=>s+(l.remaining||0),0);
+      // Loans carry `remainingBalance`; the old `l.remaining` read undefined on every loan,
+      // so this always summed to 0 and the debt-free condition below was never actually
+      // checked — Dynasty could be claimed with loans still outstanding.
+      const _totalDebt = (g.loans||[]).reduce((s,l)=>s+(l.remainingBalance||0),0);
       if (_compLevel.level >= 10 && _curRank === 1 && _totalDebt === 0 && !g._pendingPrestige && !g.hallOfFame?.prestigeReached) {
         g._pendingPrestige = true;
         addImportantNotice(g, "👑 Dynasty conditions met — Level 10, Rank #1, debt-free! Claim your Legacy on the Empire tab.", "green");
@@ -4146,6 +4384,7 @@ export function gameTick(prev) {
       if (plan && plan.monthlyPremium > 0) {
         g.cash -= plan.monthlyPremium;
         g.expenses += plan.monthlyPremium;
+        recordTransaction(g, "insurance", -plan.monthlyPremium, `${plan.label}: monthly premium`);
         addLog(g, `🛡️ Insurance premium paid: ${money(plan.monthlyPremium)} (${plan.label})`);
       }
     }
@@ -4223,6 +4462,7 @@ export function gameTick(prev) {
     if (subPayroll > 0) {
       g.cash -= subPayroll;
       g.expenses += subPayroll;
+      recordTransaction(g, "payroll", -Math.round(subPayroll), "Subcontractor day rates");
     }
     // Reliability check — unreliable subs may be absent
     for (const sc of g.subcontractors) {
@@ -4242,7 +4482,11 @@ export function gameTick(prev) {
     const activeEvent = g.activeMarketEvent ? MARKET_EVENTS.find((e) => e.id === g.activeMarketEvent) : null;
     if (activeEvent && activeEvent.equipDailyCostMult !== 1.0) {
       const surcharge = Math.round(g.equipment.reduce((s, e) => s + e.dailyCost, 0) * (activeEvent.equipDailyCostMult - 1));
-      if (surcharge > 0) { g.cash -= surcharge; g.expenses += surcharge; }
+      if (surcharge > 0) {
+        g.cash -= surcharge;
+        g.expenses += surcharge;
+        recordTransaction(g, "equipment", -surcharge, `${activeEvent.label}: equipment cost surcharge`);
+      }
     }
 
     // ── Regional office rent ───────────────────────────────────────────────────
@@ -4250,18 +4494,30 @@ export function gameTick(prev) {
       const def = REGIONAL_OFFICE_TYPES.find(t=>t.id===o.typeId);
       return s + (def ? def.dailyRent : 0);
     }, 0);
-    if (officeRent > 0) { g.cash -= officeRent; g.expenses += officeRent; }
+    if (officeRent > 0) {
+      g.cash -= officeRent;
+      g.expenses += officeRent;
+      recordTransaction(g, "property", -officeRent, "Regional office rent");
+    }
 
     // ── Property running costs ────────────────────────────────────────────────
     const propCost = (g.properties||[]).reduce((s,p) => {
       const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
       return s + (def ? def.dailyCost : 0);
     }, 0);
-    if (propCost > 0) { g.cash -= propCost; g.expenses += propCost; }
+    if (propCost > 0) {
+      g.cash -= propCost;
+      g.expenses += propCost;
+      recordTransaction(g, "property", -propCost, "Property running costs");
+    }
 
     // ── PM payroll ─────────────────────────────────────────────────────────────
     const pmPayroll = (g.projectManagers||[]).reduce((s,pm) => s + (pm.wagePerDay||0), 0);
-    if (pmPayroll > 0) { g.cash -= pmPayroll; g.expenses += pmPayroll; }
+    if (pmPayroll > 0) {
+      g.cash -= pmPayroll;
+      g.expenses += pmPayroll;
+      recordTransaction(g, "payroll", -pmPayroll, "Project manager payroll");
+    }
 
     // ── PM auto-management: senior PMs unpause stalled sites ──────────────────
     const hasAutoMgr = (g.projectManagers||[]).some(pm => {
@@ -4427,6 +4683,7 @@ export function gameTick(prev) {
           if (g.cash >= repCost) {
             g.cash -= repCost;
             g.expenses = (g.expenses || 0) + repCost;
+            recordTransaction(g, "maintenance", -repCost, `${eq.name}: auto-repair`);
             eq.condition = Math.min(100, (eq.condition || 0) + 40);
             if (eq.status === "Broken") eq.status = "Idle";
             addLog(g, `🔧 Auto-repaired ${eq.name} — ${money(repCost)}.`);
@@ -4455,6 +4712,8 @@ export function gameTick(prev) {
             g.weeklyStats.expenses = (g.weeklyStats.expenses || 0) + cost;
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[matId] = needed;
+            accrueProjectCost(site, "materials", cost);
+            recordTransaction(g, "materials", -cost, `${site.label}: auto-purchased ${shortage} ${matId}`);
             addLog(g, `⚡ Auto-purchased ${shortage} ${matId} for "${site.label}" — ${money(cost)}.`);
           }
         }
@@ -4588,6 +4847,7 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
   for (let i = 0; i < clampedTicks; i++) {
     const cashBefore = g.cash;
     g = gameTick(g);
+    const cashAfterTick = g.cash;
     // Offline payroll protection: if a single tick would burn more than 50% of
     // a positive cash balance, cap the loss so the player doesn't log back in bankrupt
     if (cashBefore > 0 && g.cash < cashBefore * 0.5 && g.cash < 0) {
@@ -4596,6 +4856,14 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
     // Hard bankruptcy floor: never go below -$50,000
     if (g.cash < -50000) {
       g.cash = -50000;
+    }
+    // Both clamps hand cash back without touching g.expenses, so the ledger reconciler
+    // would otherwise see cash it cannot explain and file it as "Financing or balance
+    // transfer in" — a line that reads like a loan the player never took. Name it for
+    // what it is; recordTransaction also re-baselines the reconciler's snapshot.
+    const relief = Math.round(g.cash - cashAfterTick);
+    if (relief > 0) {
+      recordTransaction(g, "bonuses", relief, "Offline hardship relief");
     }
   }
 
@@ -4646,6 +4914,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const appStateRef = useRef(AppState.currentState);
   const gameRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const [setupOwner, setSetupOwner] = useState("");
   const [setupName, setSetupName] = useState("New Build Co.");
   const [setupCityId, setSetupCityId] = useState("salem");
   const [savingsAmt, setSavingsAmt] = useState("");
@@ -4823,12 +5092,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const discount = (g._equipDiscount || 0);
       const basePrice = Math.round(item.price * (1 - discount));
       const effectivePrice = isUsed ? Math.round(basePrice * 0.58) : basePrice;
-      if (g.cash < effectivePrice) { Alert.alert("Insufficient Funds", `Need ${money(effectivePrice)}.`); return; }
+      if (g.cash < effectivePrice) { alertInsufficientFunds(g, effectivePrice, item?.name || "This machine"); return; }
       const office = OFFICES[g.officeIndex];
       const totalEquipCap = office.equipCap + getEquipCapBonus(g);
-      if (g.equipment.length >= totalEquipCap) { Alert.alert("Vehicles Cap", `Upgrade your office to add more vehicles to your fleet.`); return; }
+      if (g.equipment.length >= totalEquipCap) { const a = buildCapacityAlert({ kind: "equipment", current: g.equipment.length, cap: totalEquipCap }); Alert.alert(a.title, a.body); return; }
       g.cash -= effectivePrice;
       g.expenses += effectivePrice;
+      recordTransaction(g, "equipment", -effectivePrice, `Bought ${isUsed ? "used " : ""}${item.name}`);
       const equip = createEquipment(item);
       if (isUsed) {
         equip.condition = rand(40, 68);
@@ -4853,7 +5123,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const uses = cur.speedUpUses || 0;
     const cost = Math.round(1000 * Math.pow(2, uses));
     if (cur.cash < cost) {
-      Alert.alert("Insufficient Funds", `You need ${money(cost)} to speed up time.\nSave up and try again.`);
+      alertInsufficientFunds(cur, cost, "Skipping ahead");
       return;
     }
     Alert.alert(
@@ -4884,9 +5154,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const e = g.equipment.find((eq) => eq.id === equipId);
       if (!e) return;
       const cost = Math.round((100 - e.condition) * 25);
-      if (g.cash < cost) { Alert.alert("Insufficient Funds", `Repair costs ${money(cost)}.`); return; }
+      if (g.cash < cost) { alertInsufficientFunds(g, cost, "This repair"); return; }
       g.cash -= cost;
       g.expenses += cost;
+      recordTransaction(g, "maintenance", -cost, `${e.name}: repair and refuel`);
       e.condition = 100;
       e.fuel = e.fuelCap;
       e.status = "Idle";
@@ -4903,6 +5174,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const salePrice = Math.round(e.price * 0.45 * (e.condition / 100));
       g.cash += salePrice;
       g.revenue += salePrice;
+      recordTransaction(g, "sales", salePrice, `Sold ${e.name}`);
       g.equipment = g.equipment.filter((eq) => eq.id !== equipId);
       addLog(g, `💸 Sold ${e.name} for ${money(salePrice)}.`);
     });
@@ -4911,16 +5183,17 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleHireCrew = useCallback((applicant) => {
     update((g) => {
       const totalCrewCap = getTotalCrewCap(g);
-      if (g.crew.length >= totalCrewCap) { Alert.alert("Crew Cap", "Upgrade your office or open a Regional Office in a new city."); return; }
+      if (g.crew.length >= totalCrewCap) { const a = buildCapacityAlert({ kind: "crew", current: g.crew.length, cap: totalCrewCap }); Alert.alert(a.title, a.body); return; }
       const bonus = applicant.signingBonus || 0;
-      if (g.cash < bonus) { Alert.alert("Insufficient Funds", `Signing bonus requires ${money(bonus)}.`); return; }
+      if (g.cash < bonus) { alertInsufficientFunds(g, bonus, "This hire's signing bonus"); return; }
       g.cash -= bonus;
       g.expenses += bonus;
+      if (bonus > 0) recordTransaction(g, "payroll", -bonus, `${applicant.name}: signing bonus`);
       g.applicants = g.applicants.filter((a) => a.id !== applicant.id);
       const _newWorker = {
         ...createWorker(applicant.role),
         id: uid(), name: applicant.name, role: applicant.role,
-        skill: applicant.skill, wagePerDay: applicant.desiredWage,
+        skill: applicant.skill, wagePerDay: applyRegionalWage(applicant.desiredWage, g),
         mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
         hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
         status: "Idle",
@@ -4953,7 +5226,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const w = g.crew.find(w => w.id === workerId);
       if (!w) return;
-      if (g.cash < 500) { Alert.alert("Insufficient Funds", "Promotion costs $500."); return; }
+      if (g.cash < 500) { alertInsufficientFunds(g, 500, "This promotion"); return; }
       if ((w.level||1) < 3 || (w.skill||0) < 70) { Alert.alert("Not Eligible", "Worker needs level 3+ and skill 70+."); return; }
       g.cash -= 500;
       g.expenses += 500;
@@ -4968,9 +5241,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handlePostJob = useCallback((posting) => {
     update((g) => {
-      if (g.cash < posting.cost) { Alert.alert("Insufficient Funds", `Posting costs ${money(posting.cost)}.`); return; }
+      if (g.cash < posting.cost) { alertInsufficientFunds(g, posting.cost, "This job ad"); return; }
       g.cash -= posting.cost;
       g.expenses += posting.cost;
+      recordTransaction(g, "payroll", -posting.cost, "Recruitment job advert");
       for (let i = 0; i < posting.count; i++) {
         g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, wageMin: posting.wageMin, wageMax: posting.wageMax, quality: posting.quality }));
       }
@@ -4981,16 +5255,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleBuyMaterials = useCallback((matId, qty) => {
     update((g) => {
       if (!qty || qty < 1) return;
-      const basePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
+      const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
+      const basePrice = applyRegionalMaterialPrice(rawBasePrice, g);
       // R15-8: Apply flash deal price if active for this material
       const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
       const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
       const totalCost = price * qty;
-      if (g.cash < totalCost) { Alert.alert("Insufficient Funds", `Costs ${money(totalCost)}.`); return; }
+      if (g.cash < totalCost) { alertInsufficientFunds(g, totalCost, "These materials"); return; }
       g.cash -= totalCost;
       g.expenses += totalCost;
       g.materials[matId] = (g.materials[matId] || 0) + qty;
       const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+      recordTransaction(g, "materials", -totalCost, `Bought ${qty} ${mat?.unit || "units"} of ${mat?.label || matId}`);
       addLog(g, `📦 Purchased ${qty} ${mat?.unit || "units"} of ${mat?.label || matId} for ${money(totalCost)}.`);
     });
   }, [update]);
@@ -5018,12 +5294,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             if (!site.materialsFulfilled) site.materialsFulfilled = {};
             site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + canBuy;
             budget -= cost;
+            accrueProjectCost(site, "materials", cost);
+            recordTransaction(g, "materials", -cost, `${site.label}: ${canBuy} ${m.unit} of ${m.label}`);
             addLog(g, `📦 Partial buy: ${canBuy} ${m.unit} of ${m.label} for ${money(cost)}.`);
           }
         }
       } else {
         g.cash -= totalCost;
         g.expenses += totalCost;
+        accrueProjectCost(site, "materials", totalCost);
+        recordTransaction(g, "materials", -totalCost, `${site.label}: site materials`);
         for (const m of missing) {
           if (!site.materialsFulfilled) site.materialsFulfilled = {};
           site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -5058,6 +5338,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         g.cash -= totalCost;
       }
       g.expenses += totalCost;
+      // Emergency premium is a cost this project caused, so it lands on this project.
+      accrueProjectCost(site, "materials", totalCost);
       for (const m of missing) {
         if (!site.materialsFulfilled) site.materialsFulfilled = {};
         site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
@@ -5071,7 +5353,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const c = g.contracts.find((c) => c.id === contract.id);
       if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
       const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
-      if (blockReason) { Alert.alert("Cannot Start", blockReason); return; }
+      if (blockReason) {
+        const { title, body } = buildAssignBlockAlert(blockReason, getAssignBlockKind(c, crewIds, equipIds, g));
+        Alert.alert(title, body);
+        return;
+      }
 
       // Apply bid style multiplier
       const BID_MULTIPLIERS = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
@@ -5079,14 +5365,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const bidMult = BID_MULTIPLIERS[bidStyle] ?? 1.0;
       const effectiveValue = Math.round(c.value * bidMult);
 
-      // Consume materials — track exactly what was fulfilled, never go negative
+      // Consume materials — track exactly what was fulfilled, never go negative.
+      // Stock drawn from inventory was paid for earlier, at the supplier. Valuing it at
+      // today's price is what lets the completion P&L show a real margin instead of
+      // pretending warehoused material was free.
       const materialsFulfilled = {};
+      let materialsFromStockCost = 0;
       for (const matId of Object.keys(c.materials || {})) {
         const needed = c.materials[matId];
         const available = Math.max(0, g.materials[matId] || 0);
         const consumed = Math.min(needed, available);
         g.materials[matId] = available - consumed;
         materialsFulfilled[matId] = consumed;
+        materialsFromStockCost += consumed * getMaterialUnitPrice(g, matId);
       }
 
       // Mark crew and equipment as active
@@ -5115,6 +5406,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         cityId: c.cityId || "salem", siteMode: "normal",
         materialsFulfilled,
         depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
+        costs: createProjectCostLedger(),
       });
 
       // R14-2: 25% deposit received on mobilise
@@ -5124,6 +5416,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.weeklyStats.revenue += _deposit;
       const _newSite = g.activeSites[g.activeSites.length - 1];
       _newSite.depositPaid = _deposit;
+      // Attribution only — this cash left the balance when the material was bought.
+      accrueProjectCost(_newSite, "materials", materialsFromStockCost);
 
       const bidNote = bidStyle !== "standard" ? ` [${bidStyle} bid]` : "";
       addLog(g, `🏗️ Site started: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
@@ -5134,9 +5428,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const def = SUBCONTRACTOR_TYPES.find((t) => t.id === typeId);
       if (!def) return;
-      if (g.cash < def.hireCost) { Alert.alert("Insufficient Funds", `Hire cost: ${money(def.hireCost)}`); return; }
+      if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, "This subcontractor"); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
+      recordTransaction(g, "payroll", -def.hireCost, `${def.label}: subcontractor hire fee`);
       if (!g.subcontractors) g.subcontractors = [];
       g.subcontractors.push(createSubcontractor(typeId));
       addLog(g, `🤝 Hired ${def.label} for ${def.durationDays} days — ${money(def.hireCost)} upfront.`);
@@ -5165,31 +5460,41 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleTakeLoan = useCallback((product) => {
     update((g) => {
-      if (g.creditScore < product.minCredit) { Alert.alert("Credit Too Low", `Need ${product.minCredit}+ credit score.`); return; }
-      // Max 3 active loans (infinite-loop prevention)
-      if ((g.loans||[]).length >= 3) { Alert.alert("Loan Limit", "You already have 3 active loans. Pay off a loan before taking another."); return; }
-      // No new loans when cash is negative (bankruptcy recovery abuse prevention)
-      if ((g.cash||0) < 0) { Alert.alert("Account in Red", "Cannot take loans while your account is negative. Generate revenue first."); return; }
-      const existingDebt = (g.loans||[]).reduce((s, l) => s + l.remainingBalance, 0);
-      const currentValuation = computeValuation(g);
-      // Debt must be < 3× current valuation
-      if (existingDebt > currentValuation * 3) { Alert.alert("Debt Limit", `Your debt-to-value ratio is too high. Grow your company or repay loans first.`); return; }
-      const debtLimit = Math.max(5000, g.cash * product.maxDebtFactor + g.reputation * 60);
-      if (existingDebt + product.principal > debtLimit) { Alert.alert("Debt Limit", "Too much existing debt for this loan."); return; }
-      const loan = createLoanFromProduct(product, g);
+      if ((g.loans || []).length >= 3) {
+        Alert.alert("Loan Limit", "You already have 3 active loans. Pay off a loan before taking another.");
+        return;
+      }
+
+      const profile = buildBorrowerProfile(g, product);
+      const offer = computeLoanOffer(product.id, profile);
+      if (!offer.approved) {
+        Alert.alert("Financing Declined", (offer.reasons || ["You do not currently qualify for this product."]).join("\n\n"));
+        return;
+      }
+
+      const collateral = getLendingCollateral(g, product);
+      const loan = offerToLoanRecord(offer, uid, {
+        collateralVehicleId: product.collateralType === "vehicle" ? collateral.id : null,
+      });
       g.loans.push(loan);
-      g.cash += product.principal;
-      g.revenue += product.principal;
-      addLog(g, `💳 Loan approved: ${money(product.principal)} (${Math.round(loan.apr)}% APR, ${product.weeks} weeks).`);
+      g.cash += offer.principal;
+      // Borrowed principal is financing, not operating revenue.
+      recordTransaction(g, "financing", offer.principal, `${offer.label} proceeds`, {
+        loanId: loan.id,
+        productId: offer.productId,
+        apr: offer.apr,
+      });
+      addLog(g, `💳 Loan approved: ${money(offer.principal)} (${offer.apr}% APR, ${offer.termWeeks} weeks, ${money(offer.weeklyPayment)}/week).`);
     });
   }, [update]);
 
   const handlePayTax = useCallback(() => {
     update((g) => {
       if ((g.taxDue || 0) <= 0) return;
-      if (g.cash < g.taxDue) { Alert.alert("Insufficient Funds", `Tax bill is ${money(g.taxDue)}.`); return; }
+      if (g.cash < g.taxDue) { alertInsufficientFunds(g, g.taxDue, "This tax bill"); return; }
       g.cash -= g.taxDue;
       g.expenses += g.taxDue;
+      recordTransaction(g, "taxes", -g.taxDue, "Tax bill paid");
       addLog(g, `✅ Tax bill of ${money(g.taxDue)} paid.`);
       g.taxDue = 0;
       g.taxOverdueDays = 0;
@@ -5202,9 +5507,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const amt = Math.round(amount);
       if (!amt || amt <= 0) { Alert.alert("Invalid Amount", "Enter a positive amount."); return; }
-      if (g.cash < amt) { Alert.alert("Insufficient Funds", `Need ${money(amt)} in operating cash.`); return; }
+      if (g.cash < amt) {
+        Alert.alert("Not Enough Operating Cash", `You have ${money(g.cash)} in operating cash, less than the ${money(amt)} you're moving to savings.\n\nMove a smaller amount, or wait for a job to pay out.`);
+        return;
+      }
       g.cash -= amt;
       g.savings = (g.savings || 0) + amt;
+      recordTransaction(g, "financing", -amt, "Transfer to reserve savings");
       addLog(g, `🏦 Deposited ${money(amt)} into savings. Reserve: ${money(g.savings)}.`);
     });
   }, [update]);
@@ -5213,9 +5522,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const amt = Math.round(amount);
       if (!amt || amt <= 0) { Alert.alert("Invalid Amount", "Enter a positive amount."); return; }
-      if ((g.savings || 0) < amt) { Alert.alert("Insufficient Reserve", `Only ${money(g.savings || 0)} in savings.`); return; }
+      if ((g.savings || 0) < amt) {
+        Alert.alert("Not Enough In Savings", `Your reserve holds ${money(g.savings || 0)}, less than the ${money(amt)} you're withdrawing.\n\nWithdraw a smaller amount.`);
+        return;
+      }
       g.savings -= amt;
       g.cash += amt;
+      recordTransaction(g, "financing", amt, "Transfer from reserve savings");
       addLog(g, `🏦 Withdrew ${money(amt)} from savings. Reserve: ${money(g.savings)}.`);
     });
   }, [update]);
@@ -5225,9 +5538,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const loan = (g.loans || []).find(l => l.id === loanId);
       if (!loan) return;
-      if (g.cash < payoffAmount) { Alert.alert("Insufficient Funds", `Need ${money(payoffAmount)} to pay off this loan early.`); return; }
+      if (g.cash < payoffAmount) {
+        const a = buildInsufficientFundsAlert({
+          cost: payoffAmount, purchase: "Paying this loan off early", cash: g.cash,
+          savings: g.savings || 0, hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false, formatMoney: money,
+        });
+        Alert.alert(a.title, a.body);
+        return;
+      }
       g.cash -= payoffAmount;
       g.expenses += payoffAmount;
+      recordTransaction(g, "financing", -payoffAmount, `${loan.label}: early payoff`);
       g.loans = g.loans.filter(l => l.id !== loanId);
       g.creditScore = Math.min(850, (g.creditScore || 600) + 5);
       addLog(g, `✅ "${loan.label}" paid off early. Credit +5.`);
@@ -5238,10 +5560,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const loan = (g.loans || []).find(l => l.id === loanId);
       const amt = Math.round(amount);
-      if (!loan || amt <= 0 || g.cash < amt) { Alert.alert("Insufficient Funds", `Need ${money(amt)} in cash.`); return; }
+      if (!loan || amt <= 0 || g.cash < amt) {
+        const a = buildInsufficientFundsAlert({
+          cost: amt, purchase: "This loan payment", cash: g.cash,
+          savings: g.savings || 0, hasActiveSites: (g.activeSites || []).length > 0,
+          canBorrow: false, formatMoney: money,
+        });
+        Alert.alert(a.title, a.body);
+        return;
+      }
       const actualAmt = Math.min(amt, loan.remainingBalance);
       g.cash -= actualAmt;
       g.expenses += actualAmt;
+      recordTransaction(g, "financing", -actualAmt, `${loan.label}: extra payment`);
       loan.remainingBalance -= actualAmt;
       loan.weeksLeft = Math.max(0, Math.ceil(loan.remainingBalance / (loan.weeklyPayment || 1)));
       if (loan.remainingBalance <= 0) {
@@ -5258,7 +5589,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // R16-4: Business Line of Credit handlers
   const handleOpenCreditLine = useCallback(() => {
     update((g) => {
-      if ((g.creditScore || 600) < 680) { Alert.alert("Credit Too Low", "Need 680+ credit score to open a line of credit."); return; }
+      if ((g.creditScore || 600) < 680) { const a = buildCreditTooLowAlert({ creditScore: g.creditScore || 600, required: 680 }); Alert.alert(a.title, a.body); return; }
       if (g.creditLine) { Alert.alert("Already Active", "You already have an open line of credit."); return; }
       g.creditLine = { limit: 75000, drawn: 0, apr: 14, opened: g.day };
       g.creditScore = Math.max(300, (g.creditScore || 600) - 3);
@@ -5274,6 +5605,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (amt <= 0) { Alert.alert("No Credit Available", "Credit limit reached."); return; }
       g.creditLine.drawn = (g.creditLine.drawn || 0) + amt;
       g.cash += amt;
+      recordTransaction(g, "financing", amt, "Credit line draw");
       addLog(g, `💳 Drew ${money(amt)} from credit line. Total drawn: ${money(g.creditLine.drawn)}.`);
     });
   }, [update]);
@@ -5286,6 +5618,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.creditLine.drawn -= amt;
       g.cash -= amt;
       g.expenses += amt;
+      recordTransaction(g, "financing", -amt, "Credit line repayment");
       if (g.creditLine.drawn <= 0) {
         g.creditLine.drawn = 0;
         addLog(g, `✅ Credit line fully repaid.`);
@@ -5299,9 +5632,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const next = OFFICES[g.officeIndex + 1];
       if (!next) { Alert.alert("Max Office", "You're at the top tier already."); return; }
-      if (g.cash < next.cost) { Alert.alert("Insufficient Funds", `Need ${money(next.cost)}.`); return; }
+      if (g.cash < next.cost) { alertInsufficientFunds(g, next.cost, next.name || "This office upgrade"); return; }
       g.cash -= next.cost;
       g.expenses += next.cost;
+      recordTransaction(g, "property", -next.cost, `Moved into ${next.name}`);
       g.officeIndex += 1;
       addLog(g, `🏢 Upgraded to ${next.name} — crew cap ${next.crewCap}, equip cap ${next.equipCap}.`);
     });
@@ -5327,7 +5661,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const def  = REGIONAL_OFFICE_TYPES.find(t => t.id === officeTypeId);
       if (!city || !def) return;
       if (g.reputation < city.unlockRep) { Alert.alert("Not Yet", `Need ${city.unlockRep}+ reputation to expand to ${city.name}.`); return; }
-      if (g.cash < city.unlockCost + def.cost) { Alert.alert("Insufficient Funds", `Expanding to ${city.name} and opening a ${def.name} costs ${money(city.unlockCost + def.cost)}.`); return; }
+      if (g.cash < city.unlockCost + def.cost) { alertInsufficientFunds(g, city.unlockCost + def.cost, `Expanding to ${city.name} with a ${def.name}`); return; }
       const alreadyInCity = (g.cityOffices||[]).some(o => o.cityId === cityId);
       const totalCost = def.cost + (alreadyInCity ? 0 : city.unlockCost);
       g.cash -= totalCost;
@@ -5342,9 +5676,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const def = PROPERTY_TYPES.find(t => t.id === typeId);
       if (!def) return;
-      if (g.cash < def.cost) { Alert.alert("Insufficient Funds", `${def.name} costs ${money(def.cost)}.`); return; }
+      if (g.cash < def.cost) { alertInsufficientFunds(g, def.cost, def.name); return; }
       g.cash -= def.cost;
       g.expenses += def.cost;
+      recordTransaction(g, "property", -def.cost, `Bought ${def.name}`);
       if (!g.properties) g.properties = [];
       g.properties.push({ id: uid(), typeId, name: def.name, purchasedDay: g.day });
       addLog(g, `🏠 Purchased ${def.name} — ${def.desc}`);
@@ -5357,9 +5692,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!def) return;
       const already = (g.projectManagers||[]).some(pm => pm.typeId === pmTypeId);
       if (already) { Alert.alert("Already Hired", `You already have a ${def.name} on staff.`); return; }
-      if (g.cash < def.hireCost) { Alert.alert("Insufficient Funds", `Hiring costs ${money(def.hireCost)}.`); return; }
+      if (g.cash < def.hireCost) { alertInsufficientFunds(g, def.hireCost, `Hiring a ${def.name || "project manager"}`); return; }
       g.cash -= def.hireCost;
       g.expenses += def.hireCost;
+      recordTransaction(g, "payroll", -def.hireCost, `${def.name}: hiring fee`);
       if (!g.projectManagers) g.projectManagers = [];
       g.projectManagers.push({ id: uid(), typeId: pmTypeId, name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`, wagePerDay: def.wagePerDay });
       addLog(g, `📋 ${def.name} hired — ${def.desc}`);
@@ -5390,12 +5726,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const w = g.crew.find((w) => w.id === workerId);
       const prog = TRAINING_PROGRAMS.find((p) => p.id === programId);
       if (!w || !prog) return;
-      if (g.cash < prog.cost) { Alert.alert("Insufficient Funds", `Training costs ${money(prog.cost)}.`); return; }
+      if (g.cash < prog.cost) { alertInsufficientFunds(g, prog.cost, prog.label || prog.name || "This training"); return; }
       if (w.status === "Active") { Alert.alert("On Site", "Can't enroll a worker currently assigned to a site."); return; }
       const alreadyEnrolled = (g.trainingQueue || []).some((t) => t.workerId === workerId);
       if (alreadyEnrolled) { Alert.alert("Already Training", "This worker is already enrolled in a program."); return; }
       g.cash -= prog.cost;
       g.expenses += prog.cost;
+      recordTransaction(g, "payroll", -prog.cost, `${w.name}: ${prog.label} training`);
       if (!g.trainingQueue) g.trainingQueue = [];
       g.trainingQueue.push({ id: uid(), workerId, programId, daysLeft: prog.duration });
       addLog(g, `📚 ${w.name} enrolled in "${prog.label}" — completes in ${prog.duration} days.`);
@@ -5410,7 +5747,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.reputation < 50) { Alert.alert("Reputation Too Low", "Need 50+ reputation to acquire rivals."); return; }
       // Acquisition cooldown: 30-day gap between acquisitions
       if (g.day - (g.lastAcquisitionDay||0) < 30) { Alert.alert("Acquisition Cooldown", `Must wait ${30 - (g.day - (g.lastAcquisitionDay||0))} more day(s) before next acquisition.`); return; }
-      if (g.cash < acquisitionCost) { Alert.alert("Insufficient Funds", `Acquiring ${rival.name} costs ${money(acquisitionCost)}.`); return; }
+      if (g.cash < acquisitionCost) { alertInsufficientFunds(g, acquisitionCost, `Acquiring ${rival.name}`); return; }
       g.cash -= acquisitionCost;
       g.expenses += acquisitionCost;
       g.cash += (rival.cash||0) * 0.7; // absorb 70% of rival cash
@@ -5442,6 +5779,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const salePrice = Math.round((def?.cost||0) * (def?.resaleRate||0.8));
       g.cash += salePrice;
       g.revenue += salePrice;
+      recordTransaction(g, "sales", salePrice, `Sold ${def?.name || "property"}`);
       g.properties = g.properties.filter(p => p.id !== propId);
       addLog(g, `💸 Sold ${def?.name||"property"} for ${money(salePrice)}.`);
     });
@@ -5624,7 +5962,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!_s || _s.renegotiated) return;
       const _def = CONTRACT_DEFS.find(c => c.id === (g.contracts||[]).find(cc => cc.id === _s.contractId)?.defId);
       const _cost = Math.round((_def?.baseValue || _s.totalValue || 10000) * 0.08);
-      if ((g.cash||0) < _cost) { addLog(g, `Need ${money(_cost)} to renegotiate.`); Alert.alert("Insufficient Funds", `Renegotiating costs ${money(_cost)}. You have ${money(g.cash||0)}.`); return; }
+      if ((g.cash||0) < _cost) { addLog(g, `Need ${money(_cost)} to renegotiate.`); alertInsufficientFunds(g, _cost, "Renegotiating this contract"); return; }
       g.cash -= _cost;
       g.expenses = (g.expenses||0) + _cost;
       g.reputation = Math.max(0, (g.reputation||0) - 2);
@@ -5684,13 +6022,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleScheduleMaintenance = useCallback((equipId) => {
     update((g) => {
-      const eq = (g.equipment||[]).find(e => e.id === equipId);
-      if (!eq || eq.status === "Maintenance") return;
-      (g.activeSites||[]).forEach(s => { s.assignedEquipmentIds = (s.assignedEquipmentIds||[]).filter(id => id !== equipId); });
-      eq.status = "Maintenance";
-      eq.assignedSiteId = null;
+      const eq = (g.equipment || []).find(e => e.id === equipId);
+      if (!eq) return;
+      if (eq.status === "Active" || eq.assignedSiteId) {
+        Alert.alert("In Use", "Unassign this vehicle from its site before scheduling maintenance.");
+        return;
+      }
+      const ok = scheduleMaintenance(g, equipId);
+      if (!ok) {
+        const estimated = Math.max(25, Math.round((eq.dailyCost || eq.maintenance || 50) * 0.35));
+        Alert.alert("Maintenance Unavailable", `Unable to schedule maintenance right now. Keep at least ${money(estimated)} available and make sure the vehicle is idle.`);
+        return;
+      }
       repairCrewAssignments(g);
-      addLog(g, `🔧 ${eq.name} pulled for scheduled maintenance.`);
     });
   }, [update]);
 
@@ -5710,7 +6054,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   if (!loaded || !game) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: THEMES.dark.bg, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: THEMES.dark.text, fontSize: 18 }}>Loading ConstructionFlow…</Text>
+        <Text style={{ color: THEMES.dark.text, fontSize: 18 }}>Loading Construction Flow…</Text>
       </SafeAreaView>
     );
   }
@@ -5807,7 +6151,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       <SafeAreaView style={{ flex: 1, backgroundColor: T.bg }}>
         <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 60, flexGrow: 1, justifyContent: "center" }}>
           <Text style={{ fontSize: 36, textAlign: "center", marginBottom: 4 }}>🏗️</Text>
-          <Text style={{ color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }}>ConstructionFlow</Text>
+          <Text style={{ color: T.text, fontSize: 28, fontWeight: "900", textAlign: "center", marginBottom: 4 }}>Construction Flow</Text>
           <Text style={{ color: T.sub, fontSize: 14, textAlign: "center", marginBottom: 32 }}>Build a construction empire from the ground up.</Text>
 
           {/* Step indicator */}
@@ -5820,8 +6164,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           {setupStep === 0 ? (
             /* Step 1 — Company name */
             <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.green, borderWidth: 2 }]}>
-              <Text style={[styles.label, col, { marginBottom: 4 }]}>Step 1 — Name Your Company</Text>
-              <Text style={[styles.sub, subCol, { marginBottom: 12 }]}>This will appear on your Home screen, bids, and company profile.</Text>
+              <Text style={[styles.label, col, { marginBottom: 4 }]}>Step 1 — Who Are You?</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 12 }]}>You&apos;re the owner. Your name and your company&apos;s name appear on your Home screen, your bids, and your company profile.</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 4 }]}>Your name</Text>
+              <TextInput
+                style={[styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }]}
+                value={setupOwner}
+                onChangeText={setSetupOwner}
+                placeholder="e.g. Sam Delgado"
+                placeholderTextColor={T.sub}
+                maxLength={28}
+                autoFocus
+              />
+              <Text style={[styles.sub, subCol, { marginBottom: 4 }]}>Company name</Text>
               <TextInput
                 style={[styles.input, { color: T.text, borderColor: T.strongBorder, backgroundColor: T.panel2, marginBottom: 12 }]}
                 value={setupName}
@@ -5829,7 +6184,6 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 placeholder="e.g. Apex Build Co."
                 placeholderTextColor={T.sub}
                 maxLength={36}
-                autoFocus
               />
               <TouchableOpacity
                 style={[styles.btn, { backgroundColor: setupName.trim().length > 0 ? T.green : T.panel2, borderColor: T.green }]}
@@ -5940,6 +6294,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     const competitionToCityId = { Low: "salem", Medium: "portland", High: "phoenix" };
                     const templateCityId = competitionToCityId[setupCompetition] || "salem";
                     update(g => {
+                      g.ownerName = setupOwner.trim() || "Owner";
                       g.companyName = setupName.trim() || "New Build Co.";
                       g.startingCityId = templateCityId;
                       g.homeCityName = setupHomeCityText.trim();
@@ -5947,7 +6302,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       g.homeStateName = setupHomeStateName;
                       g.homeCompetition = setupCompetition;
                       g.setupDone = true;
-                      addLog(g, `🏗️ Welcome to ${g.companyName}! Based in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
+                      addLog(g, `🏗️ ${g.ownerName} founded ${g.companyName} in ${g.homeCityName}, ${g.homeStateCode}. Let's build.`);
                     });
                   }}
                 >
@@ -5957,8 +6312,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
           )}
 
-          <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24 }}>
-            You start with $75,000 · 1 truck · 3 crew members
+          <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }}>
+            You start with $75,000 · 1 truck · 3 crew members{"\n"}
+            You make money by winning bids, putting crew and machines on site, and finishing the job before the deadline.
           </Text>
         </ScrollView>
       </SafeAreaView>
@@ -6038,6 +6394,139 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
+        {/* Company Header */}
+        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <Text style={[styles.h2, col]} numberOfLines={1}>{game.companyName}</Text>
+                {(game.generation||1) > 1 && (
+                  <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
+                )}
+              </View>
+              {/* The WildBear first-minute rule requires "who am I / what do I own" to be
+                  answerable on the screen the player lands on, not buried in a settings tab. */}
+              <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 1 }]} numberOfLines={1}>
+                Owned by {game.ownerName || "Owner"} · General contractor
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={[styles.sub, subCol]}>{repTier.badge} {repTier.label} · Day {game.day}</Text>
+                  {game.seasonEmoji && (
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 11 }]}>{game.seasonEmoji} {game.currentSeason}</Text>
+                  )}
+                  {(game.savings || 0) > 0 && (
+                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>🏦 {money(game.savings)} saved</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 }}
+                  onPress={() => setSpeedMode(s => !s)}
+                >
+                  <Text style={{ fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }}>
+                    {speedMode ? "⚡ 2×" : "1×"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={{ alignItems: "flex-end", minWidth: 0 }}>
+              <Text style={[styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }]} numberOfLines={1}>{money(game.cash)}</Text>
+              <Text style={[styles.sub, subCol]} numberOfLines={1}>{office.name}</Text>
+              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]} numberOfLines={1}>📍 {displayCityName}, {displayStateCode}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Company Level */}
+        <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View>
+              <Text style={[{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }]}>LEVEL {companyLevel.level}</Text>
+              <Text style={[styles.label, col]}>{companyLevel.label}</Text>
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              {nextLevel && <Text style={[styles.sub, { color: T.sub }]}>Next: {nextLevel.label}</Text>}
+              {!nextLevel && <Text style={[styles.sub, { color: T.yellow }]}>MAX LEVEL</Text>}
+            </View>
+          </View>
+          {nextLevel && (
+            <View style={{ marginTop: 8, gap: 4 }}>
+              {[
+                { label: "Rep",   current: game.reputation || 0,    target: nextLevel.repMin,  color: T.purple, fmt: v => `${v}` },
+                { label: "Jobs",  current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: v => `${v}` },
+                { label: "Value", current: valuation,               target: nextLevel.valMin,  color: T.cyan,   fmt: v => money(v) },
+              ].map(bar => {
+                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
+                const done = bar.current >= bar.target;
+                return (
+                  <View key={bar.label} style={{ marginBottom: 4 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={[styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }]}>{done ? "✓ " : ""}{bar.label}</Text>
+                      <Text style={[styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }]}>
+                        {bar.fmt(bar.current)} / {bar.fmt(bar.target)}
+                      </Text>
+                    </View>
+                    <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
+                      <View style={{ height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 }} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        {/* Tutorial — step-by-step, auto-advances with game state */}
+        {!game.tutorialDone && (() => {
+          const step = getTutorialStepIndex(game);
+
+          const steps = [
+            {
+              num: "1 of 4", title: "Accept Your First Contract",
+              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              cta: "Go to Bids →", action: () => setTab("Bids"),
+            },
+            {
+              num: "2 of 4", title: "Buy Materials & Mobilise Crew",
+              body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+            {
+              num: "3 of 4", title: "Buy Missing Materials",
+              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+            {
+              num: "4 of 4", title: "Watch Your Site Progress",
+              body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
+              cta: "Go to Sites →", action: () => setTab("Sites"),
+            },
+          ];
+
+          const s = steps[step];
+          return (
+            <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }]}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <Text style={[styles.label, { color: T.cyan }]}>🚀 Getting Started</Text>
+                <Text style={{ color: T.sub, fontSize: 11 }}>Step {s.num}</Text>
+              </View>
+              <Text style={[styles.label, col, { marginBottom: 6 }]}>{s.title}</Text>
+              <Text style={[styles.sub, col, { lineHeight: 20, marginBottom: 10 }]}>{s.body}</Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
+                  <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
+                  <Text style={[styles.btnText, subCol]}>Skip</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Reordered for the WildBear first-minute rule: company identity and the next
+            action come before dashboards. Critical alerts stay above this; the rest of
+            Home keeps its existing order below. */}
         {/* ── Company Health Score ─────────────────────────────────────────── */}
         {game.tutorialDone && (() => {
           const hs = computeHealthScore(game);
@@ -6101,13 +6590,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
         {/* ── On-Time Streak ───────────────────────────────────────────────── */}
         {((game.onTimeStreak||0) >= 1 || (game.bestStreak||0) >= 3) && (
-          <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5 }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={[styles.label, col]}>🔥 On-Time Streak</Text>
-              <View style={{ backgroundColor: T.orange+"33", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 }}>
-                <Text style={{ color: T.orange, fontWeight: "700", fontSize: 13 }}>{game.onTimeStreak||0} in a row</Text>
-              </View>
-            </View>
+          <CollapsibleSection
+            title="🔥 On-Time Streak"
+            summary={`${game.onTimeStreak||0} in a row · best ${game.bestStreak||0}`}
+            persistKey="home_ontime_streak"
+            colors={{ background: T.panel, border: T.orange, text: T.text, sub: T.sub, accent: T.orange }}
+          >
             {(() => {
               const milestones = [3, 5, 10, 20];
               const streak = game.onTimeStreak || 0;
@@ -6124,7 +6612,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </>
               );
             })()}
-          </View>
+          </CollapsibleSection>
         )}
 
         {/* ── Weekly Challenge ─────────────────────────────────────────────── */}
@@ -6207,9 +6695,14 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const rels = game.clientRelationships || {};
           const activeClients = CLIENT_ROSTER.filter(c => rels[c.id]?.jobsDone > 0);
           if (activeClients.length === 0) return null;
+          const _loyalClients = activeClients.filter(c => (rels[c.id]?.loyalty || 0) >= 40).length;
           return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
-              <Text style={[styles.sectionTitle, col]}>🤝 Client Relationships</Text>
+            <CollapsibleSection
+              title="🤝 Client Relationships"
+              summary={`${activeClients.length} client${activeClients.length !== 1 ? "s" : ""}${_loyalClients > 0 ? ` · ${_loyalClients} paying a loyalty bonus` : ""}`}
+              persistKey="home_client_relationships"
+              colors={{ background: T.panel, border: T.border, text: T.text, sub: T.sub, accent: T.cyan }}
+            >
               {CLIENT_ROSTER.map(cl => {
                 const rel = rels[cl.id] || { loyalty: 0, jobsDone: 0 };
                 if (rel.jobsDone === 0) return null;
@@ -6234,146 +6727,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                 );
               })}
-            </View>
+            </CollapsibleSection>
           );
         })()}
-
-        {/* Tutorial — step-by-step, auto-advances with game state */}
-        {!game.tutorialDone && (() => {
-          const hasActiveSite  = (game.activeSites||[]).length > 0;
-          const hasBid         = (game.contracts||[]).some(c => c.status === "Active" || c.status === "Awarded");
-          const needsMaterials = hasActiveSite && (game.activeSites||[]).some(s => {
-            const con = (game.contracts||[]).find(c => c.id === s.contractId);
-            const def = CONTRACT_DEFS.find(d => d.id === con?.defId);
-            return def?.materials && Object.entries(def.materials).some(([id,qty]) => ((s.materialsFulfilled||{})[id]||0) < qty);
-          });
-
-          // Determine current step
-          let step = 0;
-          if (hasActiveSite && !needsMaterials)  step = 3;
-          else if (hasActiveSite && needsMaterials) step = 2;
-          else if (hasBid)                        step = 1;
-
-          const steps = [
-            {
-              num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
-              cta: "Go to Bids →", action: () => setTab("Bids"),
-            },
-            {
-              num: "2 of 4", title: "Buy Materials & Mobilise Crew",
-              body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-            {
-              num: "3 of 4", title: "Buy Missing Materials",
-              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-            {
-              num: "4 of 4", title: "Watch Your Site Progress",
-              body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
-            },
-          ];
-
-          const s = steps[step];
-          return (
-            <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <Text style={[styles.label, { color: T.cyan }]}>🚀 Getting Started</Text>
-                <Text style={{ color: T.sub, fontSize: 11 }}>Step {s.num}</Text>
-              </View>
-              <Text style={[styles.label, col, { marginBottom: 6 }]}>{s.title}</Text>
-              <Text style={[styles.sub, col, { lineHeight: 20, marginBottom: 10 }]}>{s.body}</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
-                  <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
-                  <Text style={[styles.btnText, subCol]}>Skip</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })()}
-
-        {/* Company Level */}
-        <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View>
-              <Text style={[{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }]}>LEVEL {companyLevel.level}</Text>
-              <Text style={[styles.label, col]}>{companyLevel.label}</Text>
-            </View>
-            <View style={{ alignItems: "flex-end" }}>
-              {nextLevel && <Text style={[styles.sub, { color: T.sub }]}>Next: {nextLevel.label}</Text>}
-              {!nextLevel && <Text style={[styles.sub, { color: T.yellow }]}>MAX LEVEL</Text>}
-            </View>
-          </View>
-          {nextLevel && (
-            <View style={{ marginTop: 8, gap: 4 }}>
-              {[
-                { label: "Rep",   current: game.reputation || 0,    target: nextLevel.repMin,  color: T.purple, fmt: v => `${v}` },
-                { label: "Jobs",  current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: v => `${v}` },
-                { label: "Value", current: valuation,               target: nextLevel.valMin,  color: T.cyan,   fmt: v => money(v) },
-              ].map(bar => {
-                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
-                const done = bar.current >= bar.target;
-                return (
-                  <View key={bar.label} style={{ marginBottom: 4 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={[styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }]}>{done ? "✓ " : ""}{bar.label}</Text>
-                      <Text style={[styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }]}>
-                        {bar.fmt(bar.current)} / {bar.fmt(bar.target)}
-                      </Text>
-                    </View>
-                    <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
-                      <View style={{ height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 }} />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-        </View>
-
-        {/* Company Header */}
-        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <Text style={[styles.h2, col]} numberOfLines={1}>{game.companyName}</Text>
-                {(game.generation||1) > 1 && (
-                  <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
-                )}
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={[styles.sub, subCol]}>{repTier.badge} {repTier.label} · Day {game.day}</Text>
-                  {game.seasonEmoji && (
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 11 }]}>{game.seasonEmoji} {game.currentSeason}</Text>
-                  )}
-                  {(game.savings || 0) > 0 && (
-                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>🏦 {money(game.savings)} saved</Text>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 }}
-                  onPress={() => setSpeedMode(s => !s)}
-                >
-                  <Text style={{ fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }}>
-                    {speedMode ? "⚡ 2×" : "1×"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={{ alignItems: "flex-end", minWidth: 0 }}>
-              <Text style={[styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }]} numberOfLines={1}>{money(game.cash)}</Text>
-              <Text style={[styles.sub, subCol]} numberOfLines={1}>{office.name}</Text>
-              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]} numberOfLines={1}>📍 {displayCityName}, {displayStateCode}</Text>
-            </View>
-          </View>
-        </View>
 
         {/* Today's Priorities */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
@@ -6822,7 +7178,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               const contract = game.contracts.find(c => c.id === site.contractId);
               const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
               const daysLate = Math.max(0, game.day - site.deadlineDay);
-              const projectedProfit = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+              // Value the job will pay if it finished today — NOT profit, despite the old name.
+              const valueAfterPenalty = Math.max(0, site.totalValue - daysLate * site.penaltyPerDay);
+              // The real running P&L: what has been spent on this job so far against what it
+              // will pay. This is the number that teaches a player what a job actually costs.
+              const liveEconomics = buildProjectEconomics({
+                contractValue: site.totalValue,
+                depositPaid: site.depositPaid || 0,
+                penalty: daysLate * site.penaltyPerDay,
+                costs: ensureProjectCostLedger(site),
+              });
               const isOverdue = game.day > site.deadlineDay;
               const missingMats = getSiteMissingMaterials(site, def, game);
               const _renegCost = Math.round((def?.baseValue || site.totalValue || 10000) * 0.08);
@@ -7151,7 +7516,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Contract value</Text>
                     <View style={{ flexDirection: "row", gap: 8 }}>
                       <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 11 }]}>{money(site.totalValue)}</Text>
-                      {daysLate > 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>→ {money(projectedProfit)}</Text>}
+                      {daysLate > 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>→ {money(valueAfterPenalty)}</Text>}
+                    </View>
+                  </View>
+                  {/* Running cost — so the player watches margin move during the job rather
+                      than only meeting it on the completion screen. */}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Spent so far</Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <Text style={[styles.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }]}>{money(liveEconomics.directCosts)}</Text>
+                      <Text style={[styles.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }]}>
+                        {liveEconomics.netProfit >= 0 ? "+" : "−"}{money(Math.abs(liveEconomics.netProfit))} if it finishes now
+                      </Text>
                     </View>
                   </View>
                   {(site.depositPaid || 0) > 0 && !isOverdue && (
@@ -7168,10 +7544,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         </Text>
                       </View>
                       <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
-                        <View style={{ height: 4, width: `${Math.max(0, Math.round((projectedProfit / site.totalValue) * 100))}%`, backgroundColor: projectedProfit > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 }} />
+                        <View style={{ height: 4, width: `${Math.max(0, Math.round((valueAfterPenalty / site.totalValue) * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 }} />
                       </View>
                       <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }]}>
-                        {money(projectedProfit)} of {money(site.totalValue)} remaining
+                        {money(valueAfterPenalty)} of {money(site.totalValue)} remaining
                       </Text>
                     </View>
                   )}
@@ -7381,7 +7757,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
           if (crewFilter !== "All" && _filteredCrew.length === 0 && (game.crew||[]).length > 0) return (
             <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20, margin: 12 }]}>
-              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>No {crewFilter.toLowerCase()} crew members right now.</Text>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }]}>
+                None of your {(game.crew||[]).length} crew are {crewFilter.toLowerCase()} right now.
+              </Text>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]}
+                onPress={() => setCrewFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Crew</Text>
+              </TouchableOpacity>
             </View>
           );
           return null;
@@ -7513,7 +7897,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
           if (_filteredEquip.length === 0 && equipFilter !== "All") return (
             <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 20 }]}>
-              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>No {equipFilter.toLowerCase()} equipment right now.</Text>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginBottom: 10 }]}>
+                None of your {(game.equipment||[]).length} machines are {equipFilter.toLowerCase()} right now.
+              </Text>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
+                onPress={() => setEquipFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Equipment</Text>
+              </TouchableOpacity>
             </View>
           );
           return _filteredEquip.map((equip) => {
@@ -8296,7 +8688,41 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const dailyLoanInterest = game.loans.reduce((s, l) => s + (l.weeklyPayment || 0) / 7, 0);
     const dailyIncome = (game.weeklyStats?.revenue || 0) / 7;
     const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - office.dailyRent - dailyLoanInterest;
-    const loanOffers = LOAN_PRODUCTS.filter((p) => game.creditScore >= p.minCredit);
+    const regionalEconomy = getConstructionRegionalSnapshot(game);
+    const loanOffers = LOAN_PRODUCTS.map((product) => {
+      const offer = computeLoanOffer(product.id, buildBorrowerProfile(game, product));
+      return {
+        ...product,
+        _offer: offer,
+        principal: offer.approved ? offer.principal : product.principalMin,
+        apr: offer.approved ? offer.apr : product.aprMax,
+        weeks: product.termWeeks,
+        eligible: offer.approved,
+        declineReasons: offer.approved ? [] : (offer.reasons || []),
+      };
+    });
+
+    // Financial ledger view model. The ledger is history-only and never mutates balances.
+    const ledgerCutoff = (game.day || 0) - 7;
+    const ledger7d = (game.ledger || []).filter((entry) => (entry.day || 0) >= ledgerCutoff);
+    const recentLedger = (game.ledger || []).slice(0, 8);
+    const ledgerRevenue = ledger7d.filter((entry) => entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0);
+    const ledgerExpenses = ledger7d.filter((entry) => entry.amount < 0).reduce((sum, entry) => sum + Math.abs(entry.amount), 0);
+    const ledgerNet = ledgerRevenue - ledgerExpenses;
+    const ledgerCategoryLabels = {
+      payroll: "Payroll", fuel: "Fuel", maintenance: "Maintenance", equipment: "Equipment",
+      materials: "Materials", insurance: "Insurance", utilities: "Utilities", inventory: "Inventory",
+      taxes: "Taxes", financing: "Financing", property: "Property", fines: "Fines & Legal",
+      contracts: "Contracts", bonuses: "Bonuses", sales: "Asset Sales", misc: "Other",
+    };
+    const summarizeLedgerCategories = (entries, sign) => Object.entries(entries.reduce((acc, entry) => {
+      if ((sign === "income" && entry.amount <= 0) || (sign === "expense" && entry.amount >= 0)) return acc;
+      const key = entry.category || "misc";
+      acc[key] = (acc[key] || 0) + Math.abs(entry.amount);
+      return acc;
+    }, {})).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const topRevenueCategories = summarizeLedgerCategories(ledger7d, "income");
+    const topExpenseCategories = summarizeLedgerCategories(ledger7d, "expense");
 
     return (
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
@@ -8333,6 +8759,104 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               )}
             </View>
           ))}
+        </View>
+
+        {/* Regional Economy */}
+        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1 }]}>
+          <Text style={[styles.sectionTitle, { color: T.cyan }]}>Regional Economy · {regionalEconomy.stateName}</Text>
+          <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>
+            Local construction conditions actively affect bids, materials, wages, and financing.
+          </Text>
+          {[
+            { label: "Contract Market", val: `${regionalEconomy.contractValueMult.toFixed(2)}×`, color: regionalEconomy.contractValueMult >= 1 ? T.green : T.orange },
+            { label: "Material Prices", val: `${regionalEconomy.materialPriceMult.toFixed(2)}×`, color: regionalEconomy.materialPriceMult <= 1 ? T.green : T.orange },
+            { label: "Wage Pressure", val: `${regionalEconomy.wageMult.toFixed(2)}×`, color: regionalEconomy.wageMult <= 1 ? T.green : T.orange },
+            { label: "Lending Climate", val: `${regionalEconomy.lendingEconomyMult.toFixed(2)}×`, color: regionalEconomy.lendingEconomyMult >= 1 ? T.green : T.orange },
+          ].map((row) => (
+            <View key={row.label} style={[styles.finRow, { borderBottomColor: T.border }]}>
+              <Text style={[styles.sub, col]}>{row.label}</Text>
+              <Text style={[styles.sub, { color: row.color, fontWeight: "700" }]}>{row.val}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Financial Ledger */}
+        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 1.5 }]}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <View>
+              <Text style={[styles.sectionTitle, col]}>Transaction Ledger</Text>
+              <Text style={[styles.sub, subCol]}>Last 7 days · cash movements recorded automatically</Text>
+            </View>
+            <View style={[styles.statusPill, { backgroundColor: (ledgerNet >= 0 ? T.green : T.red) + "22" }]}>
+              <Text style={[styles.statusPillText, { color: ledgerNet >= 0 ? T.green : T.red }]}>
+                {ledgerNet >= 0 ? "+" : ""}{money(ledgerNet)} net
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+            {[
+              { label: "Income", value: ledgerRevenue, color: T.green, prefix: "+" },
+              { label: "Expenses", value: ledgerExpenses, color: T.red, prefix: "-" },
+              { label: "Net", value: Math.abs(ledgerNet), color: ledgerNet >= 0 ? T.green : T.red, prefix: ledgerNet >= 0 ? "+" : "-" },
+            ].map((item) => (
+              <View key={item.label} style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 8, padding: 9, alignItems: "center" }}>
+                <Text style={{ color: item.color, fontSize: 13, fontWeight: "800" }}>{item.prefix}{money(item.value)}</Text>
+                <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{item.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {ledger7d.length > 0 ? (
+            <>
+              {(topRevenueCategories.length > 0 || topExpenseCategories.length > 0) && (
+                <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sub, { color: T.green, fontWeight: "700", marginBottom: 4 }]}>TOP INCOME</Text>
+                    {topRevenueCategories.map(([category, amount]) => (
+                      <View key={`rev-${category}`} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+                        <Text style={[styles.sub, subCol]} numberOfLines={1}>{ledgerCategoryLabels[category] || category}</Text>
+                        <Text style={[styles.sub, { color: T.green }]}>+{money(amount)}</Text>
+                      </View>
+                    ))}
+                    {topRevenueCategories.length === 0 && <Text style={[styles.sub, subCol]}>No income yet</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sub, { color: T.red, fontWeight: "700", marginBottom: 4 }]}>TOP SPENDING</Text>
+                    {topExpenseCategories.map(([category, amount]) => (
+                      <View key={`exp-${category}`} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+                        <Text style={[styles.sub, subCol]} numberOfLines={1}>{ledgerCategoryLabels[category] || category}</Text>
+                        <Text style={[styles.sub, { color: T.red }]}>-{money(amount)}</Text>
+                      </View>
+                    ))}
+                    {topExpenseCategories.length === 0 && <Text style={[styles.sub, subCol]}>No expenses yet</Text>}
+                  </View>
+                </View>
+              )}
+
+              <Text style={[styles.sub, { color: T.sub, fontWeight: "700", marginBottom: 5 }]}>RECENT TRANSACTIONS</Text>
+              {recentLedger.map((entry, index) => (
+                <View key={entry.id || `${entry.day}-${index}`} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 7, borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: T.border }}>
+                  <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: (entry.amount >= 0 ? T.green : T.orange) + "22", marginRight: 8 }}>
+                    <Ionicons name={entry.amount >= 0 ? "arrow-down" : "arrow-up"} size={14} color={entry.amount >= 0 ? T.green : T.orange} />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={[styles.sub, col]} numberOfLines={1}>{entry.description || ledgerCategoryLabels[entry.category] || "Transaction"}</Text>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Day {entry.day || 0} · {ledgerCategoryLabels[entry.category] || entry.category || "Other"} · Balance {money(entry.balance || 0)}</Text>
+                  </View>
+                  <Text style={[styles.sub, { color: entry.amount >= 0 ? T.green : T.red, fontWeight: "800" }]}>
+                    {entry.amount >= 0 ? "+" : "-"}{money(Math.abs(entry.amount))}
+                  </Text>
+                </View>
+              ))}
+            </>
+          ) : (
+            <View style={{ backgroundColor: T.panel2, borderRadius: 8, padding: 12 }}>
+              <Text style={[styles.sub, { color: T.sub, textAlign: "center" }]}>
+                Nothing recorded yet. Every contract payment, wage, material order and repair lands here automatically — start a job and the ledger fills itself.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* R16-1: Business Savings */}
@@ -8493,22 +9017,30 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={[styles.label, col]}>{product.label}</Text>
               <Text style={[styles.label, { color: T.green }]}>{money(product.principal)}</Text>
             </View>
-            {(() => {
-              const _score = game.creditScore || 600;
-              const _disc = _score >= 780 ? 2.5 : _score >= 720 ? 1.5 : _score >= 660 ? 0.5 : 0;
-              const _apr = Math.max(0.5, product.apr - _disc);
-              return <Text style={[styles.sub, subCol]}>{_apr}% APR{_disc > 0 ? ` (−${_disc}% credit bonus)` : ""} · {product.weeks} weeks · {money(Math.round(product.principal * (1 + _apr / 100) / product.weeks))}/week</Text>;
-            })()}
+            {product.eligible ? (
+              <>
+                <Text style={[styles.sub, subCol]}>{product.apr}% APR · {product.weeks} weeks · {money(product._offer.weeklyPayment)}/week · Total {money(product._offer.totalRepayment)}</Text>
+                <Text style={[styles.sub, { color: T.green, fontSize: 10, marginTop: 3 }]}>{product._offer.approvalReason}</Text>
+                {product.collateralRequired && <Text style={[styles.sub, { color: T.orange, fontSize: 10, marginTop: 2 }]}>Secured financing · collateral required</Text>}
+              </>
+            ) : (
+              <>
+                <Text style={[styles.sub, { color: T.red }]}>Not currently eligible</Text>
+                <Text style={[styles.sub, subCol, { fontSize: 10, marginTop: 3 }]}>{product.declineReasons[0] || `Needs ${product.minCredit}+ credit score.`}</Text>
+              </>
+            )}
             <TouchableOpacity
-              style={[styles.btn, { marginTop: 8, backgroundColor: T.blue, borderColor: T.blue }]}
+              style={[styles.btn, { marginTop: 8, backgroundColor: product.eligible ? T.blue : T.panel2, borderColor: product.eligible ? T.blue : T.border }]}
               onPress={() => handleTakeLoan(product)}
             >
-              <Text style={[styles.btnText, { color: "#fff" }]}>Take Loan</Text>
+              <Text style={[styles.btnText, { color: product.eligible ? "#fff" : T.sub }]}>{product.eligible ? "Accept Financing" : "View Requirements"}</Text>
             </TouchableOpacity>
           </View>
         ))}
         {loanOffers.length === 0 && (
-          <Text style={[styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }]}>No financing available — improve credit score to unlock loans.</Text>
+          <Text style={[styles.sub, subCol, { textAlign: "center", paddingVertical: 16 }]}>
+            No lender will underwrite you yet. Credit score rises when you finish contracts on time and stay out of overdraft — the first loan products unlock as it climbs.
+          </Text>
         )}
 
         {/* Materials Inventory */}
@@ -8678,7 +9210,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             <Text style={{ color: T.sub, fontSize: 13, fontWeight: "600" }}>‹ Hub</Text>
           </TouchableOpacity>
         )}
-        <Text style={{ flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }}>ConstructionFlow</Text>
+        <Text style={{ flex: 1, color: T.text, fontSize: 16, fontWeight: "800" }}>Construction Flow</Text>
         <View style={{ backgroundColor: (game.cash >= 0 ? T.green : T.red) + "22", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
           <Text style={{ color: game.cash >= 0 ? T.green : T.red, fontSize: 12, fontWeight: "700" }}>{money(game.cash)}</Text>
         </View>
@@ -8693,7 +9225,51 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={[styles.h2, col, { textAlign: "center", marginBottom: 4 }]}>{game.pendingCelebration.isMajor ? "MAJOR CONTRACT COMPLETE!" : "Job Complete!"}</Text>
               <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 12 }]}>{game.pendingCelebration.label}</Text>
               <Text style={{ fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }}>{money(game.pendingCelebration.earned)}</Text>
-              <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>for {game.pendingCelebration.client}</Text>
+              <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>paid by {game.pendingCelebration.client}</Text>
+
+              {/* ── Project P&L ──────────────────────────────────────────────
+                  A payout is not a profit. This is the one screen where the player can
+                  learn what a construction job actually costs to run, so it itemises the
+                  money this project spent and lands on a single net number. */}
+              {game.pendingCelebration.economics && (() => {
+                const ec = game.pendingCelebration.economics;
+                const profitable = ec.netProfit >= 0;
+                const toneColor = { positive: T.green, negative: T.red, neutral: T.text };
+                return (
+                  <View style={{ width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }}>
+                    <Text style={{ fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }}>WHAT THIS JOB MADE</Text>
+                    {buildProjectProfitLines(ec, money).map((line, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                        <Text style={[styles.sub, { color: T.sub, flex: 1 }]} numberOfLines={1}>{line.label}</Text>
+                        <Text style={[styles.sub, { color: toneColor[line.tone] || T.text, fontWeight: "700" }]}>{line.value}</Text>
+                      </View>
+                    ))}
+                    <View style={{ height: 1, backgroundColor: T.border, marginVertical: 8 }} />
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={[styles.label, col]}>Net profit</Text>
+                      <Text style={{ color: profitable ? T.green : T.red, fontSize: 20, fontWeight: "900" }}>
+                        {profitable ? "" : "−"}{money(Math.abs(ec.netProfit))}
+                      </Text>
+                    </View>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 2 }]}>
+                      {ec.marginPercent}% margin{ec.depositPaid > 0 ? ` · ${money(ec.depositPaid)} of this arrived as the deposit at mobilisation` : ""}
+                    </Text>
+                    {game.pendingCelebration.costsPartial && (
+                      <Text style={[styles.sub, { color: T.orange, fontSize: 11, marginTop: 6 }]}>
+                        ⚠ This job was already running before cost tracking started — the costs above cover only part of it.
+                      </Text>
+                    )}
+                    {/* Spelling out what is deliberately NOT charged here is the difference
+                        between an honest breakdown and one the player later feels tricked by. */}
+                    {game.pendingCelebration.isFirstProject && (
+                      <>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 8, fontStyle: "italic" }]}>{OVERHEAD_NOTE}</Text>
+                        <Text style={[styles.sub, { color: T.cyan, fontSize: 12, marginTop: 8 }]}>{getProjectReinvestmentHint(ec.netProfit)}</Text>
+                      </>
+                    )}
+                  </View>
+                );
+              })()}
               <View style={{ flexDirection: "row", gap: 12, marginBottom: 16 }}>
                 {game.pendingCelebration.isOnTime && (
                   <View style={[styles.statusPill, { backgroundColor: T.green + "22" }]}>
@@ -9012,7 +9588,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     style={[styles.btn, { marginBottom: 8, backgroundColor: _canAfford ? T.green : T.panel2, borderColor: _canAfford ? T.green : T.border, opacity: _canAfford ? 1 : 0.55 }]}
                     onPress={() => {
                       const ev = game.pendingVeteranEvent;
-                      if (!_canAfford) { Alert.alert("Insufficient Funds", `You need ${money(ev.retainCost)} to pay this bonus.`); return; }
+                      if (!_canAfford) { alertInsufficientFunds(game, ev.retainCost, "This retention bonus"); return; }
                       update(g => {
                         const _ev = g.pendingVeteranEvent;
                         const w = (g.crew||[]).find(c => c.id === _ev.workerId);
@@ -9159,8 +9735,32 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Empire:   { active: "trophy",         inactive: "trophy-outline"        },
           };
           const iconName = active ? TAB_ICONS[t]?.active : TAB_ICONS[t]?.inactive;
+          // During the tutorial, mark the tab the Getting Started card is sending the
+          // player to. Without this the card says "Go to Bids" and the tab itself gives no
+          // sign which one that is — the single cheapest fix available to the first minute.
+          const isTutorialTarget = !active && t === getTutorialTargetTab(game);
           return (
-            <TouchableOpacity key={t} style={styles.tabItem} onPress={() => setTab(t)} activeOpacity={0.75}>
+            <TouchableOpacity
+              key={t}
+              style={styles.tabItem}
+              onPress={() => setTab(t)}
+              activeOpacity={0.75}
+              accessibilityRole="tab"
+              // The marker dot is decorative, so the cue it carries has to reach screen
+              // readers through the label instead.
+              accessibilityLabel={isTutorialTarget ? `${t} — next tutorial step` : t}
+              accessibilityState={{ selected: active }}
+            >
+              {isTutorialTarget && (
+                <View
+                  style={{
+                    position: "absolute", top: 2, alignSelf: "center",
+                    width: 7, height: 7, borderRadius: 4, backgroundColor: T.cyan,
+                  }}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              )}
               {!!badgeVal && (
                 <View style={[styles.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }]}>
                   <Text style={styles.badgeText}>{badgeVal}</Text>
@@ -9267,9 +9867,19 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
             <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 6 }]}>
               {categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available"}
             </Text>
-            <Text style={[styles.sub, subCol, { textAlign: "center" }]}>
-              New contracts arrive daily. Come back tomorrow or improve your reputation for better offers.
+            <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
+              {categoryFilter !== "All"
+                ? `Nothing in ${categoryFilter} right now — other categories may still have work.`
+                : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones."}
             </Text>
+            {categoryFilter !== "All" && (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
+                onPress={() => onSetFilter("All")}
+              >
+                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Contracts</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -9363,15 +9973,45 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>{c.desc}</Text>
                   {/* Profit estimate */}
                   {(() => {
-                    const estMatCost = Object.entries(c.materials || {}).reduce((s, [matId, qty]) => {
-                      const price = game.materialPrices[matId] || MATERIAL_DEFS.find(m => m.id === matId)?.basePrice || 100;
-                      return s + qty * price;
-                    }, 0);
-                    const estLaborCost = (c.crewMin || 1) * 220 * (c.durationDays || 1);
-                    const estProfit = c.value - estMatCost - estLaborCost;
                     const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
                     const BID_MULT = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
                     const effectiveValue = Math.round(c.value * (BID_MULT[bidStyle] ?? 1.0));
+
+                    // Every input below is resolved the same way the real charge resolves it:
+                    // materials through getMaterialUnitPrice (regional pricing + bulk
+                    // discount), labour from the player's own crew wages, equipment from the
+                    // day rate of the machines they actually own. The old estimate priced
+                    // materials off the raw table, hardcoded labour at $220/crew/day, ignored
+                    // equipment entirely, and estimated against the pre-bid-style value — so
+                    // switching to an aggressive bid lowered the headline number while the
+                    // "est. profit" underneath it did not move.
+                    // Stock on hand still cost the business money to buy, so the estimate
+                    // prices the whole requirement rather than only the shortfall — otherwise
+                    // a job looks cheaper purely because materials were bought earlier.
+                    const estMatCost = Object.entries(c.materials || {}).reduce(
+                      (sum, [matId, qty]) => sum + qty * getMaterialUnitPrice(game, matId),
+                      0,
+                    );
+
+                    const _crewPool = game.crew || [];
+                    const avgCrewWage = _crewPool.length
+                      ? _crewPool.reduce((sum, w) => sum + (w.wagePerDay || 0), 0) / _crewPool.length
+                      : 220;
+                    const _equipPool = game.equipment || [];
+                    const avgEquipCost = _equipPool.length
+                      ? _equipPool.reduce((sum, e) => sum + (e.dailyCost || 0), 0) / _equipPool.length
+                      : 0;
+
+                    const est = estimateProjectCosts({
+                      contractValue: effectiveValue,
+                      durationDays: c.durationDays,
+                      crewMin: c.crewMin,
+                      equipMin: Math.max(1, c.equipMin || 1),
+                      materialUnitCost: estMatCost,
+                      avgCrewWagePerDay: avgCrewWage,
+                      avgEquipmentCostPerDay: avgEquipCost,
+                    });
+                    const estProfit = est.netProfit;
                     return (
                       <View style={{ backgroundColor: T.panel2, borderRadius: 8, padding: 10, marginBottom: 10 }}>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
@@ -9379,12 +10019,16 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                           <Text style={[styles.sub, { color: T.green, fontWeight: "700" }]}>{money(effectiveValue)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-                          <Text style={[styles.sub, subCol]}>Est. material cost</Text>
-                          <Text style={[styles.sub, { color: T.orange }]}>{money(estMatCost)}</Text>
+                          <Text style={[styles.sub, subCol]}>Est. materials</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.materials)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-                          <Text style={[styles.sub, subCol]}>Est. labor cost</Text>
-                          <Text style={[styles.sub, { color: T.orange }]}>{money(estLaborCost)}</Text>
+                          <Text style={[styles.sub, subCol]}>Est. crew wages ({est.crewDays} crew-days)</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.labor)}</Text>
+                        </View>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+                          <Text style={[styles.sub, subCol]}>Est. equipment ({est.equipmentDays} machine-days)</Text>
+                          <Text style={[styles.sub, { color: T.orange }]}>{money(est.equipment)}</Text>
                         </View>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                           <Text style={[styles.sub, { color: T.text, fontWeight: "700" }]}>Est. profit</Text>
@@ -9394,9 +10038,9 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                           <Text style={[styles.sub, subCol]}>Deadline penalty</Text>
                           <Text style={[styles.sub, { color: T.red }]}>{money(c.penaltyPerDay)}/day late</Text>
                         </View>
-                        {estProfit > 0 && (() => {
-                          const marginPct = Math.round((estProfit / Math.max(1, effectiveValue)) * 100);
-                          const barColor = marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
+                        {(() => {
+                          const marginPct = est.marginPercent;
+                          const barColor = marginPct < 0 ? T.red : marginPct >= 30 ? T.green : marginPct >= 15 ? T.cyan : T.orange;
                           return (
                             <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
@@ -9404,8 +10048,16 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                                 <Text style={[styles.sub, { color: barColor, fontSize: 10, fontWeight: "600" }]}>{marginPct}%</Text>
                               </View>
                               <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
-                                <View style={{ height: 4, width: `${Math.min(100, marginPct * 2)}%`, backgroundColor: barColor, borderRadius: 2 }} />
+                                <View style={{ height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 }} />
                               </View>
+                              {marginPct < 0 && (
+                                <Text style={[styles.sub, { color: T.red, fontSize: 10, marginTop: 4 }]}>
+                                  ⚠ At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation.
+                                </Text>
+                              )}
+                              <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }]}>
+                                Estimate assumes {c.durationDays}d at minimum crew. Delays, weather and repairs come out of this margin.
+                              </Text>
                             </View>
                           );
                         })()}
@@ -9701,7 +10353,15 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         </TouchableOpacity>
       )}
       {game.crew.length === 0 && (
-        <Text style={[styles.sub, subCol, { textAlign: "center", padding: 16 }]}>No crew yet — post a job ad to find workers.</Text>
+        <View style={{ alignItems: "center", padding: 16 }}>
+          <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }]}>No crew on the books</Text>
+          <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
+            A site can&apos;t start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for.
+          </Text>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={onPostJob}>
+            <Text style={[styles.btnText, { color: "#fff" }]}>Post a Job Ad</Text>
+          </TouchableOpacity>
+        </View>
       )}
       {game.crew.map((w) => {
         const trait = w.trait || {};
