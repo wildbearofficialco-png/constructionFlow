@@ -5,6 +5,30 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Release (1.0.0, build 2)
+
+- iOS `buildNumber` 1 -> 2. Version stays **1.0.0**: build 1 went to TestFlight under it and
+  it has not been publicly released, so there is no `CFBundleShortVersionString` collision to
+  avoid. Android `versionCode` untouched — this is an iOS build.
+- Ships Phases 1, 2 and 3 together. Build 1 was the pre-audit game.
+- `npx expo-doctor` 19/21 (both failures are network-policy-blocked checks in the build
+  sandbox, not project issues), `npx expo export --platform ios` bundles cleanly, lint 0
+  errors, typecheck clean, 305/305 tests.
+
+**What to look at on device**, since these are the things no test can judge:
+
+1. **Does amber read right?** It is now the primary action colour on every screen — the
+   single biggest aesthetic bet in this release.
+2. **Crew, Equipment and Empire** have the tightest horizontal rows and the largest type
+   increase. If anything wraps badly or clips, it will be there.
+3. **Install over an existing build-1 save**, don't wipe first. Migration is test-covered
+   (a job in progress loads, defaults to no outstanding orders and no claims, and migrating
+   twice is idempotent) but only a real device proves it.
+4. **Bidding.** You can lose a bid now. The first contract is guaranteed and the odds are
+   always on screen before you commit — does losing one read as tension or as noise?
+5. **Material lead time.** A job can sit stalled two days waiting on concrete. Drama or dead
+   air? `NORMAL_DELIVERY_DAYS` in `src/systems/constructionLoop.js` is a one-line change.
+
 ### Added — Phase 3: the living company
 
 Phase 1 made the game legible; Phase 2 made its loop a game. Phase 3's finding is a third
