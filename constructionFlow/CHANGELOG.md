@@ -5,6 +5,104 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Phase 5 — Long-term progression: the ladder now pays what it advertises
+
+### The finding
+
+Construction Flow was not short of late-game content. It has five office tiers, nine cities,
+five regional office types, four property types, ten company levels, empire goals, milestones
+and achievements. **The problem was that most of what the ladder sold was not real.**
+
+Six perks are advertised on the office upgrade path. Four of them were read by nothing — they
+existed only as strings in a data table and on the button the player pressed to buy them:
+
+| Purchase | Advertised | Was it delivered? |
+| --- | --- | --- |
+| Rented Portakabin, $3,500 | +5% bid win chance | **No** |
+| Small Site Office, $15,000 | −10% delay penalties | **No** |
+| Project Office, $45,000 | −15% delay penalties | **No** |
+| Project Office, $45,000 | −8% material costs | Yes |
+| HQ Tower Suite, $110,000 | +12% bid win chance | **No** |
+| HQ Tower Suite, $110,000 | −15% material costs | Yes |
+| All five regional offices | up to "+80 contract slots" | **No** — board hard-coded 5–7 |
+| Office Property, $120,000 | "Eliminates home office rent" | **No** — rent charged regardless |
+| Properties | crew capacity | **No** — computed into a dead local, then dropped |
+
+A player could spend $1,620,000 on the Office Property and a National HQ and receive, between
+them, nothing at all. This is worse than a missing feature: the game took the money and showed
+a confirmation.
+
+### Fixed
+
+- **`src/systems/companyPerkTables.js` (new).** The three progression tables, extracted out of
+  `ConstructionFlowScreen.js`. They lived inside the screen, which is how four office perks
+  came to be declared in one place and consumed in none.
+- **`src/systems/companyPerks.js` (new).** One resolver — `resolveCompanyPerks` — that turns
+  everything a company owns into one set of numbers. Every consumer reads it. A perk can no
+  longer be advertised in one file and forgotten in another.
+- **Bid win chance is real.** All three bid call sites go through `withBidPerks`, so the odds
+  shown on the card are by construction the odds that get rolled. Capped at +15%; a bid is
+  never a certainty.
+- **Delay penalty relief is real.** Applied before the existing 85% cap. Capped at −40%: a
+  late job is cheaper, never free.
+- **Contract slots are real.** `contractBoardSize` widens the open-contract board from the
+  hard-coded floor 5 / cap 7. Capped at +8 so a large company cannot balloon the save.
+- **`eliminatesRent` is real.** `dailyOfficeRent` returns 0 for a company that owns its
+  building, and the rent line leaves the ledger rather than being written as $0.
+- **Property crew capacity is real.** `crewCapBonus` is a new, separate field. `getTotalCrewCap`
+  used to compute a property bonus from `equipCapBonus` — a *machine* figure — and then return
+  without using it. That dead local is gone.
+- **Every rent figure the player reads now matches the money that moves.** Fixing the charge
+  alone would have left the Finance tab's net cash flow, the cash-runway warning, the health
+  score, the away report's overhead line and the office card all quoting a bill the player no
+  longer pays. All six now read `dailyOfficeRent`.
+
+### Honest downgrade: contract slots
+
+The tables advertised 3 / 8 / 18 / 35 / 80 extra contract slots. Delivering "+80" literally
+would put eighty contracts on the board — unreadable, and a save-size problem earlier phases
+already fought. **The honest fix for a promise that large and that false is to make the promise
+smaller and true**, not to keep the number and ship an absurdity. The tables now advertise
+1–5 extra contracts and deliver exactly that.
+
+### New — Company Ladder card on the Empire tab
+
+`describePerkSources` and `nextOfficeUpgrade` feed a card that answers three questions a
+progression system has to answer and this one could not: where am I (rung *n* of 5), what is
+each building I bought actually giving me, and what does the next rung cost. Every figure on it
+is a perk the simulation applies — which is why a card like this could not honestly have been
+drawn before this phase.
+
+### Tests — 388 → 439
+
+- `__tests__/companyPerks.test.js` (30). Headline block: **"every advertised perk is
+  delivered"** walks the data tables and fails if any declared perk goes unclaimed. This is the
+  guard that stops a perk becoming decorative again.
+- `__tests__/companyPerksIntegration.test.js` (18). Each test names the money the player was
+  spending on nothing. Includes a 400-tick run with everything owned (no NaN capacity or cost),
+  a legacy-save resolve, and source scans asserting the screen reads the resolver rather than
+  the raw table.
+- Three Empire-tab render probes, including the top-of-the-ladder case and the no-rent case.
+
+### Near-miss caught by the integration tests
+
+`getTotalCrewCap` was rewired to the resolver but not exported, so the integration test could
+not reach it — a reminder that Phases 1–4 each had wiring that was written, tested in isolation
+and never connected. That is the point of running integration tests against the real screen
+rather than only the module.
+
+### Save compatibility
+
+No new save fields and no migration. `resolveCompanyPerks` reads `officeIndex`, `cityOffices`
+and `properties`, which every existing save already carries, and coalesces missing values.
+A build-1 save loads and resolves correctly — covered by test.
+
+### Not shipped
+
+`ios.buildNumber` is **unchanged at 3**. Build 3 has not been tested on device yet, and the
+standing recommendation is still to install it before stacking another build on top.
+
+
 ### Release (1.0.0, build 3)
 
 - iOS `buildNumber` 2 -> 3. Version stays **1.0.0**: builds 1 and 2 went to TestFlight under
