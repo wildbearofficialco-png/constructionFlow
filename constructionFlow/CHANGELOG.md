@@ -5,6 +5,93 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Fixed — Phase 4: a market that keeps living
+
+FleetFlow shipped builds 58 and 59 specifically to fix a market that stopped living, and its
+changelog is a ready-made post-mortem. Reading Construction Flow's rival code against it found
+**every one of those defects still present, plus four of its own**:
+
+- **The market died permanently.** `createRivals()` mints seven fixed companies and was only
+  ever called on a fresh save. Acquire or bankrupt them all and the board was empty forever.
+  Worse, the migration's `if (!g.rivals.length) g.rivals = createRivals()` would have
+  regenerated *the same seven* — resurrecting companies the player had bought. New companies
+  now enter a thin field, gated on a cooldown and a low daily roll so an arrival is news
+  rather than a conveyor belt. **The ones you bought stay bought**, which the buyout copy
+  promises and a test enforces.
+- **An entrant that could never do anything.** The bidding loop did a bare
+  `rivalPersonality[rival.id]` lookup followed by `continue`. A generated company has no entry
+  in that authored table by definition, so every entrant would have sat on the board forever
+  — present, but never bidding. This is the exact trap FleetFlow's build 59 names in its own
+  daily sim. Entrants now carry their seed *and* their personality on the record, and the
+  lookup falls back to it. (Nearly shipped: the helper was written and tested, and the loop
+  still wasn't using it. An unused-import warning caught it.)
+- **Rival news crowded out the player's own.** It went through `addLog`, which caps `logs` at
+  25 and `opsFeed` at 20 — the player's *own* operations feeds. A rival buying a digger pushed
+  the player's site events out of their own history. Rival activity now has its own capped
+  feed, surfaced on Home as **Market news**. The rule for which feed: *did this happen to the
+  player, or merely in the market?* Being outbid or poached is the player's event and stays in
+  their log; a rival opening a yard is market news.
+- **Two competing bankruptcy systems shared one field with opposite meanings.** One lifecycle
+  at the top of the rival loop treated `bankruptDays` as *days spent bankrupt*; a second
+  ("Rival War: Feature 7") treated the same field as *days spent nearly bankrupt*. The second
+  system's recovery branch was **unreachable** — the first `continue`s past it for any
+  bankrupt company — and its recovery wrote `rival.reputation`, a field nothing reads. There
+  is now one lifecycle with one field, `troubleDays`, meaning "days in the current state" and
+  resetting on every transition.
+- **Two counters for one thing.** One capex path incremented `rival.equipCount`, another
+  incremented `rival.equipment`, and the UI read only the second — so half of every rival's
+  machine purchases were invisible. One field now, with the old one folded in on migration.
+- **`createRivals()` minted incomplete records.** No `status`, no `employees`, no `equipment`.
+  The old code only worked by accident (`rival.status === "Bankrupt"` is false for undefined,
+  and every counter read was written `(rival.employees || 2)`). A company whose status is
+  literally undefined cannot be reasoned about.
+- **Acquisitions transferred almost nothing.** Buying a company gave 1–3 *generic* workers
+  whether it employed 2 or 20, no equipment at all, and recorded nothing in the ledger — so
+  the reconciler saw cash it could not explain, the same shape as the settlement leak fixed in
+  Phase 2. It also filtered site crew by `id !== rivalId`, comparing a crew member's id
+  against a company's: dead code with a comment claiming it did something.
+
+### Added — Phase 4
+
+- `src/systems/rivalMarket.js` — the market's logic, pure and testable: the unified lifecycle,
+  market-health and entrant gating, RNG-free news builders, and `planAcquisition`.
+- **Acquisitions that transfer a real business.** Crew scaled to the company's actual
+  headcount with trades matching what it built (a residential firm's people are carpenters),
+  its machines, its cash reserves, and both sides recorded in the ledger under a new
+  **Acquisitions** category. Above the cap the remainder is sold off in the deal rather than
+  dumped on the player as individual records. **Live and bankrupt are genuinely different
+  deals, not just different prices**: a trading firm is a going concern; a failed one's plant
+  and crew went to creditors before you got there, which is what the cheap distressed price
+  has always represented.
+- **Growth narrated from movements that really happened.** Instead of a bare "acquired new
+  equipment", the feed carries "🏗️ Apex Construction opened a yard in Bend, added 2 machines
+  and hired 3 workers." Every clause is derived from a delta the daily sim already produced,
+  so it narrates the simulation rather than running a second one beside it.
+- **Decline is visible before it is an opportunity.** An escalating line per stage of a slump
+  — losing money and missing deadlines → parked its fleet and cut shifts → weeks from closing
+  with creditors circling — so a company going under is news, not an obituary.
+- A rival's status on Home now reads from the lifecycle instead of being re-derived from cash,
+  which let the card call a company "Struggling" while the simulation had it trading normally.
+- A construction rival owns **machines**, not "vehicles".
+
+**The news builders are RNG-free, and it is tested.** Same FleetFlow build 59 lesson as
+Phase 3: a cosmetic headline must not consume a draw from the sequence the gated simulation
+behaviours read.
+
+### Tests — Phase 4
+
+82 new tests, taking the suite from 305 to 387:
+
+- `rivalMarket.test.js` (58) — the lifecycle across every transition and boundary, entrant
+  gating and the never-inert property, news determinism and feed isolation, and acquisition
+  plans for live and failed companies. Plus a sweep proving every entry point survives a
+  literal `null` in the rivals array, which a JS default parameter does **not** guard against.
+- `rivalMarketIntegration.test.js` (22) — 1,000 simulated days without a NaN or a broken
+  record; a board emptied by bankruptcies refilling with new companies; bought companies never
+  returning; entrants actually winning contracts; a year of market activity never displacing
+  the player's ops log; and a guard that **no `recordTransaction` call uses a ledger category
+  that would render unlabelled** — which is how the missing Acquisitions category was caught.
+
 ### Release (1.0.0, build 2)
 
 - iOS `buildNumber` 1 -> 2. Version stays **1.0.0**: build 1 went to TestFlight under it and

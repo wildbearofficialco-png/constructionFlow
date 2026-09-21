@@ -18,6 +18,10 @@ export const EXPENSE_CATEGORIES = {
   financing:   { label: "Financing",     icon: "card",            color: "#8b5cf6" },
   property:    { label: "Property",      icon: "business",        color: "#06b6d4" },
   fines:       { label: "Fines & Legal", icon: "warning",         color: "#ef4444" },
+  // Buying a rival contractor. Its own line rather than folded into `property` or `misc`,
+  // because an acquisition is a large, rare, deliberate outlay and burying it in
+  // "Miscellaneous" makes the Finance tab unreadable in the month it happens.
+  acquisitions:{ label: "Acquisitions",  icon: "git-merge",       color: "#a78bfa" },
   misc:        { label: "Miscellaneous", icon: "ellipsis-horizontal", color: "#94a3b8" },
 };
 
@@ -27,6 +31,8 @@ export const REVENUE_CATEGORIES = {
   financing:   { label: "Financing",    icon: "card",            color: "#8b5cf6" },
   bonuses:     { label: "Bonuses",      icon: "star",            color: "#eab308" },
   sales:       { label: "Asset Sales",  icon: "cash",            color: "#06b6d4" },
+  // The cash reserves that come over with an acquired company.
+  acquisitions:{ label: "Acquisitions", icon: "git-merge",       color: "#a78bfa" },
   misc:        { label: "Other Income", icon: "cash",            color: "#94a3b8" },
 };
 
