@@ -105,11 +105,24 @@ standing recommendation is still to install it before stacking another build on 
 
 ### Release (1.0.0, build 3)
 
-- iOS `buildNumber` 2 -> 3. Version stays **1.0.0**: builds 1 and 2 went to TestFlight under
-  it and it has not been publicly released, so there is no `CFBundleShortVersionString`
+> **Correction (Phase 5).** The two bullets below originally said builds 1 and 2 "went to
+> TestFlight" and that build 2 "was cut but never installed." **That was wrong, and it mattered.**
+> A TestFlight screenshot on 2026-09-21 shows the device on `1.0.0 (1)`. Numbers 2 and 3 exist
+> only as an `ios.buildNumber` value in `app.json` — a field in a JSON file. Bumping it produces
+> nothing. No binary was ever built or uploaded from this work: there is no EAS CLI and no Expo
+> auth in the agent sandbox, and no CI workflow in this repo, so nothing here *could* have cut a
+> build. **Build 1 is the only build that has ever existed**, and it predates Phase 1.
+>
+> The general lesson, which is the same one this whole parity effort keeps finding: a version
+> number written down is not a version number shipped, exactly as a perk written in a data table
+> is not a perk the player receives. Release state has to be read from the store, not from the
+> repo.
+
+- iOS `buildNumber` 2 -> 3 **in `app.json`**. Version stays **1.0.0**: build 1 went to TestFlight
+  under it and it has not been publicly released, so there is no `CFBundleShortVersionString`
   collision to avoid. Android `versionCode` untouched.
-- Build 2 was cut but never installed, so **this is the first build carrying all four phases**.
-  Everything from build 1 onward is in it.
+- Whenever a build *is* cut, it will be the first one carrying any of the parity work.
+  Everything from Phase 1 onward lands in that single install.
 - Release gate: lint 0 errors (35 pre-existing warnings), typecheck clean, 388/388 tests,
   `npx expo-doctor` 19/21 (both failures are network-policy-blocked checks in the sandbox),
   `npx expo export --platform ios` bundles cleanly. The suite was run three times to
