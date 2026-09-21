@@ -75,6 +75,13 @@ export function getBidStyle(key) {
 // How hard this contract's market is to win, as a multiplier on the style's base chance.
 // Reputation is the player's leverage: a well-regarded contractor is chosen over a cheaper
 // unknown, which is the whole reason reputation is worth having.
+//
+// `game.bidBonus` is the office-tier perk, resolved by companyPerks.js and passed in by the
+// caller rather than imported here — this module must stay free of the perk tables so it can
+// be tested against a bare object. Phase 5 wired it; before that the perk was a string on an
+// upgrade button that nothing read, which is also why it is additive on the multiplier rather
+// than a fourth bid style: it makes every style a little more winnable without flattening the
+// choice between them.
 export function getBidCompetition(game = {}, contract = {}) {
   const reputation = Number.isFinite(game.reputation) ? game.reputation : 0;
   // 0 rep -> 0.88, 50 rep -> 1.00, 100 rep -> 1.12.
@@ -90,7 +97,9 @@ export function getBidCompetition(game = {}, contract = {}) {
     contract.category === "Infrastructure" ? 0.92 :
     1.0;
 
-  return reputationFactor * contestedFactor * categoryFactor;
+  const officeBonus = Number.isFinite(game.bidBonus) ? Math.max(0, Math.min(0.15, game.bidBonus)) : 0;
+
+  return reputationFactor * contestedFactor * categoryFactor + officeBonus;
 }
 
 // A player's very first contract is guaranteed. Without this, a brand-new company (0

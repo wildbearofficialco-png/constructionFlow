@@ -94,9 +94,9 @@ Classification:
 | 30 | Daily / weekly progression | **EQUIVALENT** | Daily goal, login streak, weekly challenge, weekly report | On-time streak, weekly challenge, weekly report, `consecutiveLoginDays` | Systems parity; `consecutiveLoginDays` is tracked but **never rendered**. |
 | 31 | Milestones | **EQUIVALENT** | `fleetflowProgressionHelpers`, milestone defs | `MILESTONE_DEFS`, `checkMilestones`, `pendingCelebration` | Parity. |
 | 32 | Achievements | **EQUIVALENT** | Achievement list + checks | `ACHIEVEMENTS_LIST`, `checkAchievements` | Parity. |
-| 33 | Properties | **EQUIVALENT** | Investment properties, branches | `PROPERTY_TYPES`, `properties`, `REGIONAL_OFFICE_TYPES` | Parity. |
-| 34 | Expansion | **EQUIVALENT** | Branches, staffing, transfers, territory | `cityOffices`, `CITIES`, `unlockedCities`, `territorySystem` | Parity. |
-| 35 | Company growth | **EQUIVALENT** | Company eras, levels, valuation, net worth | `COMPANY_LEVELS`, `computeValuation`, `computeNationalRank`, `computeMarketShare` | Parity — and Construction Flow's Level card with three progress bars (Rep/Jobs/Value) is *better* than FleetFlow's equivalent. |
+| 33 | Properties | ~~EQUIVALENT~~ **PARTIAL → fixed in Phase 5** | Investment properties, branches | `PROPERTY_TYPES`, `properties`, `REGIONAL_OFFICE_TYPES` | **This row was wrong, and Phase 5 corrected it.** The tables were at parity; the *consumers* were not. The $120,000 Office Property's entire pitch — "eliminates home office rent" — was read by nothing, and property crew capacity was computed into a dead local and dropped. Content parity is not the same as the content doing anything. |
+| 34 | Expansion | ~~EQUIVALENT~~ **PARTIAL → fixed in Phase 5** | Branches, staffing, transfers, territory | `cityOffices`, `CITIES`, `unlockedCities`, `territorySystem` | Same correction. All five regional office types advertised contract slots, up to "+80" on a $1,500,000 National HQ; the open-contract board was hard-coded to a floor of 5 and a cap of 7 regardless of what the player owned. |
+| 35 | Company growth | **EQUIVALENT → extended in Phase 5** | Company eras, levels, valuation, net worth | `COMPANY_LEVELS`, `computeValuation`, `computeNationalRank`, `computeMarketShare` | Parity, and Construction Flow's Level card with three progress bars (Rep/Jobs/Value) is *better* than FleetFlow's equivalent. Phase 5 added the missing half: a Company Ladder card saying where the player is on the office ladder, what each building they own actually gives them, and what the next rung costs. |
 | 36 | Reports | **PARTIAL** | Weekly report, economy balance, industry dashboard | Weekly report card, `analyticsEngine`, `economicHistory` | `economicHistory` and `analyticsEngine` are ticked every day and almost never shown. |
 | 37 | Analytics | **PARTIAL** | `fleetflowIndustryDashboardHelpers` + a whole Industry tab | Same `analyticsEngine` module; no dedicated surface | Data is collected; the player can't see it. |
 | 38 | "What should I do next?" | **PARTIAL** | `getFleetFlowNextStepHint`, AI Dispatcher advisor card with tone, `getPredictiveWarnings` with **inline `action →` links that jump to the right tab** | `getNextBestAction`, `getPredictiveWarnings` | **Defect found: Construction Flow renders Next Best Action twice on Home** (lines 6573 and 6831 of `ConstructionFlowScreen.js`) — same `getNextBestAction(game)` result, two different card designs, ~250 lines apart. Also, Construction Flow's Early Warnings are bullet dots with no way to act on them; FleetFlow's each carry a tap target to the relevant tab. |
@@ -271,9 +271,27 @@ acquisitions that transferred 1–3 generic workers and nothing else. Logic live
 Still open, deliberately deferred: **regional demand** and a market that responds to the
 player's own dominance in a city.
 
-**Phase 5 — Long-term progression**
-Yards, offices, geographic expansion, company tiers, mega-projects, milestones, achievements,
-late-game goals.
+**Phase 5 — Long-term progression** *(shipped — see CHANGELOG.md)*
+Yards, offices, geographic expansion, company tiers, milestones, achievements, late-game goals.
+
+The finding inverted the expectation. Construction Flow was **not** short of late-game content —
+five office tiers, nine cities, five regional office types, four property types, ten company
+levels, empire goals, milestones and achievements were all already there. **What was missing was
+any of it being true.** Four of the six office perks, the contract-slot promise on all five
+regional offices, the $120,000 Office Property's no-rent pitch and property crew capacity were
+read by nothing: strings in a data table and on the button the player pressed to buy them. A
+player could spend $1,620,000 and receive nothing but a confirmation dialog.
+
+Perks are now resolved in one place (`src/systems/companyPerks.js`, tables in
+`companyPerkTables.js`) and consumed everywhere, with a test that walks the data tables and
+fails if any declared perk goes unclaimed. The advertised contract-slot numbers were reduced
+from 3/8/18/35/80 to 1–5 and are now delivered exactly — the honest fix for a promise that large
+and that false is to make the promise smaller and true. A Company Ladder card on the Empire tab
+shows where the player stands and what each purchase bought them.
+
+Still open, deliberately deferred: **mega-projects** (multi-site contracts spanning months),
+and audit rows 36/37 — `economicHistory` and `analyticsEngine` are still ticked daily and almost
+never shown.
 
 ---
 
@@ -286,7 +304,7 @@ late-game goals.
 | Simulation modules (shared with FleetFlow, mostly at parity) | `src/systems/*.js` (25 files) |
 | Construction-specific | `src/systems/projectEconomics.js`, `constructionRegionalEconomy.js`, `recoveryGuidance.js` |
 | Artwork | `assets/construction/equipment/` (45 PNGs), `assets/construction/office/` (5 PNGs) |
-| Tests | `__tests__/` (12 files, 100 tests) |
+| Tests | `__tests__/` (23 files, 439 tests — 12 files / 100 tests at audit time) |
 | Release config | `app.json` (`ios.buildNumber`, bundle id `co.wildbear.constructionflow`), `eas.json` |
 
 **Missing infrastructure Construction Flow should grow, mirroring FleetFlow's `src/utils/`:**

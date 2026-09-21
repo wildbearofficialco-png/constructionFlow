@@ -1,0 +1,109 @@
+name: EAS Build — iOS
+
+# Cuts a ConstructionFlow iOS build on EAS and, for the production profile, submits it to
+# TestFlight.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Until now this repository had no release automation at all. ConstructionFlow's only
+# TestFlight build (1.0.0 build 1) was cut from the FleetFlow repository, which carries a
+# `construction` app variant and a workflow for it. Meanwhile five phases of parity work
+# landed *here*, so the code that ships and the code that is developed had drifted apart —
+# bumping `ios.buildNumber` in this repo's app.json produced nothing at all, because nothing
+# in this repo could turn it into a binary.
+#
+# This repo is already correctly configured to build: app.json carries the same EAS project id
+# (72e9062c-b382-478a-b226-b3ea5559e117) and bundle identifier (co.wildbear.constructionflow)
+# as the FleetFlow variant, and eas.json's submit profile carries the same App Store Connect
+# app id (6793354537). The only missing piece was this workflow.
+#
+# The app lives in the `constructionFlow/` subdirectory, so every step sets its
+# working-directory accordingly.
+#
+# REQUIRED REPOSITORY SECRETS
+#   EXPO_TOKEN                      — Expo access token (Expo dashboard → Access Tokens)
+#   APPLE_APP_SPECIFIC_PASSWORD     — only needed by the TestFlight submit job
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+          - development
+          - simulator
+
+env:
+  APP_DIR: constructionFlow
+
+jobs:
+  build:
+    name: EAS iOS Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: constructionFlow/package-lock.json
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # Fails fast and legibly if EXPO_TOKEN is missing or invalid, rather than surfacing as a
+      # confusing error several minutes into the build step.
+      - name: Verify EAS authentication
+        working-directory: ${{ env.APP_DIR }}
+        run: eas whoami
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Build iOS
+        working-directory: ${{ env.APP_DIR }}
+        run: eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive
+
+  submit-testflight:
+    name: Submit to TestFlight
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.profile == 'production' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: constructionFlow/package-lock.json
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Submit to TestFlight
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: eas submit --platform ios --profile production --latest --non-interactive

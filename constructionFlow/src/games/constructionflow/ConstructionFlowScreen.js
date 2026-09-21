@@ -54,6 +54,18 @@ import {
   buildProjectProfitLines,
 } from "../../systems/projectEconomics.js";
 import {
+  OFFICES,
+  REGIONAL_OFFICE_TYPES,
+  PROPERTY_TYPES,
+} from "../../systems/companyPerkTables.js";
+import {
+  resolveCompanyPerks,
+  contractBoardSize,
+  dailyOfficeRent,
+  describePerkSources,
+  nextOfficeUpgrade,
+} from "../../systems/companyPerks.js";
+import {
   RIVAL_STATUS,
   stepRivalLifecycle,
   isRivalOffTheBoard,
@@ -655,13 +667,12 @@ const MATERIAL_DEFS = [
 
 // ─── Office Tiers (analog to Properties) ────────────────────────────────────────
 
-export const OFFICES = [
-  { id: 0, name: "Shed & Trailer",      cost: 0,      crewCap: 4,  equipCap: 2,  dailyRent: 50,   perks: [], desc: "One phone, one whiteboard, unlimited ambition." },
-  { id: 1, name: "Rented Portakabin",   cost: 3500,   crewCap: 8,  equipCap: 4,  dailyRent: 160,  perks: [{ key: "bidBonus", value: 0.05, label: "+5% bid win chance" }], desc: "A proper on-site office. Clients trust you more." },
-  { id: 2, name: "Small Site Office",   cost: 15000,  crewCap: 16, equipCap: 8,  dailyRent: 420,  perks: [{ key: "penaltyReduction", value: 0.10, label: "-10% delay penalties" }], desc: "Room to grow and plan bigger projects." },
-  { id: 3, name: "Project Office",      cost: 45000,  crewCap: 30, equipCap: 18, dailyRent: 1100, perks: [{ key: "materialDiscount", value: 0.08, label: "-8% material costs" },{ key: "penaltyReduction", value: 0.15, label: "-15% delay penalties" }], desc: "A full project management hub." },
-  { id: 4, name: "HQ Tower Suite",      cost: 110000, crewCap: 80, equipCap: 50, dailyRent: 2800, perks: [{ key: "bidBonus", value: 0.12, label: "+12% bid win chance" },{ key: "materialDiscount", value: 0.15, label: "-15% material costs" }], desc: "When you sign contracts, people stand up." },
-];
+// The office, regional-office and property ladders now live in src/systems/companyPerkTables.js
+// so that the screen and companyPerks.js read ONE copy. They were declared here, which is how
+// four of the six office perks came to be advertised on a button and read by nothing.
+// Re-exported because `OFFICES` is imported by tests and other modules.
+export { OFFICES, REGIONAL_OFFICE_TYPES, PROPERTY_TYPES };
+
 
 // Keyed by OFFICES[].id (0-4), same pattern as EQUIPMENT_IMAGES.
 export const OFFICE_IMAGES = {
@@ -746,22 +757,11 @@ const CITIES = [
 
 // ─── Regional Office Types ────────────────────────────────────────────────────────
 
-const REGIONAL_OFFICE_TYPES = [
-  { id:"small_office",     name:"Small Office",     cost:25000,   dailyRent:150,  crewBonus:5,  contractSlots:3,  desc:"Covers a local area. Room for a small team." },
-  { id:"regional_office",  name:"Regional Office",  cost:80000,   dailyRent:450,  crewBonus:15, contractSlots:8,  desc:"Multi-site coordination hub." },
-  { id:"corporate_office", name:"Corporate Office", cost:200000,  dailyRent:1200, crewBonus:30, contractSlots:18, desc:"Full corporate presence in the city." },
-  { id:"state_hq",         name:"State HQ",         cost:500000,  dailyRent:3000, crewBonus:60, contractSlots:35, desc:"Dominant player in the state." },
-  { id:"national_hq",      name:"National HQ",      cost:1500000, dailyRent:9000, crewBonus:150,contractSlots:80, desc:"Commands national market presence." },
-];
+
 
 // ─── Property Types ────────────────────────────────────────────────────────────────
 
-const PROPERTY_TYPES = [
-  { id:"equipment_yard",     name:"Equipment Yard",     cost:40000,  dailyCost:120, weeklyIncome:400,  resaleRate:0.80, equipCapBonus:5,  materialDiscount:0,    eliminatesRent:false, desc:"Stores 5 extra machines and cuts maintenance fees." },
-  { id:"storage_lot",        name:"Storage Lot",        cost:25000,  dailyCost:75,  weeklyIncome:250,  resaleRate:0.80, equipCapBonus:0,  materialDiscount:0.05, eliminatesRent:false, desc:"Bulk material storage. 5% off material orders." },
-  { id:"material_warehouse", name:"Material Warehouse", cost:75000,  dailyCost:200, weeklyIncome:750,  resaleRate:0.80, equipCapBonus:0,  materialDiscount:0.15, eliminatesRent:false, desc:"Full warehouse. 15% off all material purchases." },
-  { id:"office_property",    name:"Office Property",    cost:120000, dailyCost:0,   weeklyIncome:600,  resaleRate:0.85, equipCapBonus:0,  materialDiscount:0,    eliminatesRent:true,  desc:"Own instead of rent. Eliminates home office daily rent." },
-];
+
 
 const CLIENT_ROSTER = [
   { id: "city_hall",     name: "City Hall",           focus: "infrastructure", icon: "🏛️" },
@@ -864,7 +864,7 @@ function computeMarketShare(g) {
 }
 
 function computeHealthScore(g) {
-  const dailyBurn = (g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
+  const dailyBurn = (g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+dailyOfficeRent(g);
   const runway = dailyBurn>0?Math.floor((g.cash||0)/dailyBurn):999;
   const overdue = (g.activeSites||[]).filter(s=>s.status==="Active"&&(g.day>(s.deadlineDay||9999))).length;
   const burning = (g.crew||[]).filter(w=>(w.stamina ?? 50)<15).length;
@@ -887,7 +887,7 @@ function computeHealthScore(g) {
 // new, and the equipment wording is no longer "vehicle".
 export function getPredictiveWarnings(g) {
   const warnings = [];
-  const dailyBurn=(g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
+  const dailyBurn=(g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+dailyOfficeRent(g);
   const runway=dailyBurn>0?Math.floor((g.cash||0)/dailyBurn):999;
   if (runway<5) warnings.push({ text:`Cash runway critical — only ${runway} day${runway!==1?"s":""} left`, severity:"high", tab:"Finance", action:"Open Finance", icon:"cash-outline" });
   const overdue=(g.activeSites||[]).filter(s=>s.status==="Active"&&(g.day>(s.deadlineDay||9999)));
@@ -942,34 +942,27 @@ function enhanceContractValue(def, state, base) {
   };
 }
 
-function getTotalCrewCap(g) {
-  const officeTier = OFFICES[g.officeIndex || 0];
-  const officeBonus = (g.cityOffices||[]).reduce((s,o) => {
-    const def = REGIONAL_OFFICE_TYPES.find(t=>t.id===o.typeId);
-    return s + (def ? def.crewBonus : 0);
-  }, 0);
-  const propBonus = (g.properties||[]).reduce((s,p) => {
-    const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
-    return s + (def ? def.equipCapBonus : 0); // reuse field for crew in office_property
-  }, 0);
-  return (officeTier?.crewCap || 4) + officeBonus;
+// Home office tier + regional offices + properties, resolved in one place.
+// This used to compute a `propBonus` from `equipCapBonus` — a MACHINE figure — and then
+// return without using it at all. Properties now have their own `crewCapBonus`, and it counts.
+export function getTotalCrewCap(g) {
+  return resolveCompanyPerks(g).crewCap;
+}
+
+// The state `planBid`/`rollBidOutcome` should see: the game plus the office tier's bid perk.
+// Every bid call site goes through this so the chance shown on the card is by construction
+// the chance that gets rolled.
+function withBidPerks(g) {
+  return { ...g, bidBonus: resolveCompanyPerks(g).bidBonus };
 }
 
 function getMaterialDiscount(g) {
-  const officePerk = OFFICES[g.officeIndex||0]?.perks?.find(p=>p.key==="materialDiscount");
-  const baseDisc = officePerk ? officePerk.value : 0;
-  const propDisc = (g.properties||[]).reduce((s,p) => {
-    const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
-    return s + (def ? (def.materialDiscount||0) : 0);
-  }, 0);
-  return Math.min(0.40, baseDisc + propDisc); // cap at 40%
+  return resolveCompanyPerks(g).materialDiscount;
 }
 
 function getEquipCapBonus(g) {
-  return (g.properties||[]).reduce((s,p) => {
-    const def = PROPERTY_TYPES.find(t=>t.id===p.typeId);
-    return s + (def ? (def.equipCapBonus||0) : 0);
-  }, 0);
+  const office = OFFICES[g?.officeIndex || 0];
+  return resolveCompanyPerks(g).equipCap - (office?.equipCap || 2);
 }
 
 function pickContractCity(g) {
@@ -3840,6 +3833,10 @@ export function gameTick(prev) {
         } else {
           penalty = BASE_LATE_DAYS * site.penaltyPerDay + (daysLate - BASE_LATE_DAYS) * site.penaltyPerDay * 1.5;
         }
+        // Office tiers advertise "−10%/−15% delay penalties". Nothing read that perk until
+        // now; it existed only as a string on the upgrade button.
+        const _penaltyRelief = resolveCompanyPerks(g).penaltyReduction;
+        if (_penaltyRelief > 0) penalty = Math.round(penalty * (1 - _penaltyRelief));
         penalty = Math.min(penalty, Math.round(site.totalValue * 0.85));
         // The handover balance: the contract value, less the late penalty, less everything
         // the client has already released — the deposit at mobilisation and every progress
@@ -4224,7 +4221,9 @@ export function gameTick(prev) {
 
     // Office rent
     const office = OFFICES[g.officeIndex];
-    const dailyRent = office.dailyRent;
+    // Owning an Office Property eliminates this. That is the entire pitch of a $120,000
+    // purchase, and it was never checked — rent was charged unconditionally.
+    const dailyRent = dailyOfficeRent(g);
 
     // Equipment daily cost
     const equipCost = g.equipment.reduce((s, e) => s + e.dailyCost, 0);
@@ -4239,6 +4238,9 @@ export function gameTick(prev) {
     // instead of one "Uncategorized operating expense" from the reconciler.
     if (Math.round(dailyPayroll) > 0) recordTransaction(g, "payroll", -Math.round(dailyPayroll), "Daily crew and office payroll");
     if (Math.round(dailyRent) > 0) recordTransaction(g, "property", -Math.round(dailyRent), `${office.name}: daily rent`);
+    else if ((office?.dailyRent || 0) > 0 && Math.random() < 0.02) {
+      addLog(g, `🏢 No rent on ${office.name} — you own the building.`);
+    }
     if (Math.round(equipCost) > 0) recordTransaction(g, "equipment", -Math.round(equipCost), "Equipment daily running cost");
 
     // Attribute today's crew and machine cost to the projects those people and machines
@@ -4365,16 +4367,18 @@ export function gameTick(prev) {
       g.hotMaterialDeal = null;
     }
 
-    // Refresh contracts
+    // Refresh contracts. The board's size is no longer hard-coded: regional offices widen
+    // it, which is what their advertised "contract slots" always claimed and never did.
+    const _board = contractBoardSize(g);
     g.contracts = g.contracts.filter((c) => c.status !== "Open" || c.expiresDay >= g.day);
-    while (g.contracts.filter((c) => c.status === "Open").length < 5) {
+    while (g.contracts.filter((c) => c.status === "Open").length < _board.floor) {
       g.contracts.push(createContract(g));
     }
     // Expire old contracts — cap the Open pool at 7, then bound the closed history. This
     // ran only on app load before, so a long uninterrupted session grew the save without
     // limit; a live session needs the same bound the loader applies.
     const openPool = g.contracts.filter((c) => c.status === "Open");
-    g.contracts = [...g.contracts.filter((c) => c.status !== "Open"), ...openPool.slice(0, 7)];
+    g.contracts = [...g.contracts.filter((c) => c.status !== "Open"), ...openPool.slice(0, _board.cap)];
     pruneContractHistory(g);
 
     // Material price fluctuation
@@ -5082,7 +5086,7 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
   // Estimate overhead per day at current crew/equipment levels
   const dailyWages = (g.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0);
   const dailyEquip  = (g.equipment || []).reduce((s, e) => s + e.dailyCost, 0);
-  const dailyRent   = OFFICES[g.officeIndex || 0]?.dailyRent || 0;
+  const dailyRent   = dailyOfficeRent(g);
   const overheadPerDay = Math.round(dailyWages + dailyEquip + dailyRent);
 
   g.pendingOfflineSummary = {
@@ -5602,7 +5606,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       // committing, and `rollBidOutcome` rolls the same number the card showed, because
       // both come from one `planBid` call.
       const bidStyle = (g.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
-      const outcome = rollBidOutcome(c, bidStyle, g);
+      // The office perk rides on the state handed to the roll, so the bid card and the award
+      // read one number. `withBidPerks` is used at every call site for exactly that reason.
+      const outcome = rollBidOutcome(c, bidStyle, withBidPerks(g));
       const effectiveValue = outcome.effectiveValue;
 
       if (!outcome.won) {
@@ -6750,7 +6756,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {(() => {
           const dailyBurn = (game.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0) +
             (game.equipment || []).reduce((s, e) => s + e.dailyCost, 0) +
-            (OFFICES[game.officeIndex || 0]?.dailyRent || 0);
+            dailyOfficeRent(game);
           const daysLeft = dailyBurn > 0 ? Math.floor(game.cash / dailyBurn) : 999;
           if (daysLeft >= 5 || game.cash < 0) return null;
           return (
@@ -8358,7 +8364,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           {OFFICE_IMAGES[office.id] && (
             <Image source={OFFICE_IMAGES[office.id]} style={{ width: "100%", height: 130, borderRadius: 8, marginBottom: 8, backgroundColor: "#fff" }} resizeMode="contain" />
           )}
-          <Text style={[styles.sub, subCol]}>Crew cap: {office.crewCap} · Equip cap: {office.equipCap} · Daily rent: {money(office.dailyRent)}</Text>
+          <Text style={[styles.sub, subCol]}>
+            Crew cap: {office.crewCap} · Equip cap: {office.equipCap} · Daily rent:{" "}
+            {dailyOfficeRent(game) > 0 ? money(office.dailyRent) : "none — you own the building"}
+          </Text>
           {office.perks.map((p) => <Text key={p.key} style={[styles.sub, { color: T.cyan }]}>{p.label}</Text>)}
           {OFFICES[game.officeIndex + 1] && (() => {
             const nextOffice = OFFICES[game.officeIndex + 1];
@@ -8913,6 +8922,132 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           ))}
         </View>
 
+        {/* ─── Company Ladder — Phase 5 ────────────────────────────────────────
+            Where the player is on the progression ladder, what each building they own is
+            actually giving them, and what the next rung costs.
+
+            Every line in this card is a perk the simulation applies. Before Phase 5, four of
+            the six office perks and both the contract-slot and no-rent promises were strings
+            on a purchase button read by nothing, so a card like this could not honestly have
+            been drawn. */}
+        {(() => {
+          const officeIdx = Number.isFinite(game.officeIndex) ? game.officeIndex : 0;
+          const office = OFFICES[officeIdx] || OFFICES[0];
+          const perks = resolveCompanyPerks(game);
+          const sources = describePerkSources(game);
+          const next = nextOfficeUpgrade(game);
+          const board = contractBoardSize(game);
+          const rent = dailyOfficeRent(game);
+          const crewUsed = (game.crew || []).length;
+          const equipUsed = (game.equipment || []).length;
+
+          return (
+            <Card T={T} tone="accent" elevated style={{ marginTop: 8 }}>
+              <SectionLabel
+                T={T}
+                tone="accent"
+                right={<Pill T={T} label={`Rung ${officeIdx + 1} of ${OFFICES.length}`} tone="accent" filled />}
+              >
+                Company Ladder
+              </SectionLabel>
+
+              <Text style={[TYPE.title, { color: T.text, marginTop: SPACING.xs }]} numberOfLines={1}>
+                {office.name}
+              </Text>
+              <ProgressBar
+                T={T}
+                percent={((officeIdx + 1) / OFFICES.length) * 100}
+                tone="accent"
+                height={6}
+                style={{ marginTop: SPACING.sm }}
+              />
+
+              <View style={{ flexDirection: "row", gap: SPACING.sm, marginTop: SPACING.md }}>
+                <StatTile
+                  T={T}
+                  label="Crew space"
+                  value={`${crewUsed}/${perks.crewCap}`}
+                  tone={crewUsed >= perks.crewCap ? "warning" : "success"}
+                />
+                <StatTile
+                  T={T}
+                  label="Machine space"
+                  value={`${equipUsed}/${perks.equipCap}`}
+                  tone={equipUsed >= perks.equipCap ? "warning" : "success"}
+                />
+                <StatTile
+                  T={T}
+                  label="Daily rent"
+                  value={rent > 0 ? money(rent) : "None"}
+                  tone={rent > 0 ? "neutral" : "success"}
+                  sub={rent > 0 ? null : "You own it"}
+                />
+              </View>
+
+              <View style={{ marginTop: SPACING.md }}>
+                <KeyValueRow T={T} label="Contracts on the board" value={`${board.floor}–${board.cap}`} />
+                {perks.bidBonus > 0 && (
+                  <KeyValueRow T={T} label="Bid win chance" value={`+${Math.round(perks.bidBonus * 100)}%`} tone="success" />
+                )}
+                {perks.penaltyReduction > 0 && (
+                  <KeyValueRow T={T} label="Delay penalties" value={`−${Math.round(perks.penaltyReduction * 100)}%`} tone="success" />
+                )}
+                {perks.materialDiscount > 0 && (
+                  <KeyValueRow T={T} label="Material costs" value={`−${Math.round(perks.materialDiscount * 100)}%`} tone="success" />
+                )}
+                {perks.weeklyPropertyIncome > 0 && (
+                  <KeyValueRow T={T} label="Property income" value={`+${money(perks.weeklyPropertyIncome)}/wk`} tone="success" divider={false} />
+                )}
+              </View>
+
+              {/* What each building you own is giving you. */}
+              {sources.length > 0 && (
+                <View style={{ marginTop: SPACING.md }}>
+                  <SectionLabel T={T}>What your buildings give you</SectionLabel>
+                  {sources.map((s) => (
+                    <View key={s.key} style={{ marginTop: SPACING.sm }}>
+                      <Text style={[TYPE.label, { color: T.text }]} numberOfLines={1}>{s.name}</Text>
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]} numberOfLines={2}>
+                        {s.effects.length > 0 ? s.effects.join(" · ") : "No active perks"}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* The next rung. Null at the top of the ladder, which is worth saying out loud. */}
+              <View style={{ marginTop: SPACING.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border, paddingTop: SPACING.md }}>
+                {next ? (
+                  <>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={[TYPE.label, { color: T.text, flex: 1, marginRight: SPACING.sm }]} numberOfLines={1}>
+                        {`Next: ${next.name}`}
+                      </Text>
+                      <Pill
+                        T={T}
+                        label={next.affordable ? money(next.cost) : `${money(next.shortfall)} short`}
+                        tone={next.affordable ? "success" : "neutral"}
+                      />
+                    </View>
+                    <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.xs }]}>
+                      {next.gains.join(" · ")}
+                    </Text>
+                    {next.rentIncrease > 0 && rent > 0 && (
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>
+                        Rent rises by {money(next.rentIncrease)}/day — {money(next.dailyRent)} total.
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={[TYPE.caption, { color: T.sub }]}>
+                    Top of the office ladder. Growth now comes from regional offices, properties and acquisitions.
+                  </Text>
+                )}
+              </View>
+            </Card>
+          );
+        })()}
+
         {/* Market Position */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border, marginTop: 8 }]}>
           <Text style={[styles.sectionTitle, col]}>Market Position</Text>
@@ -9442,11 +9577,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const dailyPayroll = [...game.crew, ...game.officeStaff].reduce((s, p) => s + (p.wagePerDay || 0), 0);
     const weeklyPayroll = dailyPayroll * 7;
     const weeklyEquipCost = game.equipment.reduce((s, e) => s + e.dailyCost, 0) * 7;
-    const weeklyRent = office.dailyRent * 7;
+    const weeklyRent = dailyOfficeRent(game) * 7;
     const dailyEquipCost = game.equipment.reduce((s, e) => s + e.dailyCost, 0);
     const dailyLoanInterest = game.loans.reduce((s, l) => s + (l.weeklyPayment || 0) / 7, 0);
     const dailyIncome = (game.weeklyStats?.revenue || 0) / 7;
-    const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - office.dailyRent - dailyLoanInterest;
+    const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - dailyOfficeRent(game) - dailyLoanInterest;
     const regionalEconomy = getConstructionRegionalSnapshot(game);
     const loanOffers = LOAN_PRODUCTS.map((product) => {
       const offer = computeLoanOffer(product.id, buildBorrowerProfile(game, product));
@@ -10940,7 +11075,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                       so the odds shown here are by construction the odds you get. */}
                   {(() => {
                     const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
-                    const plans = BID_STYLES.map((opt) => ({ opt, plan: planBid(c, opt.key, game) }));
+                    const plans = BID_STYLES.map((opt) => ({ opt, plan: planBid(c, opt.key, withBidPerks(game)) }));
                     const active = plans.find((p) => p.opt.key === bidStyle) || plans[1];
                     return (
                       <View style={{ marginTop: SPACING.md }}>
@@ -11006,7 +11141,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   {/* Confirm button */}
                   {(() => {
                     const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
-                    const plan = planBid(c, bidStyle, game);
+                    const plan = planBid(c, bidStyle, withBidPerks(game));
                     return (
                       <TouchableOpacity
                         style={[styles.btn, {

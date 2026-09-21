@@ -385,6 +385,54 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("Struggling");
   });
 
+  test("Empire shows where you are on the ladder and what the next rung costs", async () => {
+    // Phase 5. Every figure in this card is a perk the simulation applies; before Phase 5
+    // four of the six office perks were strings on a purchase button and nothing else.
+    const tree = await mountWith((g) => {
+      g.officeIndex = 2;
+      g.cash = 60000;
+      g.cityOffices = [{ id: "o1", typeId: "regional_office", cityId: "seattle", openedDay: 4 }];
+      g.properties = [{ id: "p1", typeId: "equipment_yard", purchasedDay: 6 }];
+    });
+    const empire = tabButton(tree, "Empire");
+    await act(async () => { empire.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+
+    expect(json).toContain("Company Ladder");
+    expect(json).toContain("Rung 3 of 5");
+    expect(json).toContain("Small Site Office");
+    expect(json).toContain("Crew space");
+    expect(json).toContain("Contracts on the board");
+    // The buildings the player bought, each with what it actually gives them.
+    expect(json).toContain("What your buildings give you");
+    expect(json).toContain("Regional Office");
+    expect(json).toContain("Equipment Yard");
+    // And the next rung, priced against the cash on hand.
+    expect(json).toContain("Next: Project Office");
+  });
+
+  test("Empire says so plainly at the top of the office ladder, rather than showing nothing", async () => {
+    const tree = await mountWith((g) => { g.officeIndex = 4; });
+    const empire = tabButton(tree, "Empire");
+    await act(async () => { empire.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Rung 5 of 5");
+    expect(json).toContain("Top of the office ladder");
+    expect(json).not.toContain("Next: ");
+  });
+
+  test("an owned office property shows as no rent, not as $0 rent", async () => {
+    const tree = await mountWith((g) => {
+      g.officeIndex = 3;
+      g.properties = [{ id: "p1", typeId: "office_property", purchasedDay: 2 }];
+    });
+    const empire = tabButton(tree, "Empire");
+    await act(async () => { empire.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("You own it");
+    expect(json).toContain("No office rent");
+  });
+
   test("an empty Sites tab explains itself and offers a way out", async () => {
     const tree = await mountWith();
     const sites = tabButton(tree, "Sites");
