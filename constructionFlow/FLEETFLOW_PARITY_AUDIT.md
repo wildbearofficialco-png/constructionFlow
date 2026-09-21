@@ -90,7 +90,7 @@ Classification:
 | 26 | Rival growth | **PARTIAL** | Narrated from movements the sim already produced — growth reads like a company doing things | `rival.activeJobs`, cash, rep, `cityPresence`, restructure after 90 days | Construction Flow's rivals grow numerically but are *described* generically. FleetFlow derives the sentence from the actual delta, so it never lies and always reads specific. |
 | 27 | Reputation | **EQUIVALENT** | Rep tiers, badges | `REP_TIERS`, `getRepTier`, badge + label | Parity. |
 | 28 | Client relationships | **PARTIAL** | Customer satisfaction, repeat contracts, tier ceilings, transfers on acquisition | `clientRelationships`, `CLIENT_ROSTER`, `getClientTier`, `pendingRepeatClients` | Present, collapsed inside a `CollapsibleSection` on Home — so most players never open it. |
-| 29 | Offline progression | **PARTIAL** | Narrative line items: deliveries completed, late arrivals, earnings, wages, fuel, overhead, net | KPI tiles (cash Δ, cash now, jobs, rep) + last 6 log lines + overhead/day | Construction Flow's tiles are good, but **the summary never says what happened to the projects** — no "Foundation 42% → 67%", no material spend, no weather delay, no progress payment. The player's actual question ("what happened to my job sites?") is unanswered. |
+| 29 | Offline progression | **PARTIAL → fixed in Phase 3** | Narrative line items: deliveries completed, late arrivals, earnings, wages, fuel, overhead, net | KPI tiles (cash Δ, cash now, jobs, rep) + last 6 log lines + overhead/day | Construction Flow's tiles are good, but **the summary never says what happened to the projects** — no "Foundation 42% → 67%", no material spend, no weather delay, no progress payment. The player's actual question ("what happened to my job sites?") is unanswered. |
 | 30 | Daily / weekly progression | **EQUIVALENT** | Daily goal, login streak, weekly challenge, weekly report | On-time streak, weekly challenge, weekly report, `consecutiveLoginDays` | Systems parity; `consecutiveLoginDays` is tracked but **never rendered**. |
 | 31 | Milestones | **EQUIVALENT** | `fleetflowProgressionHelpers`, milestone defs | `MILESTONE_DEFS`, `checkMilestones`, `pendingCelebration` | Parity. |
 | 32 | Achievements | **EQUIVALENT** | Achievement list + checks | `ACHIEVEMENTS_LIST`, `checkAchievements` | Parity. |
@@ -239,9 +239,22 @@ claims each got the moment they lacked. The loop's pure logic lives in
 Still open from this phase, deliberately deferred: equipment artwork in the bid and completion
 screens, and the inspection beat (which already has a modal but no player decision in it).
 
-**Phase 3 — Living company**
-Employees as people (name, face, trait, a line of their own), equipment lifecycle surfaced,
-finance reports, safety and inspection as visible events, offline report with per-site deltas.
+**Phase 3 — Living company** *(shipped — see CHANGELOG.md)*
+Employees as people (name, trait, a line of their own), equipment lifecycle surfaced, offline
+report with per-site deltas.
+
+The finding for this phase was that the company is **simulated but not witnessed**: the game
+knew a worker was exhausted and three days from quitting and said nothing until they went.
+Crew cards now lead with where the person actually is, what their standing at the company is,
+what needs acting on, and a line in their own voice. Machine cards answer "is this making me
+money" with a verdict, utilisation and resale. The away report says what happened to each job.
+Logic lives in `src/systems/companyLife.js` with 64 tests — including a direct test that none
+of the new flavour text consumes an RNG draw, which is FleetFlow's build 59 defect.
+
+Still open from this phase, deliberately deferred to a later pass: **finance and analytics
+reports** (`economicHistory` and `analyticsEngine` are ticked daily and still almost never
+shown — audit rows 36 and 37), and **inspections as a player decision** rather than a result
+delivered by the tick.
 
 **Phase 4 — Living market**
 Rival contractors that bid visibly against the player, narrated growth and decline, new entrants,

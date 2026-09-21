@@ -272,6 +272,84 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("% win");
   });
 
+  test("Crew shows people, not rows: where they are, their standing, their voice", async () => {
+    const tree = await mountWith((g) => {
+      withActiveSite(g);
+      // `withActiveSite` names the site after the contract it draws from, so name it
+      // explicitly here — this test asserts the crew card says which job they are on.
+      g.activeSites[0].label = "Riverside Fence";
+      // One worker on the job, one sitting in the yard, one about to walk.
+      g.crew[0].hireDay = 1;
+      g.crew[0].jobsCompleted = 30;
+      g.crew[1].status = "Idle";
+      g.activeSites[0].assignedCrewIds = [g.crew[0].id];
+      g.crew[2].loyalty = 8;
+      g.crew[2].stamina = 9;
+      g.day = 120;
+    });
+    const crew = tabButton(tree, "Crew");
+    await act(async () => { crew.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+
+    // Where they are — the fact the card never carried.
+    expect(json).toContain("Riverside Fence");
+    expect(json).toContain("no site assigned");
+    // Their standing at this company.
+    expect(json).toMatch(/with the company/);
+    // And a risk that needs acting on before they quit.
+    expect(json).toContain("Exhausted");
+  });
+
+  test("Equipment answers whether a machine is making money", async () => {
+    const tree = await mountWith((g) => {
+      withActiveSite(g);
+      g.equipment[0].purchaseDay = 1;
+      g.equipment[0].daysWorked = 40;
+      g.day = 90;
+    });
+    const equipment = tabButton(tree, "Equipment");
+    await act(async () => { equipment.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+
+    expect(json).toContain("The yard");        // fleet summary
+    expect(json).toContain("Fleet utilisation");
+    expect(json).toContain("Utilisation");     // per-machine asset card
+    expect(json).toContain("Resale");
+    expect(json).toContain("Run cost");
+  });
+
+  test("the away report says what happened to the job sites", async () => {
+    const tree = await mountWith((g) => {
+      withActiveSite(g);
+      g.pendingOfflineSummary = {
+        elapsedDays: 3,
+        cashDelta: 8200,
+        jobsDelta: 0,
+        repDelta: 2,
+        cashNow: 83200,
+        overheadPerDay: 1450,
+        logsWhileAway: ["🌧️ Rain halted excavation for a day."],
+        siteReport: [{
+          id: "site-1",
+          label: "Riverside Fence",
+          kind: "progressed",
+          tone: "safe",
+          headline: "Riverside Fence — Foundation → Framing",
+          detail: "42% → 67% · 1 phase complete",
+          percentFrom: 42,
+          percentTo: 67,
+          phasesDone: 1,
+          claimed: 12500,
+        }],
+      };
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Your job sites");
+    expect(json).toContain("Foundation → Framing");
+    expect(json).toContain("42% → 67%");
+    expect(json).toContain("Progress payment received");
+  });
+
   test("an empty Sites tab explains itself and offers a way out", async () => {
     const tree = await mountWith();
     const sites = tabButton(tree, "Sites");
