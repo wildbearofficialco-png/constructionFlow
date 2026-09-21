@@ -74,7 +74,7 @@ Classification:
 | 10 | Empty states | **PARTIAL** | `getFleetFlowEmptyStateMessage(tab)` — one helper, a message per tab | Good empty state on Sites and Bids; Crew/Equipment/Finance have bare one-liners or nothing | Inconsistent: the player learns some empty screens explain themselves and some don't, so they stop trusting them. |
 | 11 | Notifications | **PARTIAL** | Executive Inbox with **unresolved action items the player must "Mark Handled"**, urgent items promoted to a red card, 160 `Alert.alert` call sites | `importantNotice` (one at a time, tap to dismiss), ops feed, 36 `Alert.alert` | FleetFlow's inbox *persists a decision* — something is waiting for you. Construction Flow's notice is a banner that disappears; nothing accumulates, so nothing feels owed. |
 | 12 | Progress indicators | **PARTIAL** | `ProgressBar` component + `getFleetFlowProgressTone(percent)` so color means the same thing everywhere | Hand-built `View` pairs at ~30 sites, heights 3/4/6, colors chosen ad hoc per site | Same bar means the same thing in FleetFlow. In Construction Flow a cyan bar means phase progress in one card and something else two cards down. |
-| 13 | Jobs / contracts | **EQUIVALENT** | Contract marketplace, competitive bidding, `fleetflowContractPresentation` view-model | `BidsScreen`, `CONTRACT_DEFS` (256 defs), categories, bid styles, rival bidding | Construction Flow's bidding is genuinely at parity. It's presented at 10px. |
+| 13 | Jobs / contracts | **PARTIAL → fixed in Phase 2** | Contract marketplace, competitive bidding, `fleetflowContractPresentation` view-model | `BidsScreen`, `CONTRACT_DEFS` (256 defs), categories, bid styles, rival bidding | Originally scored EQUIVALENT from the feature list — wrongly. Reading the code showed the bid style was read by *nothing* except the payout multiplier, so Premium was +28% for free and the central decision of the loop was fake. Fixed in Phase 2: bid style now moves win probability, with the odds shown before committing. |
 | 14 | Employees | **PARTIAL** | Personalities, loyalty, morale, XP, specialization, turnover, poaching, driver comfort, Talent folded into Team | Crew traits, specialties, stamina, mood, career levels, training, promotion, turnover, subcontractors, PM tiers | Systems are close to parity. FleetFlow surfaces *the person* (name, trait, mood, a line of dialogue); Construction Flow surfaces `Dave · Concreter` at 10px with a Remove button. |
 | 15 | Equipment | **PARTIAL** | `vehicleLifecycle`, `equipmentWear`, divisions, paint/wrap, used market | Same `equipmentWear` module, 45 equipment PNGs, upgrades, condition, maintenance | **45 pieces of equipment artwork exist and are shown in exactly two places** (owned list thumbnail, shop card). They never appear on site cards, the dashboard, or assignment pickers — the game's best asset is nearly invisible. |
 | 16 | Maintenance | **EQUIVALENT** | `scheduleMaintenance`, breakdown risk, preventative maintenance | Same module, `handleRepairEquipmentNew`, condition gates | Parity. |
@@ -222,10 +222,22 @@ operations. Both are known, already-diagnosed defects sitting in Construction Fl
 Design system, UI primitives, motion layer, Home rebuild, Sites readability pass, empty states,
 typography floor, tab rename, duplicate-card fix. **No simulation changes.**
 
-**Phase 2 — Core construction loop**
+**Phase 2 — Core construction loop** *(shipped — see CHANGELOG.md)*
 Bid → win → prepare → crew → equipment → materials → build → problems → phases → inspection →
-handover → payment, each step given a clear moment and clear feedback. Equipment artwork
-throughout. Per-project P&L promoted to a headline.
+handover → payment, each step given a clear moment and clear feedback.
+
+The audit above ranked this second on effort-to-impact. Reading the loop's code turned up
+something the category-by-category pass had missed, because it is invisible from the outside:
+**two of the loop's three player decisions were dominated options, not decisions.** The bid
+style moved the payout and nothing else, so Premium was +28% money for free. An emergency
+material order cost 1.5× and arrived at the same instant as a normal one, because both were
+instant. Both are now real trades — the bid style moves the probability of *winning*, and
+normal orders take days to arrive while work stalls. Phase completion, deliveries and progress
+claims each got the moment they lacked. The loop's pure logic lives in
+`src/systems/constructionLoop.js` with 68 tests.
+
+Still open from this phase, deliberately deferred: equipment artwork in the bid and completion
+screens, and the inspection beat (which already has a modal but no player decision in it).
 
 **Phase 3 — Living company**
 Employees as people (name, face, trait, a line of their own), equipment lifecycle surfaced,

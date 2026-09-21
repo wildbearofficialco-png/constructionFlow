@@ -54,6 +54,22 @@ import {
   buildProjectProfitLines,
 } from "../../systems/projectEconomics.js";
 import {
+  BID_STYLES,
+  DEFAULT_BID_STYLE,
+  planBid,
+  rollBidOutcome,
+  pickWinningRival,
+  planDeliveries,
+  collectArrivedDeliveries,
+  describeDelivery,
+  nextDeliveryDay,
+  summarizeSitePhases,
+  describePhaseCompletion,
+  planProgressPayment,
+  finalPaymentDue,
+  summarizeSitePayments,
+} from "../../systems/constructionLoop.js";
+import {
   THEMES,
   SPACING,
   RADIUS,
@@ -3385,6 +3401,14 @@ export function migrateState(saved) {
     if (s.depositPaid      === undefined) s.depositPaid      = 0;
     if (s.completionBonus  === undefined) s.completionBonus  = 0;
     if (s.rushQualityPenalty === undefined) s.rushQualityPenalty = 0;
+    // Phase 2. A site that was already running when material lead times and progress claims
+    // arrived keeps everything it had: no outstanding orders (its materials were bought under
+    // the old instant rule and are already fulfilled), and nothing claimed yet. Its remaining
+    // phases will start releasing claims from today, and the handover balance is whatever is
+    // left — so the total it pays is unchanged either way.
+    if (!Array.isArray(s.pendingDeliveries)) s.pendingDeliveries = [];
+    if (!Number.isFinite(s.progressPaid)) s.progressPaid = 0;
+    if (!Number.isFinite(s.phasesClaimed)) s.phasesClaimed = 0;
     // Per-project P&L. A site that was already running before cost tracking existed gets an
     // empty ledger and a `costsPartial` flag — it will accrue from today onward, and the
     // completion screen says the breakdown covers only part of the job rather than
@@ -3522,6 +3546,31 @@ export function gameTick(prev) {
 
   // ── Update active sites ──────────────────────────────────────────────────────
   for (const site of g.activeSites) {
+    // ── Material deliveries land first ─────────────────────────────────────────
+    // Before the stall check below, so an order arriving today gets the crew working today
+    // rather than on the next tick. Runs even for a paused site: a truck does not wait for
+    // the site to reopen, and the materials should be on site when it does.
+    if (Array.isArray(site.pendingDeliveries) && site.pendingDeliveries.length > 0) {
+      const { arrived, stillPending } = collectArrivedDeliveries(site, g.day);
+      if (arrived.length > 0) {
+        site.pendingDeliveries = stillPending;
+        if (!site.materialsFulfilled) site.materialsFulfilled = {};
+        for (const d of arrived) {
+          site.materialsFulfilled[d.matId] = (site.materialsFulfilled[d.matId] || 0) + d.qty;
+          addLog(g, describeDelivery(site.label, d));
+        }
+        // One notice per site per arrival wave, not one per material, so a four-material
+        // order does not bury everything else the player needs to read.
+        addImportantNotice(
+          g,
+          arrived.length === 1
+            ? `${arrived[0].qty} ${arrived[0].unit} of ${arrived[0].label} arrived at ${site.label}. Work resumes.`
+            : `${arrived.length} material deliveries arrived at ${site.label}. Work resumes.`,
+          "green"
+        );
+      }
+    }
+
     if (site.status === "Paused") {
       if ((site.pausedDays || 0) > 0 && site.pausedDays !== 999) {
         site.pausedDays = site.pausedDays - (MINS_PER_TICK / 1440);
@@ -3544,7 +3593,17 @@ export function gameTick(prev) {
       ([matId, needed]) => ((site.materialsFulfilled || {})[matId] || 0) < needed
     );
     if (_hasMissingMats) {
-      if (Math.random() < 0.04) addLog(g, `⚠️ ${site.label}: Work stalled — materials missing. Go to Sites to purchase.`);
+      // Say which it is: waiting on a delivery is a different problem from nobody having
+      // ordered anything, and only the second one needs the player.
+      if (Math.random() < 0.04) {
+        const _due = nextDeliveryDay(site);
+        addLog(
+          g,
+          _due != null
+            ? `⏳ ${site.label}: Work stalled — materials arrive day ${_due}. Pay the emergency premium for same-day.`
+            : `⚠️ ${site.label}: Work stalled — nothing on order. Order materials in Sites.`
+        );
+      }
       continue;
     }
 
@@ -3633,6 +3692,36 @@ export function gameTick(prev) {
       site.phaseProgress = 0;
       site.currentPhaseIdx = completedPhaseIdx + 1;
 
+      // ── A COMPLETED PHASE NOW SAYS SO ──────────────────────────────────────
+      // Finishing a phase was silent unless it happened to be an inspection, so the loop's
+      // most frequent milestone — the thing the player is actually waiting for — had no
+      // moment at all. The final phase is left to the completion ceremony below, which is a
+      // bigger beat and should not be pre-empted by a line saying the same thing.
+      const _nextPhaseName = site.phases[site.currentPhaseIdx] || null;
+      if (_nextPhaseName) {
+        addLog(g, describePhaseCompletion(completedPhaseName, _nextPhaseName));
+        addImportantNotice(g, `${site.label}: ${completedPhaseName} complete. ${_nextPhaseName} begins.`, "green");
+      }
+
+      // ── PROGRESS CLAIM ─────────────────────────────────────────────────────
+      // Construction is not paid in two lumps. The client certifies completed work and
+      // releases a claim against it. This changes WHEN the contract's money arrives, never
+      // how much: planProgressPayment computes a cumulative target minus what has already
+      // been paid, and the handover payment below is the remainder, so deposit + claims +
+      // final always equals value less penalty. See constructionLoop.js and its tests.
+      if (_nextPhaseName) {
+        site.phasesClaimed = (site.phasesClaimed || 0) + 1;
+        const { release } = planProgressPayment(site, site.totalValue, site.phasesClaimed);
+        if (release > 0) {
+          site.progressPaid = (site.progressPaid || 0) + release;
+          g.cash += release;
+          g.revenue += release;
+          g.weeklyStats.revenue += release;
+          recordTransaction(g, "contracts", release, `${site.label}: progress claim — ${completedPhaseName}`);
+          addLog(g, `💰 Progress payment received: ${money(release)} for ${completedPhaseName} at ${site.label}.`);
+        }
+      }
+
       // Inspection outcome — fires when an inspection phase completes
       if (INSPECTION_PHASES.has(completedPhaseName) && !g.pendingInspection) {
         const qualityMod = site.siteMode === "quality" ? 0.20 : site.siteMode === "budget" ? -0.18 : 0;
@@ -3680,8 +3769,12 @@ export function gameTick(prev) {
           penalty = BASE_LATE_DAYS * site.penaltyPerDay + (daysLate - BASE_LATE_DAYS) * site.penaltyPerDay * 1.5;
         }
         penalty = Math.min(penalty, Math.round(site.totalValue * 0.85));
-        // Deduct deposit already received; remainder is the payout
-        const earned = Math.max(0, site.totalValue - penalty - (site.depositPaid || 0));
+        // The handover balance: the contract value, less the late penalty, less everything
+        // the client has already released — the deposit at mobilisation and every progress
+        // claim certified along the way. Deducting the claims here is what keeps the total a
+        // contract pays identical to what it paid before progress claims existed; only the
+        // timing moved. `finalPaymentDue` and its tests own that invariant.
+        const earned = finalPaymentDue(site.totalValue, penalty, site.depositPaid || 0, site.progressPaid || 0);
         g.cash += earned;
         g.revenue += earned;
         g.weeklyStats.revenue += earned;
@@ -3710,7 +3803,10 @@ export function gameTick(prev) {
         // mobilisation; none of it moves cash here, it is only being totalled.
         const economics = buildProjectEconomics({
           contractValue: site.totalValue,
-          depositPaid: site.depositPaid || 0,
+          // Progress claims are money this contract already paid out, exactly like the
+          // deposit. Rolling them in here keeps the completion breakdown honest — without
+          // it, a job paid half its value in claims would read as though that half vanished.
+          depositPaid: (site.depositPaid || 0) + (site.progressPaid || 0),
           penalty,
           qualityBonus,
           costs: ensureProjectCostLedger(site),
@@ -5319,36 +5415,55 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
       const missing = getSiteMissingMaterials(site, def, g);
       if (!missing.length) return;
+      // ── ORDERS NOW TAKE TIME TO ARRIVE ────────────────────────────────────
+      // Materials used to appear the instant they were paid for, which made the emergency
+      // option — 1.5x price for the same instant delivery — strictly worse than this one,
+      // and therefore never the right call. A normal order is placed with a supplier and
+      // lands a couple of days later; work stalls until it does. That is what the emergency
+      // premium now buys.
+      //
+      // Cash still leaves the account at the moment of ordering, and the cost is still
+      // attributed to this project at that moment, so nothing about the books changes.
       const totalCost = missing.reduce((s, m) => s + m.costNormal, 0);
+      if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
+
+      let ordered = missing;
+      let spend = totalCost;
       if (g.cash < totalCost) {
-        // Partial: buy as much as possible
+        // Short of cash: order as much as the balance covers, material by material.
         let budget = g.cash;
+        ordered = [];
+        spend = 0;
         for (const m of missing) {
           if (budget <= 0) break;
           const canBuy = Math.min(m.missing, Math.floor(budget / m.pricePerUnit));
-          if (canBuy > 0) {
-            const cost = canBuy * m.pricePerUnit;
-            g.cash -= cost;
-            g.expenses += cost;
-            if (!site.materialsFulfilled) site.materialsFulfilled = {};
-            site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + canBuy;
-            budget -= cost;
-            accrueProjectCost(site, "materials", cost);
-            recordTransaction(g, "materials", -cost, `${site.label}: ${canBuy} ${m.unit} of ${m.label}`);
-            addLog(g, `📦 Partial buy: ${canBuy} ${m.unit} of ${m.label} for ${money(cost)}.`);
-          }
+          if (canBuy <= 0) continue;
+          const cost = canBuy * m.pricePerUnit;
+          ordered.push({ ...m, missing: canBuy, costNormal: cost, costEmergency: Math.round(cost * 1.5) });
+          budget -= cost;
+          spend += cost;
         }
-      } else {
-        g.cash -= totalCost;
-        g.expenses += totalCost;
-        accrueProjectCost(site, "materials", totalCost);
-        recordTransaction(g, "materials", -totalCost, `${site.label}: site materials`);
-        for (const m of missing) {
-          if (!site.materialsFulfilled) site.materialsFulfilled = {};
-          site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
-          addLog(g, `📦 Bought ${m.missing} ${m.unit} of ${m.label} for ${money(m.costNormal)}.`);
+        if (ordered.length === 0) {
+          alertInsufficientFunds(g, missing[0].pricePerUnit, "Even one unit of material");
+          return;
         }
       }
+
+      g.cash -= spend;
+      g.expenses += spend;
+      accrueProjectCost(site, "materials", spend);
+      recordTransaction(g, "materials", -spend, `${site.label}: material order`);
+
+      const deliveries = planDeliveries(ordered, g.day);
+      site.pendingDeliveries.push(...deliveries);
+      const arrivesIn = Math.max(0, (deliveries[0]?.arrivesDay ?? g.day) - g.day);
+      const summary = ordered.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
+      addLog(g, `🚚 Ordered ${summary} for ${money(spend)} — arriving day ${deliveries[0]?.arrivesDay ?? g.day}.`);
+      addImportantNotice(
+        g,
+        `Materials ordered for ${site.label}: ${money(spend)}, arriving in ${arrivesIn} day${arrivesIn === 1 ? "" : "s"}. Work stalls until then — pay the emergency premium for same-day if you cannot wait.`,
+        "neutral"
+      );
     });
   }, [update]);
 
@@ -5379,11 +5494,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.expenses += totalCost;
       // Emergency premium is a cost this project caused, so it lands on this project.
       accrueProjectCost(site, "materials", totalCost);
-      for (const m of missing) {
-        if (!site.materialsFulfilled) site.materialsFulfilled = {};
-        site.materialsFulfilled[m.matId] = (site.materialsFulfilled[m.matId] || 0) + m.missing;
-        addLog(g, `⚡ Emergency delivery: ${m.missing} ${m.unit} of ${m.label} (${money(m.costEmergency)}).`);
-      }
+      recordTransaction(g, "materials", -totalCost, `${site.label}: emergency material order`);
+
+      // Same-day: the emergency order is queued like any other, but with a zero-day lead, so
+      // it is collected by the same arrival path in the tick rather than a second code path
+      // that could drift from it. This is now what the 1.5x premium actually buys.
+      if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
+      site.pendingDeliveries.push(...planDeliveries(missing, g.day, { emergency: true }));
+      const summary = missing.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
+      addLog(g, `⚡ Emergency order placed: ${summary} (${money(totalCost)}) — on site today.`);
     });
   }, [update]);
 
@@ -5398,11 +5517,38 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         return;
       }
 
-      // Apply bid style multiplier
-      const BID_MULTIPLIERS = { aggressive: 0.82, standard: 1.00, premium: 1.28 };
-      const bidStyle = (g.contractBidStyles || {})[c.id] || "standard";
-      const bidMult = BID_MULTIPLIERS[bidStyle] ?? 1.0;
-      const effectiveValue = Math.round(c.value * bidMult);
+      // ── THE BID IS NOW AWARDED, NOT ASSUMED ────────────────────────────────
+      // Bid style used to move the payout and nothing else: Premium paid +28% at no cost,
+      // so it was free money and the "choice" was fake. It now moves the probability of
+      // being awarded the job. The player sees that probability on the card before
+      // committing, and `rollBidOutcome` rolls the same number the card showed, because
+      // both come from one `planBid` call.
+      const bidStyle = (g.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+      const outcome = rollBidOutcome(c, bidStyle, g);
+      const effectiveValue = outcome.effectiveValue;
+
+      if (!outcome.won) {
+        // Losing costs the contract, not the crew. Nothing is consumed: no materials drawn,
+        // no crew or machines marked active, no cash moved. The board is the cost.
+        const winner = pickWinningRival(c, g);
+        c.status = "Taken";
+        if (winner && winner.id) {
+          const rival = (g.rivals || []).find((r) => r.id === winner.id);
+          if (rival) {
+            rival.activeJobs = (rival.activeJobs || 0) + 1;
+            rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
+          }
+        }
+        const winnerName = winner?.name || "another contractor";
+        addLog(g, `📄 Bid lost: "${c.label}" went to ${winnerName}.`);
+        addImportantNotice(g, `${winnerName} won "${c.label}". A lower bid would have had a better chance.`, "orange");
+        Alert.alert(
+          "Bid Lost",
+          `${winnerName} was awarded "${c.label}".\n\nYou bid ${outcome.label.toLowerCase()} — a ${outcome.winPercent}% chance. Your crew and materials were not committed.`,
+          [{ text: "OK" }]
+        );
+        return;
+      }
 
       // Consume materials — track exactly what was fulfilled, never go negative.
       // Stock drawn from inventory was paid for earlier, at the supplier. Valuing it at
@@ -5445,6 +5591,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         cityId: c.cityId || "salem", siteMode: "normal",
         materialsFulfilled,
         depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
+        // Phase 2: orders in transit, and what the client has certified so far.
+        pendingDeliveries: [], progressPaid: 0, phasesClaimed: 0,
         costs: createProjectCostLedger(),
       });
 
@@ -5458,8 +5606,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       // Attribution only — this cash left the balance when the material was bought.
       accrueProjectCost(_newSite, "materials", materialsFromStockCost);
 
-      const bidNote = bidStyle !== "standard" ? ` [${bidStyle} bid]` : "";
-      addLog(g, `🏗️ Site started: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
+      const bidNote = bidStyle !== DEFAULT_BID_STYLE ? ` [${outcome.label.toLowerCase()} bid]` : "";
+      addLog(g, `🏗️ Bid won: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
     });
   }, [update]);
 
@@ -5981,10 +6129,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!_s) return;
       const _def = CONTRACT_DEFS.find(c => c.id === (g.contracts||[]).find(cc => cc.id === _s.contractId)?.defId);
       const _prog = Math.min(1, (((_s.currentPhaseIdx||0) / Math.max(1, (_s.phases||[]).length)) + ((_s.phaseProgress||0)/100/Math.max(1,(_s.phases||[]).length))));
-      const _partial = Math.round((_s.totalValue || _def?.baseValue || 10000) * Math.max(0.2, _prog) * 0.6);
+      const _value = _s.totalValue || _def?.baseValue || 10000;
+      // Settlement is capped at what the contract still owes. Without this cap a settled job
+      // could pay more than its own contract value: the deposit and every progress claim have
+      // already been banked, and this figure was being added on top of them. That was a small
+      // leak when only the 25% deposit existed and would have become a large one now that
+      // claims release half the value during the job.
+      const _outstanding = Math.max(0, _value - (_s.depositPaid || 0) - (_s.progressPaid || 0));
+      const _partial = Math.min(_outstanding, Math.round(_value * Math.max(0.2, _prog) * 0.6));
       const _repLoss = Math.max(1, Math.round((_def?.minTier||1) * 1.5));
       g.cash = (g.cash||0) + _partial;
       g.revenue = (g.revenue||0) + _partial;
+      if (_partial > 0) recordTransaction(g, "contracts", _partial, `${_s.label}: settlement`);
       g.reputation = Math.max(0, (g.reputation||0) - _repLoss);
       (_s.assignedCrewIds||[]).forEach(cid => { const _w=(g.crew||[]).find(w=>w.id===cid); if(_w){_w.status="Idle"; _w.assignedSiteId=null;} });
       (_s.assignedEquipmentIds||[]).forEach(eid => { const _e=(g.equipment||[]).find(e=>e.id===eid); if(_e){_e.assignedSiteId=null;_e.status="Idle";} });
@@ -7416,6 +7572,82 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     </View>
                   </View>
 
+                  {/* ── PHASE STRIP ────────────────────────────────────────────────
+                      The shape of the job: what is signed off, what the crew is on, and
+                      what is still ahead. The card used to show only the current phase
+                      name and a bar, so a construction project read as a progress meter. */}
+                  {(() => {
+                    const phaseSummary = summarizeSitePhases(site);
+                    if (phaseSummary.length === 0) return null;
+                    return (
+                      <View style={{ marginBottom: SPACING.sm }}>
+                        <View style={{ flexDirection: "row", gap: 3, marginBottom: SPACING.sm }}>
+                          {phaseSummary.map((ph) => (
+                            <View
+                              key={ph.index}
+                              style={{
+                                flex: 1, height: 5, borderRadius: 3,
+                                backgroundColor: ph.state === "done" ? T.safe : T.track,
+                                overflow: "hidden",
+                              }}
+                            >
+                              {ph.state === "current" && (
+                                <View style={{ height: 5, width: `${ph.percent}%`, backgroundColor: T.accent, borderRadius: 3 }} />
+                              )}
+                            </View>
+                          ))}
+                        </View>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACING.xs }}>
+                          {phaseSummary.map((ph) => (
+                            <Text
+                              key={ph.index}
+                              style={[TYPE.caption, {
+                                color: ph.state === "done" ? T.safe : ph.state === "current" ? T.accent : T.dim,
+                                fontWeight: ph.state === "current" ? "700" : "500",
+                              }]}
+                            >
+                              {ph.state === "done" ? "✓ " : ""}{ph.name}
+                            </Text>
+                          ))}
+                        </View>
+                      </View>
+                    );
+                  })()}
+
+                  {/* ── DELIVERIES IN TRANSIT ──────────────────────────────────────
+                      An order that has been placed but has not landed is the difference
+                      between "nobody has done anything" and "it is handled, wait two
+                      days" — and only the first one needs the player. */}
+                  {Array.isArray(site.pendingDeliveries) && site.pendingDeliveries.length > 0 && (
+                    <View style={{
+                      backgroundColor: alpha(T.steel, 0.1), borderRadius: RADIUS.sm,
+                      padding: SPACING.md - 2, marginBottom: SPACING.sm,
+                      borderWidth: 1, borderColor: alpha(T.steel, 0.4),
+                    }}>
+                      <SectionLabel T={T} tone="info">
+                        {`On order · ${site.pendingDeliveries.length}`}
+                      </SectionLabel>
+                      {site.pendingDeliveries.slice(0, 4).map((d) => {
+                        const daysOut = Math.max(0, (d.arrivesDay ?? game.day) - game.day);
+                        return (
+                          <View key={d.id} style={{ flexDirection: "row", justifyContent: "space-between", marginTop: SPACING.xs }}>
+                            <Text style={[TYPE.caption, { color: T.text, flex: 1 }]} numberOfLines={1}>
+                              {d.emergency ? "⚡ " : "🚚 "}{d.qty} {d.unit} of {d.label}
+                            </Text>
+                            <Text style={[TYPE.caption, { color: daysOut === 0 ? T.safe : T.steel, fontWeight: "700" }]}>
+                              {daysOut === 0 ? "Today" : `${daysOut}d`}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                      {site.pendingDeliveries.length > 4 && (
+                        <Text style={[TYPE.caption, { color: T.dim, marginTop: 2 }]}>
+                          +{site.pendingDeliveries.length - 4} more on order
+                        </Text>
+                      )}
+                    </View>
+                  )}
+
                   {/* Specialty mismatch + rush quality warnings */}
                   {(() => {
                     const sitePh = site.phases[site.currentPhaseIdx] || "";
@@ -7790,15 +8022,31 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         tone="accent"
                         divider={(site.depositPaid || 0) > 0 || (isOverdue && daysLate > 0)}
                       />
-                      {(site.depositPaid || 0) > 0 && (
-                        <KeyValueRow
-                          T={T}
-                          label="Deposit received (25%)"
-                          value={money(site.depositPaid)}
-                          tone="info"
-                          divider={isOverdue && daysLate > 0}
-                        />
-                      )}
+                      {(() => {
+                        // What the client has actually released so far: the mobilisation
+                        // deposit plus every certified progress claim. A contractor watches
+                        // this number during a job far more closely than the final figure.
+                        const paid = summarizeSitePayments(site);
+                        if (paid.received <= 0) return null;
+                        return (
+                          <>
+                            <KeyValueRow
+                              T={T}
+                              label={`Received so far (${paid.percentReceived}%)`}
+                              value={money(paid.received)}
+                              tone="info"
+                              divider
+                            />
+                            <KeyValueRow
+                              T={T}
+                              label={paid.progress > 0 ? `Deposit ${money(paid.deposit)} · claims ${money(paid.progress)}` : "Mobilisation deposit"}
+                              value={`${money(paid.outstanding)} outstanding`}
+                              tone="neutral"
+                              divider={isOverdue && daysLate > 0}
+                            />
+                          </>
+                        );
+                      })()}
                       {isOverdue && daysLate > 0 && (
                         <KeyValueRow
                           T={T}
@@ -10184,6 +10432,10 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                 setSelectedEquipIds([]);
               }}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Contract: ${c.label} for ${c.client}, ${money(c.value)}`}
+              accessibilityHint={isSelected ? "Double tap to collapse" : "Double tap to open and bid"}
+              accessibilityState={{ expanded: isSelected }}
             >
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <View style={{ flex: 1, marginRight: 8 }}>
@@ -10425,47 +10677,97 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                       </TouchableOpacity>
                     );
                   })}
-
-                  {/* Bid Style */}
+                  {/* ── BID STRATEGY ────────────────────────────────────────────────
+                      Each option now shows the two things that make it a decision: what it
+                      pays and how likely you are to be awarded it. Both come from one
+                      planBid() call, which is the same call handleStartSite rolls against —
+                      so the odds shown here are by construction the odds you get. */}
                   {(() => {
-                    const BID_OPTIONS = [
-                      { key: "aggressive", label: "Aggressive", sub: "−18% value, fast close", multiplier: 0.82, color: T.orange },
-                      { key: "standard",   label: "Standard",   sub: "Market rate",            multiplier: 1.00, color: T.blue },
-                      { key: "premium",    label: "Premium",    sub: "+28% value, higher bar", multiplier: 1.28, color: T.green },
-                    ];
-                    const bidStyle = (game.contractBidStyles || {})[c.id] || "standard";
-                    const activeMultiplier = BID_OPTIONS.find(o => o.key === bidStyle)?.multiplier ?? 1;
+                    const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+                    const plans = BID_STYLES.map((opt) => ({ opt, plan: planBid(c, opt.key, game) }));
+                    const active = plans.find((p) => p.opt.key === bidStyle) || plans[1];
                     return (
-                      <View style={{ marginTop: 10 }}>
-                        <Text style={[styles.sub, { color: T.sub, marginBottom: 6, fontSize: 11 }]}>Bid Strategy</Text>
-                        <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
-                          {BID_OPTIONS.map(opt => {
-                            const active = bidStyle === opt.key;
+                      <View style={{ marginTop: SPACING.md }}>
+                        <SectionLabel T={T} style={{ marginBottom: SPACING.sm }}>Bid strategy</SectionLabel>
+                        <View style={{ flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.sm }}>
+                          {plans.map(({ opt, plan }) => {
+                            const isActive = bidStyle === opt.key;
+                            const tint = toneColor(plan.riskTone, T);
                             return (
-                              <TouchableOpacity key={opt.key} onPress={() => onSetBidStyle(c.id, opt.key)} style={{ flex: 1, paddingVertical: 7, paddingHorizontal: 4, borderRadius: 7, borderWidth: 1.5, borderColor: opt.color, backgroundColor: active ? opt.color + "33" : "transparent", alignItems: "center" }}>
-                                <Text style={{ fontWeight: "bold", fontSize: 12, color: active ? opt.color : T.sub }}>{opt.label}</Text>
-                                <Text style={{ fontSize: 12, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }}>{opt.sub}</Text>
+                              <TouchableOpacity
+                                key={opt.key}
+                                onPress={() => onSetBidStyle(c.id, opt.key)}
+                                style={{
+                                  flex: 1, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xs,
+                                  borderRadius: RADIUS.sm, borderWidth: 1.5, minHeight: MIN_TAP_TARGET + 12,
+                                  borderColor: isActive ? tint : T.border,
+                                  backgroundColor: isActive ? alpha(tint, 0.15) : "transparent",
+                                  alignItems: "center", justifyContent: "center",
+                                }}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected: isActive }}
+                                accessibilityLabel={`${opt.label} bid, ${money(plan.effectiveValue)}, ${plan.winPercent} percent chance of winning`}
+                              >
+                                <Text style={{ fontWeight: "800", fontSize: 13, color: isActive ? tint : T.text }}>{opt.label}</Text>
+                                <Text style={{ fontSize: 12, color: isActive ? tint : T.sub, marginTop: 2 }}>
+                                  {compactMoney(plan.effectiveValue)}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: isActive ? tint : T.dim, marginTop: 1 }}>
+                                  {plan.winPercent}% win
+                                </Text>
                               </TouchableOpacity>
                             );
                           })}
                         </View>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", backgroundColor: T.panel2, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}>
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Effective Value</Text>
-                          <Text style={{ color: T.text, fontWeight: "bold", fontSize: 12 }}>{`$${Math.round(c.value * activeMultiplier).toLocaleString()}`}</Text>
+
+                        <View style={{ backgroundColor: T.panel2, borderRadius: RADIUS.sm, padding: SPACING.md, borderWidth: 1, borderColor: T.border }}>
+                          <Text style={[TYPE.caption, { color: T.sub, marginBottom: SPACING.sm }]}>{active.plan.detail}</Text>
+                          <ProgressBar
+                            T={T}
+                            percent={active.plan.winPercent}
+                            tone={active.plan.riskTone}
+                            label="Chance of being awarded"
+                            value={`${active.plan.winPercent}% · ${active.plan.riskLabel}`}
+                            height={5}
+                          />
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: SPACING.sm }}>
+                            <Text style={[TYPE.caption, { color: T.sub }]}>Contract value if won</Text>
+                            <Text style={[TYPE.bodyStrong, { color: T.text }]}>{money(active.plan.effectiveValue)}</Text>
+                          </View>
+                          {active.plan.contested && (
+                            <Text style={[TYPE.caption, { color: T.caution, marginTop: SPACING.sm }]}>
+                              ⚠ {active.plan.rivalName} is already chasing this one.
+                            </Text>
+                          )}
+                          <Text style={[TYPE.caption, { color: T.dim, marginTop: SPACING.sm, fontStyle: "italic" }]}>
+                            Losing a bid costs you the contract, not your crew — nothing is committed until you win.
+                          </Text>
                         </View>
                       </View>
                     );
                   })()}
 
                   {/* Confirm button */}
-                  <TouchableOpacity
-                    style={[styles.btn, { marginTop: 14, backgroundColor: !blockReason ? T.green : T.panel2, borderColor: !blockReason ? T.green : T.border }]}
-                    onPress={handleConfirm}
-                  >
-                    <Text style={[styles.btnText, { color: !blockReason ? "#fff" : T.sub }]}>
-                      {blockReason || "✅ Mobilise & Start Site"}
-                    </Text>
-                  </TouchableOpacity>
+                  {(() => {
+                    const bidStyle = (game.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+                    const plan = planBid(c, bidStyle, game);
+                    return (
+                      <TouchableOpacity
+                        style={[styles.btn, {
+                          marginTop: SPACING.lg,
+                          backgroundColor: !blockReason ? T.accent : T.panel2,
+                          borderColor: !blockReason ? T.accent : T.border,
+                        }]}
+                        onPress={handleConfirm}
+                        accessibilityRole="button"
+                        accessibilityLabel={blockReason || `Submit ${plan.label} bid for ${money(plan.effectiveValue)}`}
+                      >
+                        <Text style={[styles.btnText, { color: !blockReason ? "#0a1018" : T.sub }]}>
+                          {blockReason || `Submit ${plan.label} Bid · ${plan.winPercent}%`}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
                 </View>
               )}
             </TouchableOpacity>

@@ -90,6 +90,14 @@ function withActiveSite(g) {
     assignedCrewIds: crewIds,
     assignedEquipmentIds: equipIds,
     materialsFulfilled: { lumber: 20 },
+    // Phase 2: an order in transit and a certified claim, so every scenario below renders
+    // the delivery panel and the payments summary rather than only their empty case.
+    pendingDeliveries: [{
+      id: "dlv-test-concrete", matId: "concrete", label: "Concrete", unit: "m³",
+      qty: 40, cost: 4800, emergency: false, orderedDay: g.day, arrivesDay: g.day + 2,
+    }],
+    progressPaid: 8000,
+    phasesClaimed: 1,
     totalValue: 48000,
     depositPaid: 12000,
     penaltyPerDay: 500,
@@ -219,12 +227,49 @@ describe("the rewritten surfaces actually appear", () => {
       "Foundation",                 // current phase
       "Heavy rain",                 // weather on site
       "Margin if it finishes now",  // the promoted project P&L
-      "Deposit received",
+      "Received so far",            // deposit + certified progress claims (Phase 2)
       "Time left",
       "Site strategy",
     ]) {
       expect(json).toContain(probe);
     }
+  });
+
+  test("a job site shows its phase strip and what is on order", async () => {
+    const tree = await mountWith(withActiveSite);
+    const sites = tabButton(tree, "Sites");
+    await act(async () => { sites.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+    // The phase strip names every phase, not just the current one.
+    for (const phase of ["Site Prep", "Foundation", "Framing", "Final Inspection"]) {
+      expect(json).toContain(phase);
+    }
+    // Orders in transit are visible, so "waiting on a delivery" reads differently from
+    // "nobody has ordered anything".
+    expect(json).toContain("On order");
+    expect(json).toContain("Concrete");
+    // And what the client has actually released so far.
+    expect(json).toContain("Received so far");
+  });
+
+  test("the Bids tab shows what a bid pays AND how likely it is to be won", async () => {
+    // The bid used to show only a payout multiplier, which made Premium free money.
+    const tree = await mountWith();
+    const bids = tabButton(tree, "Bids");
+    await act(async () => { bids.props.onPress(); });
+
+    // The bid panel lives inside an expanded contract card, so open one first.
+    const card = tree.root
+      .findAll((n) => n.props && String(n.props.accessibilityLabel || "").startsWith("Contract:"), { deep: true })[0];
+    expect(card).toBeDefined();
+    await act(async () => { card.props.onPress(); });
+
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Bid strategy");
+    for (const style of ["Aggressive", "Standard", "Premium"]) {
+      expect(json).toContain(style);
+    }
+    expect(json).toContain("% win");
   });
 
   test("an empty Sites tab explains itself and offers a way out", async () => {

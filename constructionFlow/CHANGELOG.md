@@ -5,6 +5,84 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Changed — Phase 2: the core construction loop
+
+Phase 1 made the game legible. Phase 2 makes its central loop a game. The audit's Phase 2
+brief was "bidding, contracts, job sites, phases, crew, equipment, materials, completion,
+inspections, payment" — and reading that code turned up something worse than a missing
+feature: **two of the loop's three player decisions were not decisions at all.**
+
+- **A bid you always won.** `contractBidStyles` offered Aggressive (−18% value), Standard and
+  Premium (+28% value). Nothing in the codebase read the bid style except the payout
+  multiplier. The UI promised "fast close" and "higher bar"; neither existed. Premium was
+  +28% money for nothing and Aggressive was a strictly worse Standard, so a player who
+  understood the game had one correct answer and no choice. **The bid style now moves the
+  probability of being awarded the contract**, not just its value — premium is the best margin
+  on the board if a cheaper contractor does not take it first. The card shows the odds and the
+  payout for all three before you commit, and `rollBidOutcome` rolls the same number the card
+  showed, so a lost bid is never a surprise. Losing costs you the contract, not your crew:
+  nothing is committed until you win.
+- **An emergency order that bought nothing.** An emergency material order cost 1.5× and
+  arrived at exactly the same instant as a normal one, because both were instant. **Normal
+  orders now take two days to arrive and work stalls until they land**, so the emergency
+  premium buys the one thing a late project actually needs. The site card shows what is on
+  order and how far out it is, and the stall message distinguishes "waiting on a delivery"
+  from "nobody has ordered anything" — only the second one needs the player.
+
+It also gives the loop its missing beats:
+
+- **A completed phase says so.** Finishing a phase was silent unless it happened to be an
+  inspection, so the loop's most frequent milestone had no moment at all. "Foundation complete
+  — Framing begins."
+- **A phase strip on every site card.** What is signed off, what the crew is on, what is still
+  ahead. The card used to show only the current phase name and a bar, so a construction
+  project read as a progress meter.
+- **Progress payments.** Construction is not paid in two lumps. A deposit mobilises the job,
+  the client certifies completed work and releases claims against it, and the balance lands at
+  handover. **The total a contract pays is unchanged** — only its timing moved, and the tests
+  hold that invariant across awkward values, phase counts and penalties.
+- **Deliveries announce themselves** when they land, and the site resumes the same tick.
+
+### Added — Phase 2
+
+- `src/systems/constructionLoop.js` — the loop's pure logic, extracted and testable: bid
+  planning and award rolls, delivery scheduling and collection, phase summaries, and the
+  progress-payment schedule. This is the first module in Construction Flow following
+  FleetFlow's `src/utils/` pattern of keeping decision logic out of the screen so it can be
+  asserted without rendering.
+- **A guaranteed first contract.** A brand-new company at 0 reputation would have lost a
+  standard bid 31% of the time — and that bid is the tutorial's step 1. The guarantee is
+  shown honestly as 100% in the UI rather than being a hidden fudge, and lifts as soon as the
+  player has one completed job or one running site.
+- Accessibility on the contract cards, which had none: role, label and expanded state.
+
+### Fixed — Phase 2
+
+- **A settlement could pay more than the contract was worth.** `handleSettleSite` added its
+  partial payout on top of the deposit without deducting it — a small leak while only the 25%
+  deposit existed, and one that would have become large now that progress claims release half
+  the contract during the job. Settlement is now capped at the outstanding balance, and is
+  recorded in the ledger like every other contract payment.
+
+**One deliberate balance consequence, stated rather than buried:** a late penalty is withheld
+from what is still owed and can never claw back cash already released, which is how liquidated
+damages actually work. So certifying phases early reduces your exposure to running late. This
+is self-correcting in play — a job that is late is usually late precisely *because* its phases
+are not done, which leaves the penalty plenty of outstanding balance to bite into.
+
+### Tests — Phase 2
+
+68 new tests, taking the suite from 170 to 238:
+
+- `constructionLoop.test.js` (48) — the properties that make each option a decision rather than
+  the numbers that implement it today, so a balance pass can retune freely but cannot
+  reintroduce a dominant option. Plus the progress-payment schedule, swept for rounding drift
+  across 13-phase jobs at awkward values.
+- `constructionLoopIntegration.test.js` (20) — the helpers wired into real game state: save
+  migration from a build-1 job in progress, deliveries landing through `gameTick`, phase
+  completion paying exactly one claim, replay-safety against offline catch-up, and 300 ticks
+  without NaN or an over-claim.
+
 ### Added — Phase 1: UX and visual parity
 
 Construction Flow was played side by side with FleetFlow Simulator on a physical iPhone and
