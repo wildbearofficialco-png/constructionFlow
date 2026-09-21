@@ -274,9 +274,36 @@ describe("a completed phase is a moment, and releases a claim", () => {
 
     const site = state.activeSites[0];
     if (site) {
-      expect(site.progressPaid).toBeLessThanOrEqual(Math.round(value * PROGRESS_SHARE));
-      expect(site.progressPaid).toBe(progressPaymentTarget(value, 4, site.phasesClaimed));
+      // Assert against the site's CURRENT value, not the value it started with. A contract's
+      // worth legitimately changes mid-job — a scope change or client praise adds to it, a
+      // payment hold subtracts — and claims are certified against what the job is worth now.
+      // Pinning the starting value here made this test flaky roughly 1 run in 400, and the
+      // flake was the test's, not the code's.
+      expect(site.progressPaid).toBeLessThanOrEqual(Math.round(site.totalValue * PROGRESS_SHARE));
+      expect(site.progressPaid).toBe(progressPaymentTarget(site.totalValue, site.phases.length, site.phasesClaimed));
     }
+  });
+
+  test("a contract whose value changes mid-job still pays out exactly once", () => {
+    // Scope changes, client praise and payment holds all move `site.totalValue` while the job
+    // runs. The claim schedule has to tolerate that in both directions without ever paying
+    // more than the contract is worth or clawing back cash already released.
+    const value = 100000;
+    const deposit = Math.round(value * DEPOSIT_SHARE);
+
+    // Value rises after two claims were certified against the old figure.
+    const afterTwo = progressPaymentTarget(value, 4, 2);
+    const raised = 140000;
+    const raisedTarget = progressPaymentTarget(raised, 4, 3);
+    expect(raisedTarget).toBeGreaterThan(afterTwo);
+    expect(deposit + raisedTarget + finalPaymentDue(raised, 0, deposit, raisedTarget)).toBe(raised);
+
+    // Value falls below what has already been claimed: nothing is clawed back, and the
+    // handover simply owes nothing.
+    const slashed = 30000;
+    const overClaimed = afterTwo;
+    expect(finalPaymentDue(slashed, 0, deposit, overClaimed)).toBe(0);
+    expect(deposit + overClaimed).toBeGreaterThan(slashed);
   });
 
   test("the final phase pays at handover, not as a claim", () => {

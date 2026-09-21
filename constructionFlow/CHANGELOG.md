@@ -5,6 +5,47 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Release (1.0.0, build 3)
+
+- iOS `buildNumber` 2 -> 3. Version stays **1.0.0**: builds 1 and 2 went to TestFlight under
+  it and it has not been publicly released, so there is no `CFBundleShortVersionString`
+  collision to avoid. Android `versionCode` untouched.
+- Build 2 was cut but never installed, so **this is the first build carrying all four phases**.
+  Everything from build 1 onward is in it.
+- Release gate: lint 0 errors (35 pre-existing warnings), typecheck clean, 388/388 tests,
+  `npx expo-doctor` 19/21 (both failures are network-policy-blocked checks in the sandbox),
+  `npx expo export --platform ios` bundles cleanly. The suite was run three times to
+  confirm the claim-schedule flake fixed above is genuinely gone.
+
+**What to look at on device**, in priority order, since none of it is testable from here:
+
+1. **Does amber read right?** It is the primary action colour on every screen. Biggest
+   aesthetic bet in the whole run of work.
+2. **Install over your build-1 save, don't wipe.** Two migrations now run on it: Phase 2's
+   delivery/claim fields and Phase 4's rival-record rewrite. Both are test-covered; only your
+   device proves it.
+3. **Bidding.** You can lose one now. The first contract is guaranteed and the odds are always
+   on screen before you commit. Tension, or noise?
+4. **Material lead time.** A job can sit stalled two days waiting on concrete. Drama, or dead
+   air? `NORMAL_DELIVERY_DAYS` in `src/systems/constructionLoop.js` is a one-line change.
+5. **Crew, Equipment and Empire** — tightest rows, largest type increase. Wrapping or clipping
+   shows up there first.
+6. **Market news on Home.** Does a living market read as interesting, or as chatter?
+
+### Fixed — a flaky test, and what it revealed
+
+Cutting build 3 surfaced a test that failed roughly 1 run in 400: a job's progress claims
+exceeding the documented cap. The code was right and the test was wrong, but the reason is
+worth recording. **A contract's value legitimately changes mid-job** — a Scope Change or
+Client Praise event adds to `site.totalValue`, a payment hold subtracts from it — and claims
+are certified against what the job is worth *now*. The test had pinned the value the job
+started with.
+
+`finalPaymentDue` already tolerated this in both directions (it computes the handover balance
+from the current value, so a rise self-corrects and a fall simply owes nothing rather than
+clawing cash back), but nothing asserted it. There is now an explicit test for a contract
+revalued up and down mid-job.
+
 ### Fixed — Phase 4: a market that keeps living
 
 FleetFlow shipped builds 58 and 59 specifically to fix a market that stopped living, and its
