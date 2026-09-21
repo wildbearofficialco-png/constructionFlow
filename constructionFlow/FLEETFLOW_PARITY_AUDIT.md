@@ -86,8 +86,8 @@ Classification:
 | 22 | Insurance | **EQUIVALENT** | Claims, deductible | `INSURANCE_PLANS`, `applyInsuranceClaim`, `insuranceDeductibleMult` | Parity. |
 | 23 | Random events | **PARTIAL** | `randomEvents` + CEO event catalog, **chains** (`fleetflowCeoEventChains`) and **memory** (`fleetflowCeoEventMemory`) — an event can reference an earlier decision | `CHAOS_EVENTS`, `DECISION_EVENTS`, `EMPLOYEE_EVENTS`, `checkChainEvents` | FleetFlow's events *remember*. A decision made on day 20 can be referenced on day 60. Construction Flow's chains are per-site and short-lived, so the world doesn't accumulate a history. |
 | 24 | Weather | **ADAPT** | `weatherRouteConditions` — affects route time | Same module + `getConstructionWeatherDelay`, `applyWeatherEvent`, regional risk labels | Construction Flow's weather is *better suited to the genre* (rain halts excavation) but reads as one 9px line on a site card. This should be one of the game's signature moments. |
-| 25 | AI competitors | **PARTIAL** | `aiCompetitors` + **4 dedicated helper modules (890 lines)**: rival identity, rival market, rival investment, rival events. New entrants when the field thins. Narrated growth ("opened a gravel yard, added 2 vehicles and hired 2 drivers"). Escalating decline lines before bankruptcy. RNG-free news builders. | **Identical `aiCompetitors.js`**, plus `enhancedRivalDailyLogic` (240 lines) and `enhancedRivalBidding` inline in the screen | Two structural risks FleetFlow already hit and fixed, that Construction Flow still carries: **(a)** no new-entrant path — acquire or bankrupt all 5 rivals and the market is permanently dead; **(b)** rival news goes to the same capped ops log as the player's own events, so rival activity pushes the player's operations out of their own feed. FleetFlow's build 59 changelog is the exact post-mortem. |
-| 26 | Rival growth | **PARTIAL** | Narrated from movements the sim already produced — growth reads like a company doing things | `rival.activeJobs`, cash, rep, `cityPresence`, restructure after 90 days | Construction Flow's rivals grow numerically but are *described* generically. FleetFlow derives the sentence from the actual delta, so it never lies and always reads specific. |
+| 25 | AI competitors | **PARTIAL → fixed in Phase 4** | `aiCompetitors` + **4 dedicated helper modules (890 lines)**: rival identity, rival market, rival investment, rival events. New entrants when the field thins. Narrated growth ("opened a gravel yard, added 2 vehicles and hired 2 drivers"). Escalating decline lines before bankruptcy. RNG-free news builders. | **Identical `aiCompetitors.js`**, plus `enhancedRivalDailyLogic` (240 lines) and `enhancedRivalBidding` inline in the screen | Two structural risks FleetFlow already hit and fixed, that Construction Flow still carries: **(a)** no new-entrant path — acquire or bankrupt all 5 rivals and the market is permanently dead; **(b)** rival news goes to the same capped ops log as the player's own events, so rival activity pushes the player's operations out of their own feed. FleetFlow's build 59 changelog is the exact post-mortem. |
+| 26 | Rival growth | **PARTIAL → fixed in Phase 4** | Narrated from movements the sim already produced — growth reads like a company doing things | `rival.activeJobs`, cash, rep, `cityPresence`, restructure after 90 days | Construction Flow's rivals grow numerically but are *described* generically. FleetFlow derives the sentence from the actual delta, so it never lies and always reads specific. |
 | 27 | Reputation | **EQUIVALENT** | Rep tiers, badges | `REP_TIERS`, `getRepTier`, badge + label | Parity. |
 | 28 | Client relationships | **PARTIAL** | Customer satisfaction, repeat contracts, tier ceilings, transfers on acquisition | `clientRelationships`, `CLIENT_ROSTER`, `getClientTier`, `pendingRepeatClients` | Present, collapsed inside a `CollapsibleSection` on Home — so most players never open it. |
 | 29 | Offline progression | **PARTIAL → fixed in Phase 3** | Narrative line items: deliveries completed, late arrivals, earnings, wages, fuel, overhead, net | KPI tiles (cash Δ, cash now, jobs, rep) + last 6 log lines + overhead/day | Construction Flow's tiles are good, but **the summary never says what happened to the projects** — no "Foundation 42% → 67%", no material spend, no weather delay, no progress payment. The player's actual question ("what happened to my job sites?") is unanswered. |
@@ -256,9 +256,20 @@ reports** (`economicHistory` and `analyticsEngine` are ticked daily and still al
 shown — audit rows 36 and 37), and **inspections as a player decision** rather than a result
 delivered by the tick.
 
-**Phase 4 — Living market**
+**Phase 4 — Living market** *(shipped — see CHANGELOG.md)*
 Rival contractors that bid visibly against the player, narrated growth and decline, new entrants,
-rival news in its own feed, acquisitions that transfer a real business, regional demand.
+rival news in its own feed, acquisitions that transfer a real business.
+
+Every defect FleetFlow's builds 58 and 59 fixed was still present here, plus four of Construction
+Flow's own: a market that died permanently, an entrant that could never bid (the exact trap
+FleetFlow names), rival news crowding the player's own ops log, **two competing bankruptcy
+systems sharing one field with opposite meanings** (with the second's recovery unreachable),
+two counters for one thing, `createRivals()` minting records with no `status` at all, and
+acquisitions that transferred 1–3 generic workers and nothing else. Logic lives in
+`src/systems/rivalMarket.js` with 80 tests.
+
+Still open, deliberately deferred: **regional demand** and a market that responds to the
+player's own dominance in a city.
 
 **Phase 5 — Long-term progression**
 Yards, offices, geographic expansion, company tiers, mega-projects, milestones, achievements,

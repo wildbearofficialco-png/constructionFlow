@@ -54,6 +54,21 @@ import {
   buildProjectProfitLines,
 } from "../../systems/projectEconomics.js";
 import {
+  RIVAL_STATUS,
+  stepRivalLifecycle,
+  isRivalOffTheBoard,
+  countLiveRivals,
+  shouldSpawnEntrant,
+  createEntrant,
+  getRivalPersonality,
+  pushMarketNews,
+  describeRivalGrowth,
+  describeRivalLifecycleNews,
+  describeEntrantArrival,
+  planAcquisition,
+  acquisitionBlockReason,
+} from "../../systems/rivalMarket.js";
+import {
   describeWorkerAssignment,
   workerRiskFlags,
   workerVoiceLine,
@@ -2206,10 +2221,20 @@ export function createContract(state, forcedDefId) {
 }
 
 export function createRivals() {
+  // Complete records. These used to be minted without `status`, `employees` or `equipment`
+  // at all, and the old code only worked by accident: `rival.status === "Bankrupt"` is
+  // false for undefined, and every read of the counters was written `(rival.employees || 2)`.
+  // A company whose status is literally undefined cannot be reasoned about, and the fleet
+  // and acquisition code both need the counters to exist.
   return RIVAL_COMPANIES.map((r) => ({
     id: r.id, name: r.name, aggression: r.aggression, focus: r.focus,
     rep: r.startRep, jobsCompleted: 0, activeJobs: 0,
     cash: rand(20000, 50000),
+    status: RIVAL_STATUS.ACTIVE,
+    troubleDays: 0,
+    employees: 2,
+    equipment: 1,
+    cityPresence: ["salem"],
   }));
 }
 
@@ -2714,23 +2739,41 @@ function decrementTraining(g) {
 
 export function enhancedRivalDailyLogic(g) {
   if (!g.rivals) g.rivals = createRivals();
-  for (const rival of g.rivals) {
-    if ((g.acquiredRivals || []).includes(rival.id)) continue;
 
-    // ── Rival bankruptcy / recovery ──────────────────────────────────────────
-    if (rival.status === "Bankrupt") {
-      rival.bankruptDays = (rival.bankruptDays || 0) + 1;
-      // After 90 days re-enter at 20% of original valuation
-      if (rival.bankruptDays >= 90) {
-        rival.status = "Active";
-        rival.cash = rand(8000, 20000);
-        rival.rep = Math.max(5, Math.round((rival.rep || 10) * 0.4));
-        rival.activeJobs = 0;
-        rival.bankruptDays = 0;
-        addLog(g, `📈 ${rival.name} has restructured and re-entered the market.`);
-      }
-      continue;
+  // ── NEW COMPANIES ENTER A THIN MARKET ──────────────────────────────────────
+  // Without this the board is finite: acquire or bankrupt all seven authored companies and
+  // the market is dead forever. Gated on a thin field, a cooldown and a low daily roll, so
+  // an arrival is news rather than a conveyor belt — and the companies the player BOUGHT
+  // stay bought, because the buyout copy promises exactly that.
+  if (shouldSpawnEntrant(g, Math.random)) {
+    const entrant = createEntrant(g, Math.random);
+    g.rivals.push(entrant);
+    g.lastEntrantDay = g.day;
+    pushMarketNews(g, { text: describeEntrantArrival(entrant), tone: "info", rivalId: entrant.id });
+  }
+
+  for (const rival of g.rivals) {
+    if (!rival) continue;
+    if (isRivalOffTheBoard(rival, g)) continue;
+
+    // ── ONE LIFECYCLE ────────────────────────────────────────────────────────
+    // This replaces two competing systems that shared `bankruptDays` with opposite meanings:
+    // one treated it as days spent bankrupt, the other as days spent nearly bankrupt, and
+    // the second system's recovery branch was unreachable because the first `continue`d past
+    // it. See src/systems/rivalMarket.js.
+    const step = stepRivalLifecycle(rival, { rng: Math.random });
+    Object.assign(rival, step.changes);
+    if (step.news) {
+      const line = describeRivalLifecycleNews(rival, step.news);
+      if (line) pushMarketNews(g, { text: line, tone: step.news.tone, rivalId: rival.id });
     }
+    // A struggling company keeps trading — it is a competitor, not a corpse. Only a folded
+    // or just-restructured one sits the day out.
+    if (!step.trading) continue;
+
+    // Movements this company actually made today, so the growth headline below narrates the
+    // simulation rather than running a second one beside it.
+    const moved = { hired: 0, machines: 0, jobsWon: 0, cityOpened: null };
 
     const activeJobs = rival.activeJobs || 0;
 
@@ -2748,20 +2791,9 @@ export function enhancedRivalDailyLogic(g) {
       if (Math.random() < 0.15) rival.rep = Math.max(0, (rival.rep || 10) - 1);
     }
 
-    // Rival bankruptcy (revised threshold)
-    rival.lowValuationDays = (rival.lowValuationDays || 0);
-    const rivalVal = (rival.cash || 0) + (rival.rep || 0) * 50000 + ((rival.cityPresence || ["salem"]).length) * 100000;
-    if (rivalVal < 10000) {
-      rival.lowValuationDays++;
-    } else {
-      rival.lowValuationDays = 0;
-    }
-    if ((rival.cash || 0) < -15000 || rival.lowValuationDays >= 30) {
-      rival.status = "Bankrupt";
-      rival.bankruptDays = 0;
-      addLog(g, `📉 ${rival.name} has gone bankrupt and exited the market.`);
-      continue;
-    }
+    // Bankruptcy is decided by stepRivalLifecycle at the top of this loop — one place, one
+    // valuation formula, one meaning for `troubleDays`. The duplicate declaration that used
+    // to sit here computed the same valuation inline and disagreed with the other system.
 
     // Rivals grow rep daily at +0.04–0.08 (so 50-80 rep after 1000 days passively)
     if (activeJobs > 0 && Math.random() < 0.60) {
@@ -2779,17 +2811,27 @@ export function enhancedRivalDailyLogic(g) {
     if (Math.random() < 0.05 && (rival.employees || 2) < 20) {
       rival.employees = (rival.employees || 2) + 1;
       rival.cash -= rand(2000, 5000);
+      moved.hired += 1;
     }
-    // Rivals occasionally buy equipment (simulated)
+    // Rivals occasionally buy equipment (simulated).
+    // This used to increment `rival.equipCount` while the other capex path below incremented
+    // `rival.equipment` — two counters for one thing, and the UI only ever read the second,
+    // so half of every rival's machine purchases were invisible. One field now.
     if (Math.random() < 0.03 && (rival.cash || 0) > 50000) {
-      rival.equipCount = (rival.equipCount || 1) + 1;
+      rival.equipment = (rival.equipment || 1) + 1;
       rival.cash -= rand(15000, 50000);
       rival.rep = Math.min(100, (rival.rep || 0) + 1);
+      moved.machines += 1;
     }
     // Market response — rivals pull back during recession
     if (g.activeMarketEvent === "recession_start" && Math.random() < 0.30) {
       rival.activeJobs = Math.max(0, (rival.activeJobs || 0) - 1);
     }
+    // WHICH FEED? The rule is whether this happened TO THE PLAYER or merely in the market.
+    // Losing a worker, or being outbid on a contract you were looking at, is the player's own
+    // event and belongs in their ops log. A rival opening a yard, winning an award or buying
+    // another firm is market news and belongs in `marketNews` — the ops log is capped at 25
+    // entries and rival activity fires far more often than the player's own.
     // Rivals occasionally poach your crew if they're struggling
     if ((rival.rep || 0) > 20 && Math.random() < 0.02) {
       const poachTarget = g.crew.find(w => w.mood < 50 && w.loyalty < 40);
@@ -2804,20 +2846,23 @@ export function enhancedRivalDailyLogic(g) {
       const hireCount = rand(1, 2);
       rival.employees = (rival.employees || 2) + hireCount;
       rival.cash -= hireCount * rand(3000, 6000);
-      if (Math.random() < 0.3) addLog(g, `👷 ${rival.name} hired ${hireCount} new worker${hireCount > 1 ? "s" : ""}.`);
+      moved.hired += hireCount;
     }
 
     // Buy equipment when cash-positive and expanding
     if (rival.cash > 60000 && (rival.equipment || 1) < 8 && Math.random() < 0.05) {
       rival.equipment = (rival.equipment || 1) + 1;
       rival.cash -= rand(20000, 55000);
-      if (Math.random() < 0.25) addLog(g, `🚜 ${rival.name} acquired new equipment.`);
+      moved.machines += 1;
     }
 
     // Lay off workers when cash-strapped
     if (rival.cash < 5000 && (rival.employees || 2) > 2 && Math.random() < 0.12) {
       rival.employees = Math.max(2, (rival.employees || 2) - 1);
-      if (Math.random() < 0.4) addLog(g, `📉 ${rival.name} downsized — laid off a worker.`);
+      // Rival news goes to the market feed, never to `logs`/`opsFeed` — those are capped at
+      // 25 and 20 entries and are about the PLAYER's operations. Rival chatter fires far
+      // more often and was pushing the player's own site events out of their own history.
+      pushMarketNews(g, { text: `📉 ${rival.name} laid off a worker.`, tone: "caution", rivalId: rival.id });
     }
 
     // Contract stealing
@@ -2865,14 +2910,16 @@ export function enhancedRivalDailyLogic(g) {
         rival.cityPresence = [...presence, target.id];
         rival.rep = Math.min(100, (rival.rep || 0) + rand(2, 5));
         rival.cash -= rand(5000, 15000);
-        addLog(g, `🏗️ ${rival.name} strategically expanded to ${target.name}!`);
+        moved.cityOpened = target.name;
       }
     }
 
     // Rivals can win annual awards too (adds realism)
     if (g.day % 365 === 0 && rival.rep >= 60 && Math.random() < 0.3) {
       rival.rep = Math.min(100, (rival.rep || 0) + rand(3, 8));
-      if (Math.random() < 0.5) addLog(g, `🏆 ${rival.name} won an industry award — their reputation grows.`);
+      if (Math.random() < 0.5) {
+        pushMarketNews(g, { text: `🏆 ${rival.name} won an industry award — their reputation grows.`, tone: "neutral", rivalId: rival.id });
+      }
     }
 
     // Update growth trend for UI display
@@ -2921,33 +2968,17 @@ export function enhancedRivalDailyLogic(g) {
         rival.activeJobs = (rival.activeJobs||0) + (_weakerRival.activeJobs||0);
         rival.employees = (rival.employees||2) + Math.floor((_weakerRival.employees||2) * 0.5);
         rival.rep = Math.min(100, (rival.rep||0) + rand(2, 5));
-        _weakerRival.status = "Bankrupt";
-        _weakerRival.bankruptDays = 0;
-        addLog(g, `🏗️ ${rival.name} acquired ${_weakerRival.name} — a rival has consolidated!`);
+        _weakerRival.status = RIVAL_STATUS.BANKRUPT;
+        _weakerRival.troubleDays = 0;
+        pushMarketNews(g, { text: `🤝 ${rival.name} acquired ${_weakerRival.name} — the market is consolidating.`, tone: "caution", rivalId: rival.id });
       }
     }
 
-    // ── Rival War: Bankruptcy tracking (Feature 7) ──────────────────────────
-    const _rivalValuation = (rival.cash||0) + (rival.rep||0)*50000 + ((rival.cityPresence||["salem"]).length)*100000;
-    if (_rivalValuation < 10000 && rival.status !== "Bankrupt") {
-      rival.bankruptDays = (rival.bankruptDays||0) + 1;
-      if (rival.bankruptDays >= 30 && !rival.bankrupt) {
-        rival.bankrupt = true;
-        rival.bankruptDay = g.day;
-        rival.status = "Bankrupt";
-        addLog(g, `📉 ${rival.name} has gone bankrupt.`);
-      }
-    }
-
-    // ── Rival War: Recovery (Feature 7) ─────────────────────────────────────
-    if (rival.bankrupt && g.day > (rival.bankruptDay||0) + 90) {
-      rival.bankrupt = false;
-      rival.status = "Active";
-      rival.cash = 15000;
-      rival.reputation = Math.max(5, (rival.rep||0) * 0.4);
-      rival.bankruptDays = 0;
-      addLog(g, `📈 ${rival.name} has recovered and re-entered the market.`);
-    }
+    // ── GROWTH, NARRATED FROM WHAT ACTUALLY HAPPENED ────────────────────────
+    // Every clause is derived from a movement recorded above, so the headline can never
+    // claim something the simulation did not do. Silence when nothing moved.
+    const growthLine = describeRivalGrowth(rival, moved);
+    if (growthLine) pushMarketNews(g, { text: growthLine, tone: "neutral", rivalId: rival.id });
   }
 }
 
@@ -2975,9 +3006,15 @@ export function enhancedRivalBidding(g, openContracts) {
     summit_construction: { focus: ["Commercial","Government"],   focusBonus: 1.20 },
   };
   for (const rival of (g.rivals || [])) {
-    if ((g.acquiredRivals || []).includes(rival.id)) continue;
-    if (rival.status === "Bankrupt") continue;
-    const personality = rivalPersonality[rival.id];
+    if (!rival) continue;
+    if (isRivalOffTheBoard(rival, g)) continue;
+    if (rival.status === RIVAL_STATUS.BANKRUPT) continue;
+    // THE INERT-ENTRANT TRAP. This lookup used to be a bare `rivalPersonality[rival.id]`
+    // followed by `if (!personality) continue`, so a generated company — which by definition
+    // has no entry in the authored table — would sit on the board forever, never bidding on
+    // anything. FleetFlow's build 59 documents exactly this shape in its own daily sim.
+    // Entrants carry their personality on the record, and this falls back to it.
+    const personality = getRivalPersonality(rival, rivalPersonality);
     if (!personality) continue;
     if (personality.dailySkip && Math.random() > personality.dailySkip) continue;
     const targets = openContracts.filter((c) =>
@@ -2988,7 +3025,7 @@ export function enhancedRivalBidding(g, openContracts) {
         c.status = "Taken";
         rival.activeJobs = (rival.activeJobs || 0) + 1;
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-        addLog(g, `🏗️ ${rival.name} claimed "${c.label}".`);
+        pushMarketNews(g, { text: `🏗️ ${rival.name} claimed "${c.label}".`, tone: "neutral", rivalId: rival.id });
         break;
       }
     }
@@ -3202,6 +3239,8 @@ export function freshState() {
     debt: 0,
 
     rivals: createRivals(),
+    marketNews: [],      // rival news, kept out of the player's own ops log
+    lastEntrantDay: 0,   // cooldown anchor for new companies entering a thin market
     activeMarketEvent: null,
     marketEventDaysLeft: 0,
     subcontractors: [],
@@ -3306,7 +3345,29 @@ export function migrateState(saved) {
   // defaulted for old saves while all existing saved values are preserved.
   g.weeklyStats = { ...defaults.weeklyStats, ...(saved.weeklyStats || {}) };
   g.hallOfFame  = { ...defaults.hallOfFame,  ...(saved.hallOfFame  || {}) };
-  if (!g.rivals || !g.rivals.length)       g.rivals = createRivals();
+  // Only mint the authored roster when there is genuinely no rivals array — an EMPTY one is
+  // a legitimate late-game state (everyone bought or bankrupt) and regenerating the seven
+  // authored companies there would resurrect ones the player had already bought. The market
+  // refills through new entrants instead; see src/systems/rivalMarket.js.
+  if (!Array.isArray(g.rivals)) g.rivals = createRivals();
+  // Backfill the lifecycle fields on saves written before the market rework. A record whose
+  // status is undefined cannot be reasoned about by the lifecycle.
+  g.rivals = g.rivals.filter(Boolean).map((r) => ({
+    ...r,
+    status: r.status === RIVAL_STATUS.BANKRUPT || r.status === RIVAL_STATUS.STRUGGLING
+      ? r.status
+      : RIVAL_STATUS.ACTIVE,
+    // The retired fields meant different things in two different systems, so neither can be
+    // carried across honestly. Everyone starts the new lifecycle on a clean slate, which at
+    // worst gives a company already in trouble a fresh run at failing.
+    troubleDays: Number.isFinite(r.troubleDays) ? r.troubleDays : 0,
+    employees: Number.isFinite(r.employees) ? r.employees : 2,
+    // `equipCount` was the other half of the split counter — fold it in rather than losing it.
+    equipment: Number.isFinite(r.equipment) ? r.equipment : (Number.isFinite(r.equipCount) ? r.equipCount : 1),
+    cityPresence: Array.isArray(r.cityPresence) ? r.cityPresence : ["salem"],
+  }));
+  if (!Array.isArray(g.marketNews)) g.marketNews = [];
+  if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
   if (g.activeMarketEvent === undefined)    g.activeMarketEvent = null;
   if (g.marketEventDaysLeft === undefined)  g.marketEventDaysLeft = 0;
   if (!g.subcontractors)                   g.subcontractors = [];
@@ -5946,32 +6007,61 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleAcquireRival = useCallback((rivalId) => {
     update((g) => {
       const rival = (g.rivals||[]).find(r => r.id === rivalId);
-      if (!rival) return;
-      const acquisitionCost = Math.max(50000, (rival.rep||0) * 3000 + (rival.cash||0) * 0.5);
-      if (g.reputation < 50) { Alert.alert("Reputation Too Low", "Need 50+ reputation to acquire rivals."); return; }
-      // Acquisition cooldown: 30-day gap between acquisitions
-      if (g.day - (g.lastAcquisitionDay||0) < 30) { Alert.alert("Acquisition Cooldown", `Must wait ${30 - (g.day - (g.lastAcquisitionDay||0))} more day(s) before next acquisition.`); return; }
-      if (g.cash < acquisitionCost) { alertInsufficientFunds(g, acquisitionCost, `Acquiring ${rival.name}`); return; }
-      g.cash -= acquisitionCost;
-      g.expenses += acquisitionCost;
-      g.cash += (rival.cash||0) * 0.7; // absorb 70% of rival cash
-      g.revenue += (rival.cash||0) * 0.7;
+      const blocked = acquisitionBlockReason(rival, g);
+      if (blocked) { Alert.alert("Cannot Acquire", blocked); return; }
+
+      // ── WHAT YOU ARE BUYING IS WHAT YOU GET ────────────────────────────────
+      // One planAcquisition() call decides the whole transaction, and it is the same call
+      // the confirmation copy reads — so what the deal promises is by construction what it
+      // delivers. Buying a company used to hand over 1-3 GENERIC workers whether the firm
+      // employed 2 or 20, no equipment at all, and nothing in the ledger.
+      const plan = planAcquisition(rival, g);
+
+      g.cash -= plan.cost;
+      g.expenses += plan.cost;
+      recordTransaction(g, "acquisitions", -plan.cost, `Acquired ${plan.rivalName}`);
+
+      if (plan.cashTransferred > 0) {
+        g.cash += plan.cashTransferred;
+        g.revenue += plan.cashTransferred;
+        recordTransaction(g, "acquisitions", plan.cashTransferred, `${plan.rivalName}: cash reserves`);
+      }
+
       if (!g.acquiredRivals) g.acquiredRivals = [];
       g.acquiredRivals.push(rivalId);
       g.lastAcquisitionDay = g.day;
-      g.reputation = Math.min(100, (g.reputation||0) + rand(3, 8));
-      g.creditScore = Math.min(850, (g.creditScore||600) + rand(5, 15));
-      // Remove rival from all site assignments when poached away
-      for (const site of (g.activeSites||[])) {
-        site.assignedCrewIds = (site.assignedCrewIds||[]).filter(id => id !== rivalId);
+      g.reputation = Math.min(100, (g.reputation||0) + plan.repGain);
+      g.creditScore = Math.min(850, (g.creditScore||600) + plan.creditGain);
+
+      // Their crew. Experienced enough to skip the new-hire curve, but they did not choose
+      // you — so loyalty and mood start low and they need managing like anyone else.
+      for (const spec of plan.crew) {
+        const w = createWorker(spec.role);
+        w.skill = spec.skill;
+        w.loyalty = spec.loyalty;
+        w.mood = spec.mood;
+        w.hireDay = g.day;
+        g.crew.push(w);
       }
-      // Add rival's crew as new crew members
-      const newCrew = Math.min(3, rand(1, 3));
-      for (let i = 0; i < newCrew; i++) g.crew.push(createWorker(pick(CREW_ROLES)));
-      addLog(g, `🤝 Acquired ${rival.name}! Absorbed their assets and ${newCrew} workers.`);
-      if ((g.acquiredRivals||[]).length === 1) {
-        addImportantNotice(g, `🤝 First rival acquired! Your empire expands — ${rival.name} is now under your banner.`, "cyan");
+
+      // Their plant. Arrives used and parked in the yard, like any real acquisition.
+      for (let i = 0; i < plan.machines; i++) {
+        const shopItem = EQUIPMENT_SHOP[Math.min(i + 1, EQUIPMENT_SHOP.length - 1)] || EQUIPMENT_SHOP[0];
+        const machine = createEquipment(shopItem);
+        machine.condition = rand(45, 80);
+        machine.purchaseDay = g.day;
+        machine.status = "Idle";
+        g.equipment = g.equipment || [];
+        g.equipment.push(machine);
       }
+
+      addLog(g, `🤝 Acquired ${plan.rivalName} for ${money(plan.cost)} — ${plan.crew.length} crew, ${plan.machines} machine${plan.machines === 1 ? "" : "s"}.`);
+      pushMarketNews(g, {
+        text: `🤝 ${plan.rivalName} has been acquired and is off the market.`,
+        tone: "info",
+        rivalId: rivalId,
+      });
+      addImportantNotice(g, plan.summary, "green");
     });
   }, [update]);
 
@@ -7330,6 +7420,38 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
+        {/* ── MARKET NEWS ───────────────────────────────────────────────────
+            Rival activity in its own feed. It used to go through addLog, which caps the
+            player's `logs` at 25 and `opsFeed` at 20 — so a rival buying a digger pushed
+            the player's own site events out of their own history. */}
+        {(game.marketNews || []).length > 0 && (
+          <Card T={T} tone="info">
+            <SectionLabel T={T} tone="info" right={
+              <Text style={[TYPE.caption, { color: T.sub }]}>
+                {countLiveRivals(game)} firm{countLiveRivals(game) === 1 ? "" : "s"} trading
+              </Text>
+            }>
+              Market news
+            </SectionLabel>
+            <View style={{ marginTop: SPACING.sm }}>
+              {(game.marketNews || []).slice(0, 6).map((item) => (
+                <View
+                  key={item.id}
+                  style={{
+                    borderLeftWidth: 3,
+                    borderLeftColor: toneColor(item.tone, T),
+                    paddingLeft: SPACING.sm,
+                    marginBottom: SPACING.sm,
+                  }}
+                >
+                  <Text style={[TYPE.caption, { color: T.text }]} numberOfLines={2}>{item.text}</Text>
+                  <Text style={[TYPE.caption, { color: T.dim, marginTop: 1 }]}>Day {item.day}</Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+        )}
+
         {/* Rival Activity */}
         {game.rivals && game.rivals.length > 0 && (() => {
           const topRivals = [...game.rivals]
@@ -7340,8 +7462,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
               <Text style={[styles.sectionTitle, col]}>Rival Activity</Text>
               {topRivals.map((r) => {
-                const statusLabel = r.status === "Bankrupt" ? "Bankrupt" : (r.cash||0) < 5000 ? "Struggling" : "Active";
-                const statusColor = r.status === "Bankrupt" ? T.sub : (r.cash||0) < 5000 ? T.orange : T.green;
+                // Read the lifecycle's own status rather than re-deriving one from cash, which
+                // let the card call a company "Struggling" while the simulation had it trading
+                // normally — and vice versa.
+                const statusLabel = r.status || RIVAL_STATUS.ACTIVE;
+                const statusColor = statusLabel === RIVAL_STATUS.BANKRUPT ? T.dim
+                  : statusLabel === RIVAL_STATUS.STRUGGLING ? T.caution : T.safe;
                 const myRep = game.reputation || 0;
                 const theirRep = r.rep || 0;
                 const maxRep = Math.max(myRep, theirRep, 1);
@@ -9104,7 +9230,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               {rival && !entry.acquired && entry.status !== "Bankrupt" && (
                 <View style={{ flexDirection: "row", gap: 12, marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                   <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>👷 {rival.employees || 0} crew</Text>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>🚛 {rival.equipment || 0} vehicles</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>🚜 {rival.equipment || 0} machine{(rival.equipment || 0) === 1 ? "" : "s"}</Text>
                   <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>🏙️ {(rival.cityPresence || ["salem"]).length} {(rival.cityPresence || ["salem"]).length === 1 ? "city" : "cities"}</Text>
                   <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>💰 {money(rival.cash || 0)}</Text>
                 </View>

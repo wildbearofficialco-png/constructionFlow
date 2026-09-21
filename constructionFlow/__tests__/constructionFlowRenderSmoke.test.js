@@ -350,6 +350,41 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("Progress payment received");
   });
 
+  test("Home carries a market news feed, separate from the player's ops log", async () => {
+    const tree = await mountWith((g) => {
+      g.marketNews = [
+        { id: "mn-1", text: "🏗️ Apex Construction opened a yard in Bend and hired 2 workers.", tone: "neutral", day: 40, rivalId: "apex" },
+        { id: "mn-2", text: "📉 Northwest Contractors is weeks from closing, with creditors circling.", tone: "caution", day: 39, rivalId: "northwest" },
+        { id: "mn-3", text: "🆕 Granite Works has opened for business — a concrete specialist.", tone: "info", day: 38, rivalId: "entrant_38_x" },
+      ];
+      // Home renders `opsFeed`, not `logs` — seed both so this really checks that market
+      // news sits beside the player's own history rather than in place of it.
+      g.logs = ["MY OWN SITE EVENT"];
+      g.opsFeed = [{ id: "mine", text: "MY OWN SITE EVENT", tone: "neutral", day: 40 }];
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Market news");
+    expect(json).toContain("opened a yard in Bend");
+    expect(json).toContain("creditors circling");
+    // React splits interpolated text into separate children, so the live-firm count and its
+    // label are not one contiguous string in the tree — assert on the label alone.
+    expect(json).toContain(" trading");
+    // And the player's own feed is untouched by it.
+    expect(json).toContain("MY OWN SITE EVENT");
+  });
+
+  test("a rival's status on Home comes from the lifecycle, not from its cash", async () => {
+    const tree = await mountWith((g) => {
+      g.rivals[0].status = "Struggling";
+      g.rivals[0].cash = 400000; // plenty of cash, but the lifecycle says struggling
+      g.rivals[0].rep = 90;
+      g.rivals[1].status = "Active";
+      g.rivals[1].rep = 85;
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Struggling");
+  });
+
   test("an empty Sites tab explains itself and offers a way out", async () => {
     const tree = await mountWith();
     const sites = tabButton(tree, "Sites");
