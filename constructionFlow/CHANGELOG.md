@@ -5,6 +5,61 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Added — Phase 3: the living company
+
+Phase 1 made the game legible; Phase 2 made its loop a game. Phase 3's finding is a third
+kind of gap: **the company is being simulated but not witnessed.**
+
+Construction Flow already tracks crew mood, loyalty, stamina, traits, XP and turnover, and
+machine hours, condition, wear and utilisation. It knew a worker was exhausted, three days
+from quitting, and currently pouring a foundation at Riverside — and said none of it. The
+player only found out when they quit.
+
+- **Crew are people now, not rows.** Every card leads with *where they actually are* —
+  "🔨 Riverside Fence · Foundation" or "🅿️ In the yard — no site assigned", which is the
+  difference between a working crew and a wage bill. Below that: their standing at your
+  company (rank, tenure, jobs), the risks that need acting on before you lose them
+  (exhausted, unhappy, flight risk, attendance), and **one line in their own voice**.
+- **Machines answer the question the player actually has.** Not "condition 62%" but *is this
+  thing making me money?* Each machine card now carries a verdict — Earning, Idle today,
+  Underused, In the workshop — with utilisation (days worked against days owned), what it
+  has cost you since purchase, and what it would fetch if sold.
+- **The yard at a glance.** What is earning, what is parked, what is in the workshop, fleet
+  utilisation, average condition, and the daily bill the whole lot runs up whether or not it
+  turns a wheel.
+- **The away report finally says what happened to the job sites.** This was the audit's
+  gap 9. "Cash +$8,200" is a bank statement; the player's actual question is what happened to
+  their jobs. Now, per job: *"Riverside Fence — Foundation → Framing · 42% → 67% · 1 phase
+  complete"*, plus any progress payment it banked. A job that finished is reported as
+  finished rather than silently vanishing, and **a job that did not move says so** — silence
+  would hide a stall.
+
+### Added — Phase 3 infrastructure
+
+- `src/systems/companyLife.js` — the living-company logic, pure and testable: worker
+  assignment, risk flags, voice, standing, trait effects, machine economics, fleet summary,
+  and the offline site-report diff.
+
+**One property is load-bearing and tested directly: none of this flavour text touches the
+RNG.** That is a lesson taken from FleetFlow's build 59 post-mortem, where `pushNewsFeedItem`
+minted list keys with `Math.random()` — so posting a purely cosmetic headline consumed a draw
+from the same sequence the gated simulation behaviours read, and adding or removing a
+decorative line could change what the simulation did that day. Phase 3 adds a lot of flavour
+text, so variety here comes from `pickStable`, a djb2 hash of state the game already holds.
+An integration test runs the same seeded 30-tick sequence twice — once with every presentation
+helper called between ticks — and asserts the two runs end identically.
+
+### Tests — Phase 3
+
+67 new tests, taking the suite from 238 to 305:
+
+- `companyLife.test.js` (51) — assignment states, risk ordering and the three-flag cap, voice
+  priority and determinism, tenure and rank, machine verdicts, fleet arithmetic, and the
+  offline diff across progressed / completed / stalled / started jobs.
+- `companyLifeIntegration.test.js` (13) — the RNG-free property proven against the real
+  `gameTick`, the away report built from an actual `applyOfflineProgress` run, and 200 ticks
+  without a NaN reaching a worker or machine card.
+
 ### Changed — Phase 2: the core construction loop
 
 Phase 1 made the game legible. Phase 2 makes its central loop a game. The audit's Phase 2

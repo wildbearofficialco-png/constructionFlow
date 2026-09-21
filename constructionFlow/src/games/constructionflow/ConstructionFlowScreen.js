@@ -54,6 +54,17 @@ import {
   buildProjectProfitLines,
 } from "../../systems/projectEconomics.js";
 import {
+  describeWorkerAssignment,
+  workerRiskFlags,
+  workerVoiceLine,
+  summarizeWorkerStanding,
+  describeTraitEffects,
+  summarizeEquipmentEconomics,
+  summarizeFleet,
+  snapshotSites,
+  buildOfflineSiteReport,
+} from "../../systems/companyLife.js";
+import {
   BID_STYLES,
   DEFAULT_BID_STYLE,
   planBid,
@@ -4964,6 +4975,9 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
     reputation: g.reputation || 0,
     day: g.day || 1,
     logCount: (g.logs || []).length,
+    // Per-job snapshot, diffed after the catch-up runs. "Cash +$8,200" is a bank statement;
+    // the player's actual question on returning is what happened to their job sites.
+    sites: snapshotSites(g),
   };
 
   for (let i = 0; i < clampedTicks; i++) {
@@ -5018,6 +5032,9 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
     cashNow: after.cash,
     overheadPerDay,
     logsWhileAway,
+    // One line per job: what phase it moved through, how far it got, what it claimed, or
+    // that it sat still and why. See companyLife.js.
+    siteReport: buildOfflineSiteReport(before.sites, g),
   };
   g.lastRealTimestamp = Date.now();
   return g;
@@ -8339,7 +8356,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }
 
   function renderEquipment() {
-    const conditionColor = (c) => c >= 70 ? T.green : c >= 40 ? T.orange : T.red;
+    // Condition colour now comes from `conditionTone` in the design system, so a machine's
+    // condition reads the same here as it does on a site card.
     const office = OFFICES[game.officeIndex || 0];
     const totalEquipCap = office.equipCap + getEquipCapBonus(game);
 
@@ -8419,6 +8437,38 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
+        {/* ── THE YARD AT A GLANCE ──────────────────────────────────────────
+            What is earning, what is parked, what is in the workshop, and what the whole
+            lot costs per day whether or not it turns a wheel. The tab listed machines
+            without ever stating the fleet's position. */}
+        {(game.equipment || []).length > 0 && (() => {
+          const fleet = summarizeFleet(game);
+          return (
+            <Card T={T} tone={fleet.utilisation >= 50 ? "safe" : fleet.workshop > 0 ? "caution" : "accent"}>
+              <SectionLabel
+                T={T}
+                tone={fleet.utilisation >= 50 ? "safe" : "caution"}
+                right={<Text style={[TYPE.caption, { color: T.sub }]}>{money(fleet.dailyCost)}/day to run</Text>}
+              >
+                {`The yard · ${fleet.total} machine${fleet.total === 1 ? "" : "s"}`}
+              </SectionLabel>
+              <View style={{ flexDirection: "row", gap: SPACING.sm, marginTop: SPACING.md }}>
+                <StatTile T={T} label="Earning" value={`${fleet.working}`} sub="on site" tone={fleet.working > 0 ? "safe" : "hazard"} />
+                <StatTile T={T} label="Parked" value={`${fleet.parked}`} sub="in the yard" tone={fleet.parked > 0 ? "caution" : null} />
+                <StatTile T={T} label="Workshop" value={`${fleet.workshop}`} sub="down" tone={fleet.workshop > 0 ? "hazard" : null} />
+              </View>
+              <ProgressBar
+                T={T}
+                percent={fleet.utilisation}
+                tone={progressTone(fleet.utilisation)}
+                label="Fleet utilisation"
+                value={`${fleet.utilisation}% · avg condition ${fleet.averageCondition}%`}
+                style={{ marginTop: SPACING.md }}
+              />
+            </Card>
+          );
+        })()}
+
         {/* Owned equipment */}
         {(game.equipment||[]).length === 0 ? (() => {
           const empty = getEmptyState("Equipment");
@@ -8446,40 +8496,87 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
           return _filteredEquip.map((equip) => {
             const cond = Math.round(equip.condition ?? 100);
-            const cc = conditionColor(cond);
             const repairCost = Math.round((equip.price || 5000) * 0.2);
             const emergRepairCost = Math.round((equip.price || 5000) * 0.4);
-            const assignedSite = equip.assignedSiteId
-              ? game.activeSites?.find(s => s.id === equip.assignedSiteId)
-              : null;
             const equipImg = EQUIPMENT_IMAGES[equip.shopId];
+            // The question the player actually has about a machine, which the card never
+            // answered: is this thing making me money, or am I paying to park it?
+            const econ = summarizeEquipmentEconomics(equip, game);
+            const verdictTint = toneColor(econ.verdict.tone, T);
             return (
-              <View key={equip.id} style={[styles.card, { backgroundColor: T.panel, borderColor: cc, borderWidth: 1.5 }]}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <View key={equip.id} style={[styles.card, {
+                backgroundColor: T.panel,
+                borderColor: alpha(verdictTint, 0.5),
+                borderWidth: 1,
+                borderLeftWidth: 4,
+                borderLeftColor: verdictTint,
+              }]}>
+                <View style={{ flexDirection: "row" }}>
                   {equipImg && (
-                    <Image source={equipImg} style={{ width: 64, height: 48, borderRadius: 8, marginRight: 10, backgroundColor: "#fff" }} resizeMode="contain" />
+                    <Image
+                      source={equipImg}
+                      style={{ width: 76, height: 58, borderRadius: RADIUS.sm, marginRight: SPACING.md, backgroundColor: "#fff" }}
+                      resizeMode="contain"
+                    />
                   )}
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.label, col]}>{equipImg ? "" : "🔧 "}{equip.name}</Text>
-                    <Text style={[styles.sub, subCol]}>Tier {equip.tier || 1} · {money(equip.dailyCost || 0)}/day · {equip.type}</Text>
-                    <Text style={[styles.sub, { color: cc }]}>Condition: {cond}%</Text>
-                    {equip.status === "Maintenance" && <Text style={[styles.sub, { color: T.red }]}>⚠️ In maintenance — needs repair</Text>}
-                    {assignedSite && <Text style={[styles.sub, { color: T.cyan }]}>Assigned to: {assignedSite.label}</Text>}
-                    {!assignedSite && equip.status === "Idle" && <Text style={[styles.sub, { color: T.green }]}>Available</Text>}
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={[styles.sub, { color: equip.status === "Active" ? T.orange : equip.status === "Maintenance" ? T.red : T.green }]}>
-                      {equip.status}
+                    <Text style={[styles.label, col]} numberOfLines={1}>{equipImg ? "" : "🔧 "}{equip.name}</Text>
+                    <Text style={[styles.sub, subCol]} numberOfLines={1}>
+                      Tier {equip.tier || 1} · {equip.type} · {money(equip.dailyCost || 0)}/day
                     </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACING.sm, marginTop: SPACING.xs }}>
+                      <Pill T={T} label={econ.verdict.label} tone={econ.verdict.tone} filled />
+                      <Text style={[TYPE.caption, { color: T.sub, flex: 1 }]} numberOfLines={1}>{econ.verdict.detail}</Text>
+                    </View>
                   </View>
                 </View>
-                {/* Condition bar */}
-                <View style={[styles.progressTrack, { backgroundColor: T.track, marginTop: 6 }]}>
-                  <View style={[styles.progressFill, { width: `${cond}%`, backgroundColor: cc }]} />
+
+                {/* Condition */}
+                <ProgressBar
+                  T={T}
+                  percent={cond}
+                  tone={conditionTone(cond)}
+                  label="Condition"
+                  value={`${cond}%`}
+                  style={{ marginTop: SPACING.md }}
+                />
+                {equip.status === "Maintenance" && (
+                  <Text style={[TYPE.caption, { color: T.hazard, marginTop: SPACING.xs }]}>
+                    ⚠ In the workshop — repair it to put it back on a site.
+                  </Text>
+                )}
+
+                {/* ── IS IT PAYING FOR ITSELF ─────────────────────────────────
+                    Utilisation, what it has cost you since you bought it, and what it
+                    would fetch if you sold it. A machine is an asset; this is its
+                    asset card. */}
+                <View style={{ flexDirection: "row", gap: SPACING.sm, marginTop: SPACING.md }}>
+                  <StatTile
+                    T={T}
+                    label="Utilisation"
+                    value={`${econ.utilisation}%`}
+                    sub={`${econ.daysWorked}/${econ.daysOwned} days`}
+                    tone={econ.utilisation >= 60 ? "safe" : econ.utilisation >= 30 ? "caution" : "hazard"}
+                  />
+                  <StatTile
+                    T={T}
+                    label="Run cost"
+                    value={compactMoney(econ.lifetimeCost)}
+                    sub="since purchase"
+                    tone="caution"
+                  />
+                  <StatTile
+                    T={T}
+                    label="Resale"
+                    value={compactMoney(econ.resaleEstimate)}
+                    sub="estimate"
+                    tone="info"
+                  />
                 </View>
+
                 {/* Equipment Upgrades */}
-                <View style={{ marginTop: 10, marginBottom: 2 }}>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 12, fontWeight: "700", marginBottom: 5 }]}>UPGRADES</Text>
+                <View style={{ marginTop: SPACING.md, marginBottom: 2 }}>
+                  <SectionLabel T={T} style={{ marginBottom: SPACING.sm }}>Upgrades</SectionLabel>
                   {EQUIPMENT_UPGRADES.map(upg => {
                     const currentTier = (equip.upgrades || {})[upg.id] || 0;
                     const nextTier = upg.tiers[currentTier];
@@ -10053,6 +10150,39 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   )}
                 </View>
 
+                {/* ── YOUR JOB SITES ──────────────────────────────────────────
+                    The part the report was missing. A player returning after two days wants
+                    to know what happened on their jobs — "Foundation 42% → 67%" — not only
+                    that the balance moved. See FLEETFLOW_PARITY_AUDIT.md §2 gap 9. */}
+                {(game.pendingOfflineSummary.siteReport || []).length > 0 && (
+                  <View style={{
+                    backgroundColor: T.panel2, borderRadius: RADIUS.md, padding: SPACING.md,
+                    marginBottom: SPACING.md, borderWidth: 1, borderColor: T.border,
+                  }}>
+                    <SectionLabel T={T} tone="accent" style={{ marginBottom: SPACING.sm }}>Your job sites</SectionLabel>
+                    {(game.pendingOfflineSummary.siteReport || []).map((line) => {
+                      const tint = toneColor(line.tone, T);
+                      return (
+                        <View
+                          key={line.id}
+                          style={{
+                            borderLeftWidth: 3, borderLeftColor: tint,
+                            paddingLeft: SPACING.sm, marginBottom: SPACING.sm,
+                          }}
+                        >
+                          <Text style={[TYPE.bodyStrong, { color: T.text }]} numberOfLines={2}>{line.headline}</Text>
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>{line.detail}</Text>
+                          {(line.claimed || 0) > 0 && (
+                            <Text style={[TYPE.caption, { color: T.safe, marginTop: 2, fontWeight: "700" }]}>
+                              Progress payment received: {money(line.claimed)}
+                            </Text>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
                 {/* Events while away */}
                 {(game.pendingOfflineSummary.logsWhileAway || []).length > 0 && (
                   <View style={{ backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }}>
@@ -10954,26 +11084,45 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         />
       )}
       {game.crew.map((w) => {
-        const trait = w.trait || {};
-        const traitEffects = [];
-        if ((trait.speed || 1) > 1.05) traitEffects.push({ label: `Speed +${Math.round((trait.speed - 1) * 100)}%`, color: T.green });
-        else if ((trait.speed || 1) < 0.97) traitEffects.push({ label: `Speed −${Math.round((1 - trait.speed) * 100)}%`, color: T.red });
-        if ((trait.quality || 1) > 1.05) traitEffects.push({ label: `Quality +${Math.round((trait.quality - 1) * 100)}%`, color: T.cyan });
-        if ((trait.safety || 1) > 1.08) traitEffects.push({ label: `Safety +${Math.round((trait.safety - 1) * 100)}%`, color: T.blue });
-        else if ((trait.safety || 1) < 0.95) traitEffects.push({ label: `Safety risk`, color: T.orange });
-        if (trait.label === "Team Leader") traitEffects.push({ label: "Team +8% progress", color: T.purple });
-        if (trait.label === "Frequent No-Show") traitEffects.push({ label: "Unreliable presence", color: T.red });
-        if ((trait.wagePressure || 1) > 1.12) traitEffects.push({ label: `High wage demand`, color: T.orange });
+        // Trait effects now come from one shared helper, so the same trait can no longer be
+        // described one way here and another way on the applicant card.
+        const traitEffects = describeTraitEffects(w);
+        const where = describeWorkerAssignment(w, game);
+        const risks = workerRiskFlags(w);
+        const standing = summarizeWorkerStanding(w, game);
+        const voice = workerVoiceLine(w, game);
         return (
-        <View key={w.id} style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
+        <View key={w.id} style={[styles.card, {
+          backgroundColor: T.panel,
+          borderColor: risks.length > 0 ? alpha(toneColor(risks[0].tone, T), 0.5) : T.border,
+          borderLeftWidth: 4,
+          borderLeftColor: risks.length > 0 ? toneColor(risks[0].tone, T) : toneColor(where.tone, T),
+        }]}>
+          {/* ── WHERE THEY ARE ───────────────────────────────────────────────
+              First line on the card, because "Dave is pouring the foundation at
+              Riverside" and "Dave is sitting in the yard costing you $200 a day"
+              are the two facts an owner needs, and the card used to show neither. */}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: SPACING.sm }}>
+            <Text style={[TYPE.caption, { color: toneColor(where.tone, T), fontWeight: "700", flex: 1 }]} numberOfLines={1}>
+              {where.state === "working" ? "🔨 " : where.state === "resting" ? "😴 " : where.state === "paused" ? "⏸ " : "🅿️ "}
+              {where.label}
+            </Text>
+            <Text style={[TYPE.caption, { color: T.sub }]}>{money(w.wagePerDay)}/day</Text>
+          </View>
+
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.label, col]}>{w.name}</Text>
-                  <Text style={[styles.sub, subCol]}>{w.role} · Lv{w.level || 1} {WORKER_LEVELS.find(l => l.level === (w.level || 1))?.label || ""}</Text>
+              <Text style={[styles.sub, subCol]}>
+                {w.role} · {w.specialty || "General"} · Lv{w.level || 1} {WORKER_LEVELS.find(l => l.level === (w.level || 1))?.label || ""}
+              </Text>
+              <Text style={[TYPE.caption, { color: T.dim, marginTop: 1 }]}>
+                {standing.rank} · {standing.tenureLabel} · {standing.jobs} job{standing.jobs === 1 ? "" : "s"}
+              </Text>
               {(() => {
                 const curLvl = WORKER_LEVELS.find(l => l.level === (w.level || 1));
                 const nextLvl = WORKER_LEVELS.find(l => l.level === (w.level || 1) + 1);
-                if (!nextLvl) return <Text style={[styles.sub, { color: T.yellow, fontSize: 12 }]}>⭐ Max Level</Text>;
+                if (!curLvl || !nextLvl) return <Text style={[styles.sub, { color: T.yellow, fontSize: 12 }]}>⭐ Max Level</Text>;
                 const xpProgress = Math.min(1, ((w.xp || 0) - curLvl.xpRequired) / (nextLvl.xpRequired - curLvl.xpRequired));
                 return (
                   <View style={{ marginTop: 3, marginBottom: 2 }}>
@@ -11012,26 +11161,50 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 return null;
               })()}
             </View>
-            <View style={{ alignItems: "flex-end" }}>
-              <Text style={[styles.sub, { color: w.status === "Active" ? T.orange : w.status === "Idle" ? T.green : T.sub }]}>{w.status}</Text>
-              {w.status === "Active" && (() => {
-                const workingSite = (game.activeSites || []).find(s => (s.assignedCrewIds || []).includes(w.id));
-                return workingSite ? (
-                  <Text style={[styles.sub, { color: T.cyan, fontSize: 12, marginTop: 2 }]}>🏗️ {workingSite.label}</Text>
-                ) : null;
-              })()}
-              <View style={[styles.statusPill, { backgroundColor: T.panel2, marginTop: 4 }]}>
-                <Text style={[styles.statusPillText, { color: T.text }]}>{trait.label || "—"}</Text>
+            {/* The status word and site name that used to live here are now the first line
+                of the card, where they belong. This column keeps the trait, which is the
+                one thing about a person the header cannot say in a phrase. */}
+            <View style={{ alignItems: "flex-end", marginLeft: SPACING.sm }}>
+              <View style={[styles.statusPill, { backgroundColor: T.panel2, borderWidth: 1, borderColor: T.border }]}>
+                <Text style={[styles.statusPillText, { color: T.text }]}>{w.trait?.label || "—"}</Text>
               </View>
+              {w.trait?.desc ? (
+                <Text style={[TYPE.caption, { color: T.dim, marginTop: 3, maxWidth: 130, textAlign: "right" }]} numberOfLines={2}>
+                  {w.trait.desc}
+                </Text>
+              ) : null}
             </View>
           </View>
+          {/* ── WHAT NEEDS DOING ABOUT THIS PERSON ─────────────────────────
+              The simulation already knows a worker is exhausted, unhappy or three days
+              from taking another offer. It used to know it silently, and the player only
+              found out when they quit. */}
+          {risks.length > 0 && (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACING.xs, marginTop: SPACING.sm }}>
+              {risks.map((r) => (
+                <Pill key={r.key} T={T} label={r.label} tone={r.tone} filled />
+              ))}
+            </View>
+          )}
+          {risks.length > 0 && (
+            <Text style={[TYPE.caption, { color: toneColor(risks[0].tone, T), marginTop: SPACING.xs }]}>
+              {risks[0].detail}
+            </Text>
+          )}
+
+          {/* ── THEIR VOICE ────────────────────────────────────────────────
+              One line, derived from the state the simulation already produced, so it can
+              only narrate something true. Deterministic per worker per day — see
+              companyLife.js on why flavour text here must never consume an RNG draw. */}
+          <Text style={[TYPE.caption, { color: T.sub, fontStyle: "italic", marginTop: SPACING.sm }]} numberOfLines={2}>
+            “{voice}”
+          </Text>
+
           {/* Trait impact pills */}
           {traitEffects.length > 0 && (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACING.xs, marginTop: SPACING.sm }}>
               {traitEffects.map((e, i) => (
-                <View key={i} style={[styles.statusPill, { backgroundColor: e.color + "22" }]}>
-                  <Text style={[styles.statusPillText, { color: e.color }]}>{e.label}</Text>
-                </View>
+                <Pill key={i} T={T} label={e.label} tone={e.tone} />
               ))}
             </View>
           )}
