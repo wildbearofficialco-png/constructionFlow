@@ -53,28 +53,50 @@ import {
   getProjectReinvestmentHint,
   buildProjectProfitLines,
 } from "../../systems/projectEconomics.js";
+import {
+  THEMES,
+  SPACING,
+  RADIUS,
+  TYPE,
+  ELEVATION,
+  MIN_TAP_TARGET,
+  toneColor,
+  progressTone,
+  conditionTone,
+  deadlineTone,
+  compactMoney,
+  getEmptyState,
+  alpha,
+} from "../../theme/constructionTheme.js";
+import {
+  Card,
+  SectionLabel,
+  Pill,
+  ProgressBar,
+  StatTile,
+  KeyValueRow,
+  AlertBanner,
+  EmptyState,
+} from "../../components/ui/index.js";
+import {
+  useOsReducedMotion,
+  usePulseOnIncrease,
+  useEntranceAnimation,
+} from "../../utils/constructionMotion.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "constructionflow_v1_save";
-const TABS = ["Home", "Bids", "Sites", "Crew", "Vehicles", "Finance", "Empire"];
+// "Equipment", not "Vehicles". The inherited name was a leftover from the FleetFlow fork and
+// was the clearest tell on every screen that this game was a re-skin — a construction company
+// owns plant and equipment, not a vehicle fleet. `normalizeTabName` keeps any older persisted
+// or hard-coded "Vehicles" reference working rather than leaving the player on a blank screen.
+export const TABS = ["Home", "Bids", "Sites", "Crew", "Equipment", "Finance", "Empire"];
 
-const THEMES = {
-  dark: {
-    bg: "#071224", panel: "#0d1b33", panel2: "#12213d", panel3: "#182949",
-    border: "#233455", strongBorder: "#31507d", text: "#f8fafc", sub: "#94a3b8",
-    green: "#22c55e", red: "#ef4444", blue: "#3b82f6", orange: "#f59e0b",
-    purple: "#8b5cf6", cyan: "#06b6d4", yellow: "#eab308", tabBar: "#0a1730",
-    track: "#091321", shadow: "#000000",
-  },
-  light: {
-    bg: "#edf3fb", panel: "#ffffff", panel2: "#f6f9fd", panel3: "#edf4fb",
-    border: "#c9d7ea", strongBorder: "#aac0de", text: "#11213a", sub: "#5e7392",
-    green: "#16a34a", red: "#dc2626", blue: "#2563eb", orange: "#d97706",
-    purple: "#7c3aed", cyan: "#0891b2", yellow: "#ca8a04", tabBar: "#ffffff",
-    track: "#d8e4f1", shadow: "#9bb0ca",
-  },
-};
+export function normalizeTabName(name) {
+  if (name === "Vehicles" || name === "Fleet") return "Equipment";
+  return TABS.includes(name) ? name : "Home";
+}
 
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -817,17 +839,21 @@ function computeHealthScore(g) {
   return { score, label, colorKey, factors };
 }
 
+// Every warning now carries the tab that fixes it and the verb for the link, so a warning is
+// something the player can act on in one tap rather than a line they have to go hunting for.
+// Same conditions, same order, same cap of 3 as before — only `tab`, `action` and `icon` are
+// new, and the equipment wording is no longer "vehicle".
 export function getPredictiveWarnings(g) {
   const warnings = [];
   const dailyBurn=(g.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0)+(g.equipment||[]).reduce((s,e)=>s+e.dailyCost,0)+(OFFICES[g.officeIndex||0]?.dailyRent||0);
   const runway=dailyBurn>0?Math.floor((g.cash||0)/dailyBurn):999;
-  if (runway<5) warnings.push({ text:`Cash runway critical — only ${runway} day${runway!==1?"s":""} left`, severity:"high" });
+  if (runway<5) warnings.push({ text:`Cash runway critical — only ${runway} day${runway!==1?"s":""} left`, severity:"high", tab:"Finance", action:"Open Finance", icon:"cash-outline" });
   const overdue=(g.activeSites||[]).filter(s=>s.status==="Active"&&(g.day>(s.deadlineDay||9999)));
-  for (const s of overdue.slice(0,2)) warnings.push({ text:`"${s.label}" is overdue — penalties accumulating`, severity:"high" });
+  for (const s of overdue.slice(0,2)) warnings.push({ text:`"${s.label}" is overdue — penalties accumulating`, severity:"high", tab:"Sites", action:"Open site", icon:"alarm-outline" });
   const badEquip=(g.equipment||[]).filter(e=>(e.condition ?? 100)<30);
-  if (badEquip.length>0) warnings.push({ text:`${badEquip.length} vehicle${badEquip.length>1?"s":""} below 30% condition — breakdown risk`, severity:"medium" });
+  if (badEquip.length>0) warnings.push({ text:`${badEquip.length} machine${badEquip.length>1?"s":""} below 30% condition — breakdown risk`, severity:"medium", tab:"Equipment", action:"Repair", icon:"build-outline" });
   const missingSite=(g.activeSites||[]).find(s=>{ const con=(g.contracts||[]).find(c=>c.id===s.contractId); const def=CONTRACT_DEFS.find(d=>d.id===con?.defId); return def?.materials&&Object.entries(def.materials).some(([m,n])=>((s.materialsFulfilled||{})[m]||0)<n); });
-  if (missingSite) warnings.push({ text:`"${missingSite.label}" is stalled — missing materials`, severity:"medium" });
+  if (missingSite) warnings.push({ text:`"${missingSite.label}" is stalled — missing materials`, severity:"medium", tab:"Sites", action:"Buy materials", icon:"cube-outline" });
   return warnings.slice(0,3);
 }
 
@@ -2335,11 +2361,11 @@ export function getNextBestAction(s) {
     (e.status === "Broken" || e.status === "Maintenance") &&
     _activeSites.some(site => (site.assignedEquipmentIds || []).includes(e.id) && site.status === "Active")
   );
-  if (_brokenAssigned) return { title: "Vehicle Broken on Site", body: `${_brokenAssigned.name} is down on an active site. Repair it in Vehicles to restore full progress.`, tone: "orange", tab: "Vehicles" };
+  if (_brokenAssigned) return { title: "Machine Down on Site", body: `${_brokenAssigned.name} is out of action on an active site. Repair it in Equipment to restore full progress.`, tone: "orange", tab: "Equipment" };
 
   // Also catch any broken equipment not on site
   const _brokenAny = _equipment.find(e => e.status === "Broken" || e.status === "Maintenance");
-  if (_brokenAny) return { title: "Vehicle Needs Repair", body: `${_brokenAny.name} is out of action. Repair it in Vehicles before assigning to new sites.`, tone: "orange", tab: "Vehicles" };
+  if (_brokenAny) return { title: "Machine Needs Repair", body: `${_brokenAny.name} is out of action. Repair it in Equipment before assigning it to new sites.`, tone: "orange", tab: "Equipment" };
 
   // Priority 4: Site stalled — missing materials
   const _stalledSite = _activeSites.find(site => {
@@ -2371,7 +2397,7 @@ export function getNextBestAction(s) {
 
   if (_activeSites.length === 0) {
     if (_crew.length === 0) return { title: "Hire Your First Worker", body: "Post a job ad in Crew then hire an applicant. You need at least 1 worker to start any site.", tone: "cyan", tab: "Crew" };
-    if (_equipment.length < 1) return { title: "Buy Your First Machine", body: "A Basic Pickup Truck unlocks Tier 1 contracts. Go to Vehicles tab to purchase.", tone: "cyan", tab: "Vehicles" };
+    if (_equipment.length < 1) return { title: "Buy Your First Machine", body: "A Basic Pickup Truck unlocks Tier 1 contracts. Buy one from the Equipment tab.", tone: "cyan", tab: "Equipment" };
     if (_openContracts.length === 0) return { title: "No Active Sites", body: "No contracts available right now. Your reputation will attract new ones tomorrow.", tone: "blue", tab: "Bids" };
     if (_idleCrew.length >= 1 && _idleEquip.length >= 1) {
       return { title: "Ready to Work — No Active Sites", body: `${_idleCrew.length} crew idle and ${_idleEquip.length} machines ready. Bid on a contract in Bids and start a site.`, tone: "blue", tab: "Bids" };
@@ -4906,9 +4932,22 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
 export default function ConstructionFlowScreen({ onBackToHub }) {
   const [game, setGame] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("Home");
+  // Every tab change goes through normalizeTabName, so an older save, a guidance record or a
+  // helper that still names the tab "Vehicles" lands on Equipment instead of on nothing.
+  const [tab, setRawTab] = useState("Home");
+  const setTab = useCallback((next) => setRawTab(normalizeTabName(next)), []);
   const [theme, setTheme] = useState("dark");
   const T = THEMES[theme] || THEMES.dark;
+
+  // Motion. These are hooks, so they live at the top of the component: the render* functions
+  // below are called conditionally on the active tab and could never host a hook safely.
+  // Everything here observes values gameplay already computed and animates around them, so
+  // none of it can change what the simulation does. Reduce Motion removes the transitions
+  // entirely rather than shortening them.
+  const reducedMotion = useOsReducedMotion();
+  const cashPulse = usePulseOnIncrease(game?.cash ?? 0, !reducedMotion);
+  const offlineEntrance = useEntranceAnimation(Boolean(game?.pendingOfflineSummary) && !reducedMotion);
+
   const tickRef = useRef(null);
   const [speedMode, setSpeedMode] = useState(false);
   const appStateRef = useRef(AppState.currentState);
@@ -6082,7 +6121,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Cash fell below −$10,000 for 5 consecutive days.{"\n"}Your creditors have moved in.
           </Text>
           <View style={{ width: "100%", backgroundColor: T.panel, borderRadius: 16, padding: 18, borderWidth: 1, borderColor: T.border, marginBottom: 20 }}>
-            <Text style={{ color: T.sub, fontSize: 10, fontWeight: "700", letterSpacing: 1.5, marginBottom: 10 }}>FINAL STATS</Text>
+            <Text style={{ color: T.sub, fontSize: 12, fontWeight: "700", letterSpacing: 1.5, marginBottom: 10 }}>FINAL STATS</Text>
             {[
               ["Days in Business", String(game.day || 1)],
               ["Jobs Completed", String(game.completedJobs || 0)],
@@ -6122,7 +6161,6 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const repTier = getRepTier(game.reputation);
   const creditInfo = getCreditLabel(game.creditScore);
-  const nextBest = getNextBestAction(game);
   const office = OFFICES[game.officeIndex || 0];
   const { width } = Dimensions.get("window");
   const homeCity = CITIES.find(c => c.id === (game.startingCityId || "salem"));
@@ -6342,249 +6380,331 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const rivalOutpacing = topRivalByRep && (topRivalByRep.cash||0) > (game.cash||0);
 
     return (
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+      >
 
-        {/* Low cash warning */}
-        {(() => {
-          const dailyBurn = (game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0) +
-            (game.equipment||[]).reduce((s,e)=>s+e.dailyCost,0) +
-            (OFFICES[game.officeIndex||0]?.dailyRent||0);
-          const daysLeft = dailyBurn > 0 ? Math.floor(game.cash / dailyBurn) : 999;
-          if (daysLeft < 5 && game.cash >= 0) return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }]}>
-              <Text style={[styles.label, { color: T.red, marginBottom: 4 }]}>⚠️ Cash Running Low</Text>
-              <Text style={[styles.sub, col]}>~{daysLeft} day{daysLeft !== 1 ? "s" : ""} of runway left at {money(dailyBurn)}/day overhead. Complete a job or take out a loan in Finance before you run out.</Text>
-            </View>
-          );
-          return null;
-        })()}
-
-        {/* Crew burnout warning */}
-        {burningOutCrew.length > 0 && (
-          <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1.5, marginBottom: 8 }]}>
-            <Text style={[styles.label, { color: T.orange, marginBottom: 6 }]}>⚠️ Crew Burning Out ({burningOutCrew.length})</Text>
-            {burningOutCrew.slice(0, 3).map(w => (
-              <View key={w.id} style={{ marginBottom: 6 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={[styles.sub, col]}>{w.name}</Text>
-                  <Text style={[styles.sub, { color: T.red }]}>Stamina {Math.round(w.stamina ?? 0)}%</Text>
-                </View>
-                <View style={[styles.progressTrack, { backgroundColor: T.track }]}>
-                  <View style={[styles.progressFill, { width: `${Math.round(w.stamina ?? 0)}%`, backgroundColor: T.red }]} />
-                </View>
-              </View>
-            ))}
-            <Text style={[styles.sub, { color: T.sub, fontSize: 10, fontStyle: "italic", marginTop: 2 }]}>Low stamina slows site progress — remove from sites to recover.</Text>
-          </View>
-        )}
-
-        {/* Important notice — persists until tapped */}
-        {game.importantNotice && (() => {
-          const noticeColors = { green: T.green, orange: T.orange, red: T.red, neutral: T.sub };
-          const borderCol = noticeColors[game.importantNotice.tone] || T.cyan;
-          return (
-            <TouchableOpacity
-              onPress={() => update(g => { g.importantNotice = null; })}
-              style={[styles.card, { backgroundColor: T.panel, borderColor: borderCol, borderWidth: 2, borderLeftWidth: 5, marginBottom: 10 }]}
-            >
-              <Text style={[styles.label, { color: borderCol, marginBottom: 3 }]}>📣 Update</Text>
-              <Text style={[styles.sub, col]}>{game.importantNotice.message}</Text>
-              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 4, fontStyle: "italic" }]}>Tap to dismiss</Text>
-            </TouchableOpacity>
-          );
-        })()}
-
-        {/* Company Header */}
-        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
+        {/* ── SITE COMMAND ──────────────────────────────────────────────────
+            One hero card answering the three questions a player opens the app
+            with: how much money do I have, what is my company worth, and what
+            is actually running right now. This replaces a separate company
+            header card and a separate KPI strip further down the scroll — the
+            grouping is the point. See FLEETFLOW_PARITY_AUDIT.md §2 gap 3. */}
+        <View
+          style={[
+            {
+              backgroundColor: T.panel,
+              borderRadius: RADIUS.lg,
+              borderWidth: 1,
+              borderColor: alpha(T.accent, 0.35),
+              borderLeftWidth: 4,
+              borderLeftColor: T.accent,
+              padding: SPACING.lg,
+              marginBottom: SPACING.md,
+            },
+            ELEVATION.hero,
+          ]}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <View style={{ flex: 1, marginRight: SPACING.md }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <Text style={[styles.h2, col]} numberOfLines={1}>{game.companyName}</Text>
-                {(game.generation||1) > 1 && (
-                  <Text style={{ fontSize: 10, color: T.yellow, fontWeight: "700", borderWidth: 1, borderColor: T.yellow, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>GEN {game.generation}</Text>
-                )}
+                <Text style={[TYPE.title, { color: T.text }]} numberOfLines={1}>{game.companyName}</Text>
+                {(game.generation || 1) > 1 && <Pill T={T} label={`GEN ${game.generation}`} tone="caution" />}
               </View>
               {/* The WildBear first-minute rule requires "who am I / what do I own" to be
-                  answerable on the screen the player lands on, not buried in a settings tab. */}
-              <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 1 }]} numberOfLines={1}>
-                Owned by {game.ownerName || "Owner"} · General contractor
+                  answerable on the screen the player lands on. */}
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: 3 }]} numberOfLines={1}>
+                {game.ownerName || "Owner"} · General contractor
               </Text>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={[styles.sub, subCol]}>{repTier.badge} {repTier.label} · Day {game.day}</Text>
-                  {game.seasonEmoji && (
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 11 }]}>{game.seasonEmoji} {game.currentSeason}</Text>
-                  )}
-                  {(game.savings || 0) > 0 && (
-                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>🏦 {money(game.savings)} saved</Text>
-                  )}
-                </View>
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]} numberOfLines={1}>
+                {office.name} · {displayCityName}, {displayStateCode}
+              </Text>
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>Day {game.day}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                {game.seasonEmoji ? (
+                  <Text style={[TYPE.caption, { color: T.sub }]}>{game.seasonEmoji} {game.currentSeason}</Text>
+                ) : null}
                 <TouchableOpacity
-                  style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: speedMode ? T.yellow + "33" : T.panel2, borderWidth: 1, borderColor: speedMode ? T.yellow : T.border, marginLeft: 8 }}
-                  onPress={() => setSpeedMode(s => !s)}
+                  style={{
+                    paddingHorizontal: SPACING.sm + 2, paddingVertical: 5, borderRadius: RADIUS.pill,
+                    backgroundColor: speedMode ? alpha(T.caution, 0.2) : T.panel2,
+                    borderWidth: 1, borderColor: speedMode ? T.caution : T.border,
+                  }}
+                  onPress={() => setSpeedMode((v) => !v)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={speedMode ? "Switch to normal speed" : "Switch to double speed"}
+                  accessibilityState={{ selected: speedMode }}
                 >
-                  <Text style={{ fontSize: 11, color: speedMode ? T.yellow : T.sub, fontWeight: speedMode ? "700" : "400" }}>
-                    {speedMode ? "⚡ 2×" : "1×"}
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: speedMode ? T.caution : T.sub }}>
+                    {speedMode ? "2×" : "1×"}
                   </Text>
                 </TouchableOpacity>
               </View>
             </View>
-            <View style={{ alignItems: "flex-end", minWidth: 0 }}>
-              <Text style={[styles.cashBig, { color: game.cash >= 0 ? T.green : T.red }]} numberOfLines={1}>{money(game.cash)}</Text>
-              <Text style={[styles.sub, subCol]} numberOfLines={1}>{office.name}</Text>
-              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]} numberOfLines={1}>📍 {displayCityName}, {displayStateCode}</Text>
-            </View>
           </View>
-        </View>
 
-        {/* Company Level */}
-        <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.strongBorder, borderLeftWidth: 4, borderLeftColor: T.cyan }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View>
-              <Text style={[{ fontSize: 11, color: T.cyan, fontWeight: "700", marginBottom: 2 }]}>LEVEL {companyLevel.level}</Text>
-              <Text style={[styles.label, col]}>{companyLevel.label}</Text>
+          <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: SPACING.lg }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>Operating cash</Text>
+              {/* Animated.View wraps only the figure: the pulse is decorative and never
+                  delays anything from being tappable. */}
+              <Animated.View style={{ transform: [{ scale: cashPulse }], alignSelf: "flex-start" }}>
+                <Text style={[TYPE.hero, { color: game.cash >= 0 ? T.safe : T.hazard }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+                  {money(game.cash)}
+                </Text>
+              </Animated.View>
+              {(game.savings || 0) > 0 && (
+                <Text style={[TYPE.caption, { color: T.steel, marginTop: 2 }]}>{money(game.savings)} in savings</Text>
+              )}
             </View>
             <View style={{ alignItems: "flex-end" }}>
-              {nextLevel && <Text style={[styles.sub, { color: T.sub }]}>Next: {nextLevel.label}</Text>}
-              {!nextLevel && <Text style={[styles.sub, { color: T.yellow }]}>MAX LEVEL</Text>}
+              <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>Company value</Text>
+              <Text style={[TYPE.stat, { color: T.text }]} numberOfLines={1}>{compactMoney(valuation)}</Text>
+              <View style={{ marginTop: 4 }}>
+                <Pill T={T} label={`${repTier.badge} ${repTier.label}`} tone="accent" />
+              </View>
             </View>
           </View>
-          {nextLevel && (
-            <View style={{ marginTop: 8, gap: 4 }}>
-              {[
-                { label: "Rep",   current: game.reputation || 0,    target: nextLevel.repMin,  color: T.purple, fmt: v => `${v}` },
-                { label: "Jobs",  current: game.completedJobs || 0, target: nextLevel.jobsMin, color: T.orange, fmt: v => `${v}` },
-                { label: "Value", current: valuation,               target: nextLevel.valMin,  color: T.cyan,   fmt: v => money(v) },
-              ].map(bar => {
-                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
-                const done = bar.current >= bar.target;
-                return (
-                  <View key={bar.label} style={{ marginBottom: 4 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={[styles.sub, { color: done ? T.green : T.sub, fontSize: 10 }]}>{done ? "✓ " : ""}{bar.label}</Text>
-                      <Text style={[styles.sub, { color: done ? T.green : bar.color, fontSize: 10 }]}>
-                        {bar.fmt(bar.current)} / {bar.fmt(bar.target)}
-                      </Text>
-                    </View>
-                    <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
-                      <View style={{ height: 3, width: `${pct}%`, backgroundColor: done ? T.green : bar.color, borderRadius: 2 }} />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          )}
+
+          <View style={{ height: 1, backgroundColor: T.border, marginVertical: SPACING.md }} />
+
+          <View style={{ flexDirection: "row", gap: SPACING.sm }}>
+            <StatTile T={T} label="Sites" value={`${activeSites.length}`} sub={activeSites.length === 1 ? "active" : "active"} tone={activeSites.length > 0 ? "accent" : null} />
+            <StatTile T={T} label="Crew free" value={`${idleCrew.length}`} sub={`of ${(game.crew || []).length}`} tone={idleCrew.length > 0 ? "safe" : null} />
+            <StatTile T={T} label="Machines" value={`${idleEquip.length}`} sub={`of ${(game.equipment || []).length}`} tone={idleEquip.length > 0 ? "safe" : null} />
+          </View>
         </View>
 
-        {/* Tutorial — step-by-step, auto-advances with game state */}
+        {/* ── WHAT NEEDS YOU ────────────────────────────────────────────────
+            Every alert is an AlertBanner with a tap target to the tab that
+            fixes it. Previously these were four differently-styled cards and
+            a bullet list with no way to act on any of it. */}
+        {(() => {
+          const dailyBurn = (game.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0) +
+            (game.equipment || []).reduce((s, e) => s + e.dailyCost, 0) +
+            (OFFICES[game.officeIndex || 0]?.dailyRent || 0);
+          const daysLeft = dailyBurn > 0 ? Math.floor(game.cash / dailyBurn) : 999;
+          if (daysLeft >= 5 || game.cash < 0) return null;
+          return (
+            <AlertBanner
+              T={T}
+              tone="hazard"
+              icon="warning-outline"
+              title={`Cash running low — about ${daysLeft} day${daysLeft !== 1 ? "s" : ""} of runway`}
+              body={`Overhead is ${money(dailyBurn)}/day. Finish a job or arrange finance before you run out.`}
+              actionLabel="Open Finance"
+              onAction={() => setTab("Finance")}
+            />
+          );
+        })()}
+
+        {burningOutCrew.length > 0 && (
+          <AlertBanner
+            T={T}
+            tone="caution"
+            icon="battery-dead-outline"
+            title={`${burningOutCrew.length} worker${burningOutCrew.length !== 1 ? "s" : ""} burning out`}
+            body={`${burningOutCrew.slice(0, 3).map((w) => `${w.name} ${Math.round(w.stamina ?? 0)}%`).join(" · ")}. Low stamina slows every site they are on — rest them to recover.`}
+            actionLabel="Open Crew"
+            onAction={() => setTab("Crew")}
+          />
+        )}
+
+        {game.importantNotice && (() => {
+          const toneByKey = { green: "safe", orange: "caution", red: "hazard", neutral: "info" };
+          return (
+            <AlertBanner
+              T={T}
+              tone={toneByKey[game.importantNotice.tone] || "info"}
+              icon="megaphone-outline"
+              title="Company update"
+              body={game.importantNotice.message}
+              onDismiss={() => update((g) => { g.importantNotice = null; })}
+            />
+          );
+        })()}
+
+        {game.tutorialDone && getPredictiveWarnings(game).map((w, i) => (
+          <AlertBanner
+            key={`warn-${i}`}
+            T={T}
+            tone={w.severity === "high" ? "hazard" : "caution"}
+            icon={w.icon || "alert-circle-outline"}
+            title={w.text}
+            actionLabel={w.tab ? (w.action || `Open ${w.tab}`) : null}
+            onAction={w.tab ? () => setTab(w.tab) : null}
+          />
+        ))}
+
+        {/* ── NEXT BEST ACTION ──────────────────────────────────────────────
+            One card, not two. This screen used to render the same
+            getNextBestAction(game) result twice, ~250 lines apart in two
+            different designs — a "this app is broken" signal, and it meant the
+            advice was never prominent. */}
+        {(() => {
+          const nba = getNextBestAction(game);
+          if (!nba) return null;
+          const isCritical = ["red", "orange"].includes(nba.tone);
+          if (!game.tutorialDone && !isCritical) return null;
+          if (nba.tab === "Home") return null;
+          const tone = nba.tone === "red" ? "hazard" : nba.tone === "orange" ? "caution" : "accent";
+          const accent = toneColor(tone, T);
+          return (
+            <Card T={T} tone={tone} elevated>
+              <SectionLabel T={T} tone={tone}>Do this next</SectionLabel>
+              <Text style={[TYPE.label, { color: T.text, marginTop: SPACING.sm }]}>{nba.title}</Text>
+              <Text style={[TYPE.body, { color: T.sub, marginTop: SPACING.xs }]}>{nba.body}</Text>
+              <TouchableOpacity
+                style={{
+                  marginTop: SPACING.md, backgroundColor: accent, borderRadius: RADIUS.sm,
+                  minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                }}
+                onPress={() => setTab(nba.tab)}
+                accessibilityRole="button"
+                accessibilityLabel={`${nba.title}. Go to ${nba.tab}`}
+              >
+                <Text style={{ color: "#0a1018", fontWeight: "800", fontSize: 14 }}>Go to {nba.tab}</Text>
+              </TouchableOpacity>
+            </Card>
+          );
+        })()}
+
+        {/* ── GETTING STARTED ───────────────────────────────────────────────
+            Step-by-step, auto-advancing with game state. */}
         {!game.tutorialDone && (() => {
           const step = getTutorialStepIndex(game);
 
           const steps = [
             {
               num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew||[]).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
-              cta: "Go to Bids →", action: () => setTab("Bids"),
+              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              cta: "Go to Bids", action: () => setTab("Bids"),
             },
             {
               num: "2 of 4", title: "Buy Materials & Mobilise Crew",
               body: `Your contract is accepted. Now:\n• Go to Sites → open the job\n• Tap Buy Materials to purchase what the job needs\n• Assign crew and your truck, then tap Mobilise`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
+              cta: "Go to Sites", action: () => setTab("Sites"),
             },
             {
               num: "3 of 4", title: "Buy Missing Materials",
-              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew||[]).reduce((s,w)=>s+(w.wagePerDay||0),0))} crew + ${money(game.equipment.reduce((s,e)=>s+e.dailyCost,0))} equipment.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
+              body: `Your site needs materials before work can start. Go to Sites, open the job, and tap Buy Materials.\n\nYour daily costs: ${money((game.crew || []).reduce((s, w) => s + (w.wagePerDay || 0), 0))} crew + ${money(game.equipment.reduce((s, e) => s + e.dailyCost, 0))} equipment.`,
+              cta: "Go to Sites", action: () => setTab("Sites"),
             },
             {
               num: "4 of 4", title: "Watch Your Site Progress",
               body: `Crew and equipment are working! Check the Sites tab to see phase progress.\n\nWhen all phases complete, cash lands automatically.\n\nTip: assign more crew to finish faster — but watch your daily wage bill.`,
-              cta: "Go to Sites →", action: () => setTab("Sites"),
+              cta: "Go to Sites", action: () => setTab("Sites"),
             },
           ];
 
           const s = steps[step];
+          if (!s) return null;
           return (
-            <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.cyan, borderWidth: 2, borderLeftWidth: 5 }]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <Text style={[styles.label, { color: T.cyan }]}>🚀 Getting Started</Text>
-                <Text style={{ color: T.sub, fontSize: 11 }}>Step {s.num}</Text>
-              </View>
-              <Text style={[styles.label, col, { marginBottom: 6 }]}>{s.title}</Text>
-              <Text style={[styles.sub, col, { lineHeight: 20, marginBottom: 10 }]}>{s.body}</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={s.action}>
-                  <Text style={[styles.btnText, { color: "#000" }]}>{s.cta}</Text>
+            <Card T={T} tone="accent" elevated>
+              <SectionLabel T={T} tone="accent" right={<Text style={[TYPE.caption, { color: T.sub }]}>Step {s.num}</Text>}>
+                Getting started
+              </SectionLabel>
+              <Text style={[TYPE.label, { color: T.text, marginTop: SPACING.sm, marginBottom: SPACING.xs }]}>{s.title}</Text>
+              <Text style={[TYPE.body, { color: T.sub, marginBottom: SPACING.md }]}>{s.body}</Text>
+              <View style={{ flexDirection: "row", gap: SPACING.sm }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1, backgroundColor: T.accent, borderRadius: RADIUS.sm,
+                    minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                  }}
+                  onPress={s.action}
+                  accessibilityRole="button"
+                  accessibilityLabel={s.cta}
+                >
+                  <Text style={{ color: "#0a1018", fontWeight: "800", fontSize: 14 }}>{s.cta}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, { backgroundColor: T.panel3 || T.panel, borderColor: T.border }]} onPress={() => update(g => { g.tutorialDone = true; addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green"); })}>
-                  <Text style={[styles.btnText, subCol]}>Skip</Text>
+                <TouchableOpacity
+                  style={{
+                    paddingHorizontal: SPACING.lg, borderRadius: RADIUS.sm, borderWidth: 1,
+                    borderColor: T.border, backgroundColor: T.panel2,
+                    minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                  }}
+                  onPress={() => update((g) => {
+                    g.tutorialDone = true;
+                    addImportantNotice(g, "Tutorial skipped. Check Bids for contracts, Finance for loans, Empire to grow.", "green");
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Skip tutorial"
+                >
+                  <Text style={{ color: T.sub, fontWeight: "700", fontSize: 14 }}>Skip</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </Card>
           );
         })()}
 
-        {/* Reordered for the WildBear first-minute rule: company identity and the next
-            action come before dashboards. Critical alerts stay above this; the rest of
-            Home keeps its existing order below. */}
-        {/* ── Company Health Score ─────────────────────────────────────────── */}
+        {/* ── COMPANY LEVEL ─────────────────────────────────────────────── */}
+        <Card T={T} tone="steel">
+          <SectionLabel
+            T={T}
+            tone="steel"
+            right={
+              nextLevel
+                ? <Text style={[TYPE.caption, { color: T.sub }]}>Next: {nextLevel.label}</Text>
+                : <Pill T={T} label="MAX LEVEL" tone="caution" filled />
+            }
+          >
+            Level {companyLevel.level}
+          </SectionLabel>
+          <Text style={[TYPE.label, { color: T.text, marginTop: SPACING.sm }]}>{companyLevel.label}</Text>
+          {nextLevel && (
+            <View style={{ marginTop: SPACING.md, gap: SPACING.sm }}>
+              {[
+                { label: "Reputation", current: game.reputation || 0, target: nextLevel.repMin, fmt: (v) => `${v}` },
+                { label: "Jobs done", current: game.completedJobs || 0, target: nextLevel.jobsMin, fmt: (v) => `${v}` },
+                { label: "Company value", current: valuation, target: nextLevel.valMin, fmt: (v) => compactMoney(v) },
+              ].map((bar) => {
+                const pct = Math.min(100, Math.round((bar.current / Math.max(1, bar.target)) * 100));
+                const done = bar.current >= bar.target;
+                return (
+                  <ProgressBar
+                    key={bar.label}
+                    T={T}
+                    percent={pct}
+                    tone={done ? "safe" : "steel"}
+                    label={done ? `✓ ${bar.label}` : bar.label}
+                    value={`${bar.fmt(bar.current)} / ${bar.fmt(bar.target)}`}
+                    height={5}
+                  />
+                );
+              })}
+            </View>
+          )}
+        </Card>
+
+        {/* ── COMPANY HEALTH ────────────────────────────────────────────── */}
         {game.tutorialDone && (() => {
           const hs = computeHealthScore(game);
+          const tone = hs.colorKey === "green" ? "safe" : hs.colorKey === "red" ? "hazard" : "caution";
+          const hc = toneColor(tone, T);
           return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T[hs.colorKey], borderWidth: 1.5 }]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <Text style={[styles.label, col]}>📊 Company Health</Text>
-                <View style={{ backgroundColor: T[hs.colorKey]+"33", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3 }}>
-                  <Text style={{ color: T[hs.colorKey], fontWeight: "700", fontSize: 13 }}>{hs.label}</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                <Text style={{ fontSize: 30, fontWeight: "900", color: T[hs.colorKey], marginRight: 10 }}>{hs.score}</Text>
+            <Card T={T} tone={tone}>
+              <SectionLabel T={T} tone={tone} right={<Pill T={T} label={hs.label} tone={tone} filled />}>
+                Company health
+              </SectionLabel>
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: SPACING.md, marginBottom: SPACING.sm }}>
+                <Text style={[TYPE.statLarge, { color: hc, marginRight: SPACING.md }]}>{hs.score}</Text>
                 <View style={{ flex: 1 }}>
-                  <View style={[styles.progressTrack, { backgroundColor: T.track }]}>
-                    <View style={[styles.progressFill, { width: `${hs.score}%`, backgroundColor: T[hs.colorKey] }]} />
-                  </View>
+                  <ProgressBar T={T} percent={hs.score} tone={tone} />
                 </View>
               </View>
-              {hs.factors.map((f, i) => <Text key={i} style={[styles.sub, { color: T.sub, fontSize: 11 }]}>• {f}</Text>)}
-              <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 6, fontStyle: "italic" }]}>Safety recovers +0.5/day toward 70. Incidents, corner cuts, and violations lower it.</Text>
-            </View>
-          );
-        })()}
-
-        {/* ── Predictive Warnings ──────────────────────────────────────────── */}
-        {game.tutorialDone && (() => {
-          const warnings = getPredictiveWarnings(game);
-          if (!warnings.length) return null;
-          const sevColors = { high: T.red, medium: T.orange, low: T.sub };
-          return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1 }]}>
-              <Text style={[styles.label, col, { marginBottom: 8 }]}>⚡ Early Warnings</Text>
-              {warnings.map((w, i) => (
-                <View key={i} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: sevColors[w.severity]||T.sub, marginRight: 8 }} />
-                  <Text style={[styles.sub, { color: T.text, flex: 1, fontSize: 12 }]}>{w.text}</Text>
-                </View>
+              {hs.factors.map((f, i) => (
+                <Text key={i} style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>• {f}</Text>
               ))}
-            </View>
-          );
-        })()}
-
-        {/* ── Next Best Action ─────────────────────────────────────────────── */}
-        {(() => {
-          const nba = getNextBestAction(game);
-          const _isCritical = ["red", "orange"].includes(nba.tone);
-          if (!game.tutorialDone && !_isCritical) return null;
-          if (nba.tab === "Home") return null;
-          return (
-            <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.cyan, borderWidth: 1.5 }]}>
-              <Text style={[styles.label, col, { marginBottom: 4 }]}>🎯 Next Best Action</Text>
-              <Text style={[styles.sub, col, { fontWeight: "600", marginBottom: 4 }]}>{nba.title}</Text>
-              <Text style={[styles.sub, { color: T.sub, marginBottom: 10 }]}>{nba.body}</Text>
-              <TouchableOpacity style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={() => setTab(nba.tab)}>
-                <Text style={[styles.btnText, { color: "#fff" }]}>Go to {nba.tab} →</Text>
-              </TouchableOpacity>
-            </View>
+              <Text style={[TYPE.caption, { color: T.dim, marginTop: SPACING.sm, fontStyle: "italic" }]}>
+                Safety recovers +0.5/day toward 70. Incidents, corner cuts and violations lower it.
+              </Text>
+            </Card>
           );
         })()}
 
@@ -6677,7 +6797,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 ].map(s => (
                   <View key={s.label} style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }}>
                     <Text style={{ color: s.color, fontSize: 13, fontWeight: "800" }}>{s.val}</Text>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{s.label}</Text>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{s.label}</Text>
                   </View>
                 ))}
               </View>
@@ -6714,15 +6834,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
                       <Text style={[styles.sub, col]}>{cl.icon} {cl.name}</Text>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Text style={[styles.sub, { color: tierColor, fontSize: 10, fontWeight: "700" }]}>{tier.label}</Text>
-                        <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{rel.jobsDone} job{rel.jobsDone!==1?"s":""}</Text>
+                        <Text style={[styles.sub, { color: tierColor, fontSize: 12, fontWeight: "700" }]}>{tier.label}</Text>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{rel.jobsDone} job{rel.jobsDone!==1?"s":""}</Text>
                       </View>
                     </View>
                     <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
                       <View style={{ height: 4, width: `${pct}%`, backgroundColor: tierColor, borderRadius: 2 }} />
                     </View>
                     {tier.valueMult > 1 && (
-                      <Text style={[styles.sub, { color: T.green, fontSize: 10, marginTop: 2 }]}>✓ {Math.round((tier.valueMult-1)*100)}% value bonus · +{tier.extraDays}d deadline on their contracts</Text>
+                      <Text style={[styles.sub, { color: T.green, fontSize: 12, marginTop: 2 }]}>✓ {Math.round((tier.valueMult-1)*100)}% value bonus · +{tier.extraDays}d deadline on their contracts</Text>
                     )}
                   </View>
                 );
@@ -6828,18 +6948,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
-        {/* Next Best Action */}
-        {nextBest && (
-          <TouchableOpacity
-            style={[styles.card, { backgroundColor: T.panel2, borderColor: T[nextBest.tone] || T.border, borderLeftWidth: 4 }]}
-            onPress={() => setTab(nextBest.tab || tab)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.label, { color: T[nextBest.tone] || T.text }]}>{nextBest.title}</Text>
-            <Text style={[styles.body, col]}>{nextBest.body}</Text>
-            {nextBest.tab && <Text style={[styles.sub, { color: T[nextBest.tone] }]}>→ Go to {nextBest.tab}</Text>}
-          </TouchableOpacity>
-        )}
+        {/* The second copy of Next Best Action that used to live here has been removed. The
+            same getNextBestAction(game) result was rendered twice on this screen, ~250 lines
+            apart in two different card designs. The one above, near the top of Home, is the
+            single copy. */}
 
         {/* Speed Up Time */}
         {(game.activeSites||[]).length > 0 && (
@@ -6890,28 +7002,24 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               </View>
               {nextTier && (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Next:</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Next:</Text>
                   <Ionicons name={nextTier.icon} size={10} color={T.sub} />
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{nextTier.label} at {nextTier.min} pts</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{nextTier.label} at {nextTier.min} pts</Text>
                 </View>
               )}
             </View>
           );
         })()}
 
-        {/* KPI Row */}
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-          {[
-            { label: "Active Sites", val: activeSites.length, color: T.orange },
-            { label: "Crew Idle", val: idleCrew.length, color: T.cyan },
-            { label: "Jobs Done", val: game.completedJobs, color: T.green },
-            { label: "Reputation", val: `${game.reputation}`, color: T.purple },
-          ].map((k) => (
-            <View key={k.label} style={[styles.kpi, { backgroundColor: T.panel, borderColor: T.border, flex: 1 }]}>
-              <Text style={[styles.kpiVal, { color: k.color }]}>{k.val}</Text>
-              <Text style={[styles.kpiLabel, subCol]}>{k.label}</Text>
-            </View>
-          ))}
+        {/* ── STANDING ──────────────────────────────────────────────────────
+            Active Sites and Crew Idle used to sit here as well as in the hero
+            card at the top of the screen. These four are the figures the hero
+            does NOT already carry, so nothing is stated twice. */}
+        <View style={{ flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md - 2 }}>
+          <StatTile T={T} label="Jobs done" value={`${game.completedJobs || 0}`} tone="safe" />
+          <StatTile T={T} label="Reputation" value={`${game.reputation || 0}`} sub={repTier.label} tone="accent" />
+          <StatTile T={T} label="Credit" value={`${game.creditScore || 600}`} sub={getCreditLabel(game.creditScore || 600).label} tone={(game.creditScore || 600) >= 680 ? "safe" : (game.creditScore || 600) >= 600 ? "caution" : "hazard"} />
+          <StatTile T={T} label="Safety" value={`${Math.round(game.safetyScore || 0)}`} tone={(game.safetyScore || 0) >= 70 ? "safe" : (game.safetyScore || 0) >= 45 ? "caution" : "hazard"} />
         </View>
 
         {/* Market Event Banner */}
@@ -6929,7 +7037,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2, overflow: "hidden" }}>
                   <View style={{ height: 4, width: `${Math.round((game.marketEventDaysLeft / evt.duration) * 100)}%`, backgroundColor: T[evt.tone] || T.text, borderRadius: 2 }} />
                 </View>
-                <Text style={[styles.sub, { color: T[evt.tone] || T.sub, marginTop: 2, fontSize: 10 }]}>
+                <Text style={[styles.sub, { color: T[evt.tone] || T.sub, marginTop: 2, fontSize: 12 }]}>
                   {game.marketEventDaysLeft} of {evt.duration} day{evt.duration !== 1 ? "s" : ""} remaining
                 </Text>
               </View>
@@ -7020,7 +7128,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             <Text style={[styles.sub, subCol]}>
               {game.hotMaterialDeal.label} — {game.hotMaterialDeal.discountPct}% off · {money(game.hotMaterialDeal.unitPrice)}/unit
             </Text>
-            <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>
+            <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>
               Expires Day {game.hotMaterialDeal.expiresDay} · Buy in Sites tab
             </Text>
             <TouchableOpacity
@@ -7082,7 +7190,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       <View style={{ flex: myPct, height: 3, backgroundColor: T.purple }} />
                       <View style={{ flex: 100 - myPct, height: 3, backgroundColor: ahead ? T.panel2 : T.red }} />
                     </View>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }]}>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginTop: 1 }]}>
                       You {myRep} rep {ahead ? "↑" : "↓"} {r.name.split(" ")[0]} {theirRep}
                     </Text>
                   </View>
@@ -7148,25 +7256,27 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     ];
 
     return (
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 120 }}>
 
         {/* Active Site Management */}
-        {activeSites.length === 0 && (
-          <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", paddingVertical: 24 }]}>
-            <Text style={{ fontSize: 32, marginBottom: 8 }}>🏗️</Text>
-            <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }]}>No active sites</Text>
-            <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>Accept a contract from the Bids tab to get started.</Text>
-            <TouchableOpacity
-              style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
-              onPress={() => setTab("Bids")}
-            >
-              <Text style={[styles.btnText, { color: "#fff" }]}>Go to Bids</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {activeSites.length === 0 && (() => {
+          const empty = getEmptyState("Sites");
+          return (
+            <EmptyState
+              T={T}
+              icon={empty.icon}
+              title={empty.title}
+              body={empty.body}
+              ctaLabel={empty.cta}
+              onCta={empty.tab ? () => setTab(empty.tab) : null}
+            />
+          );
+        })()}
         {activeSites.length > 0 && (
-          <View style={{ marginBottom: 16 }}>
-            <Text style={[styles.sectionTitle, col, { marginBottom: 8 }]}>Active Sites ({activeSites.length})</Text>
+          <View style={{ marginBottom: SPACING.lg }}>
+            <SectionLabel T={T} tone="accent" style={{ marginBottom: SPACING.sm }}>
+              {`Active sites · ${activeSites.length}`}
+            </SectionLabel>
             {activeSites.map((site) => {
               const overallPct = Math.min(100, ((site.currentPhaseIdx / site.phases.length) + (Math.max(0, site.phaseProgress) / 100 / site.phases.length)) * 100);
               const currentPh = site.phases[site.currentPhaseIdx] || "Complete";
@@ -7204,75 +7314,92 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               }) : [];
               const lastChaos = site.chaosHistory?.[0];
               return (
-                <View key={site.id} style={[styles.card, { backgroundColor: T.panel, borderColor: hasMissingMats ? T.orange : isOverdue ? T.red : T.border, borderWidth: (hasMissingMats || isOverdue) ? 2 : 1, marginBottom: 10 }]}>
-                  {/* Header */}
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={[styles.label, col]} numberOfLines={1}>{site.label}</Text>
-                      <Text style={[styles.sub, subCol]} numberOfLines={1}>{site.client}</Text>
+                <View key={site.id} style={[styles.card, {
+                  backgroundColor: T.panel,
+                  borderRadius: RADIUS.md,
+                  padding: SPACING.lg,
+                  marginBottom: SPACING.md,
+                  borderColor: hasMissingMats ? alpha(T.caution, 0.55) : isOverdue ? alpha(T.hazard, 0.55) : T.border,
+                  borderWidth: 1,
+                  borderLeftWidth: 4,
+                  borderLeftColor: hasMissingMats ? T.caution : isOverdue ? T.hazard : T.accent,
+                }, ELEVATION.card]}>
+                  {/* Header — project, client, location on the left; the one number that
+                      matters (progress, or how late it is) on the right. */}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: SPACING.sm }}>
+                    <View style={{ flex: 1, marginRight: SPACING.md }}>
+                      <Text style={[TYPE.label, { color: T.text }]} numberOfLines={1}>{site.label}</Text>
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]} numberOfLines={1}>{site.client}</Text>
                       {contract?.cityId && (() => {
                         const siteCity = CITIES.find(c => c.id === contract.cityId);
                         if (!siteCity) return null;
                         const _region = siteCity.region;
-                        const _weatherRisk = _region === "Pacific Northwest" ? "🌧️ Rain risk region"
-                          : _region === "Southwest" ? "☀️ Heat risk region"
-                          : _region === "Mountain" ? "❄️ Snow risk region"
-                          : _region === "South Central" ? "⛈️ Storm risk region"
+                        const _weatherRisk = _region === "Pacific Northwest" ? "🌧️ Rain risk"
+                          : _region === "Southwest" ? "☀️ Heat risk"
+                          : _region === "Mountain" ? "❄️ Snow risk"
+                          : _region === "South Central" ? "⛈️ Storm risk"
                           : null;
                         return (
-                          <>
-                            <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>📍 {siteCity.name}</Text>
-                            {_weatherRisk && !site.currentWeather && (
-                              <Text style={[styles.sub, { color: T.sub, fontSize: 9 }]}>{_weatherRisk}</Text>
-                            )}
-                          </>
+                          <Text style={[TYPE.caption, { color: T.dim, marginTop: 2 }]} numberOfLines={1}>
+                            📍 {siteCity.name}{_weatherRisk && !site.currentWeather ? ` · ${_weatherRisk}` : ""}
+                          </Text>
                         );
                       })()}
                     </View>
                     <View style={{ alignItems: "flex-end" }}>
-                      <Text style={[styles.sub, { color: site.status === "Paused" ? T.orange : isOverdue ? T.red : T.green, fontWeight: "700" }]}>
-                        {site.status === "Paused" ? "⏸ Paused" : isOverdue ? `⚠ ${daysLate}d Late` : `${Math.round(overallPct)}%`}
+                      {site.status === "Paused" ? (
+                        <Pill T={T} label="Paused" tone="caution" filled />
+                      ) : isOverdue ? (
+                        <Pill T={T} label={`${daysLate}d late`} tone="hazard" filled />
+                      ) : (
+                        <Text style={[TYPE.stat, { color: toneColor(progressTone(overallPct), T) }]}>
+                          {Math.round(overallPct)}%
+                        </Text>
+                      )}
+                      <Text style={[TYPE.caption, { color: isOverdue ? T.hazard : T.sub, marginTop: 3 }]}>
+                        Due day {site.deadlineDay}
                       </Text>
-                      <Text style={[styles.sub, { color: isOverdue ? T.red : T.sub }]}>Due Day {site.deadlineDay}</Text>
                     </View>
                   </View>
 
-                  {/* Overall progress bar */}
-                  <View style={[styles.progressTrack, { backgroundColor: T.track, marginBottom: 4 }]}>
-                    <View style={[styles.progressFill, { width: `${overallPct}%`, backgroundColor: isOverdue ? T.red : T.orange }]} />
-                  </View>
+                  {/* Overall progress */}
+                  <ProgressBar
+                    T={T}
+                    percent={overallPct}
+                    tone={isOverdue ? "hazard" : progressTone(overallPct)}
+                    style={{ marginBottom: SPACING.sm }}
+                  />
 
-                  {/* Deadline urgency bar */}
+                  {/* Deadline urgency */}
                   {!isOverdue && site.status !== "Paused" && (() => {
                     const daysLeft = site.deadlineDay - game.day;
-                    const barColor = daysLeft <= 2 ? T.red : daysLeft <= 5 ? T.orange : T.green;
+                    const tone = deadlineTone(daysLeft);
                     const pct = Math.min(100, Math.round((daysLeft / 14) * 100));
                     return (
-                      <View style={{ marginBottom: 6 }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Deadline</Text>
-                          <Text style={[styles.sub, { color: barColor, fontSize: 10, fontWeight: daysLeft <= 5 ? "700" : "400" }]}>
-                            {daysLeft <= 0 ? "Due today" : `${daysLeft}d left`}
-                          </Text>
-                        </View>
-                        <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2 }}>
-                          <View style={{ height: 3, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 }} />
-                        </View>
-                      </View>
+                      <ProgressBar
+                        T={T}
+                        percent={pct}
+                        tone={tone}
+                        label="Time left"
+                        value={daysLeft <= 0 ? "Due today" : `${daysLeft}d`}
+                        height={4}
+                        style={{ marginBottom: SPACING.sm }}
+                      />
                     );
                   })()}
 
-                  {/* Current phase + phase progress */}
-                  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                    <Text style={{ fontSize: 16, marginRight: 6 }}>{vis.emoji}</Text>
+                  {/* Current phase */}
+                  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: SPACING.sm }}>
+                    <Text style={{ fontSize: 20, marginRight: SPACING.sm }}>{vis.emoji}</Text>
                     <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                        <Text style={[styles.sub, { color: T.cyan, fontWeight: "600", fontSize: 11 }]}>{currentPh}</Text>
-                        <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Phase {(site.currentPhaseIdx || 0) + 1}/{site.phases.length}</Text>
-                      </View>
-                      <View style={[styles.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 3 }]}>
-                        <View style={[styles.progressFill, { width: `${Math.max(0, site.phaseProgress || 0)}%`, backgroundColor: T.cyan, height: 4 }]} />
-                      </View>
+                      <ProgressBar
+                        T={T}
+                        percent={Math.max(0, site.phaseProgress || 0)}
+                        tone="steel"
+                        label={currentPh}
+                        value={`Phase ${(site.currentPhaseIdx || 0) + 1} of ${site.phases.length}`}
+                        height={4}
+                      />
                       {(() => {
                         const _rate = site._progressRate;
                         if (!_rate || overallPct >= 100 || site.status === "Paused") return null;
@@ -7281,8 +7408,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         const _pctPerDay = _rate * 48;
                         const _daysLeft = _pctPerDay > 0 ? Math.ceil(_progressLeft / _pctPerDay) : null;
                         return (
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 3 }]}>
-                            {_daysLeft ? `~${_daysLeft} days remaining` : ""}{_daysLeft ? " · " : ""}{_pctPerDay.toFixed(1)}%/day
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: 4 }]}>
+                            {_daysLeft ? `~${_daysLeft} days remaining · ` : ""}{_pctPerDay.toFixed(1)}%/day
                           </Text>
                         );
                       })()}
@@ -7305,13 +7432,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                             Object.entries(phases).some(([p, v]) => v > 1.0 && sitePh.toLowerCase().includes(p.toLowerCase()))
                           )?.[0] || "matching";
                           return (
-                            <Text style={[styles.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }]}>
+                            <Text style={[TYPE.caption, { color: T.caution, marginBottom: SPACING.xs }]}>
                               ⚠ {sitePh} needs a {neededSpec} specialist · −10% speed without one
                             </Text>
                           );
                         })()}
                         {rushPenalty > 0.04 && (
-                          <Text style={[styles.sub, { color: T.orange, fontSize: 10, marginBottom: 4 }]}>
+                          <Text style={[TYPE.caption, { color: T.caution, marginBottom: SPACING.xs }]}>
                             ⚡ Rush impact: quality −{Math.round(rushPenalty * 100)}%
                           </Text>
                         )}
@@ -7319,281 +7446,447 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     );
                   })()}
 
-                  {/* Crew assignment */}
+                  {/* Crew on site. Every row is a full-width tap target at the 44pt minimum —
+                      the inherited rows were 9px text with 2px padding, roughly 14pt tall. */}
                   {(() => {
                     const idleCrew = game.crew.filter(w => w.status === "Idle");
+                    const exhausted = siteCrew.filter(w => (w.stamina ?? 50) < 25 || (w.mood ?? 70) < 20);
                     return (
-                      <View style={{ backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }]}>CREW ({siteCrew.length})</Text>
-                          {siteCrew.length === 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>⚠ No crew</Text>}
-                        </View>
-                        {(() => {
-                          const _exhausted = siteCrew.filter(w => (w.stamina ?? 50) < 25 || (w.mood ?? 70) < 20);
-                          return _exhausted.length > 0 ? (
-                            <Text style={[styles.sub, { color: T.orange, fontSize: 10, marginBottom: 3 }]}>
-                              ⚠ {_exhausted.length} worker{_exhausted.length > 1 ? "s" : ""} exhausted — rest them in Crew tab.
-                            </Text>
-                          ) : null;
-                        })()}
+                      <View style={{ backgroundColor: T.panel2, borderRadius: RADIUS.sm, padding: SPACING.md - 2, marginBottom: SPACING.sm }}>
+                        <SectionLabel
+                          T={T}
+                          right={siteCrew.length === 0 ? <Pill T={T} label="No crew" tone="hazard" /> : null}
+                        >
+                          {`Crew · ${siteCrew.length}`}
+                        </SectionLabel>
+                        {exhausted.length > 0 && (
+                          <Text style={[TYPE.caption, { color: T.caution, marginTop: SPACING.sm }]}>
+                            ⚠ {exhausted.length} worker{exhausted.length > 1 ? "s" : ""} exhausted — rest them in the Crew tab.
+                          </Text>
+                        )}
                         {siteCrew.map(w => (
-                          <View key={w.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                            <Text style={[styles.sub, { fontSize: 10, color: T.text, flex: 1 }]}>{w.name.split(" ")[0]} · {w.specialty || w.role}</Text>
+                          <View
+                            key={w.id}
+                            style={{
+                              flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                              minHeight: MIN_TAP_TARGET, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.border,
+                            }}
+                          >
+                            <View style={{ flex: 1, marginRight: SPACING.sm }}>
+                              <Text style={[TYPE.body, { color: T.text }]} numberOfLines={1}>{w.name}</Text>
+                              <Text style={[TYPE.caption, { color: T.sub }]} numberOfLines={1}>
+                                {w.specialty || w.role} · stamina {Math.round(w.stamina ?? 0)}%
+                              </Text>
+                            </View>
                             <TouchableOpacity
-                              style={{ backgroundColor: T.red + "33", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.red }}
+                              style={{
+                                borderRadius: RADIUS.xs, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+                                borderWidth: 1, borderColor: alpha(T.hazard, 0.6), backgroundColor: alpha(T.hazard, 0.14),
+                              }}
                               onPress={() => handleUnassignCrewFromSite(w.id, site.id)}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Remove ${w.name} from ${site.label}`}
                             >
-                              <Text style={{ fontSize: 9, color: T.red, fontWeight: "700" }}>Remove</Text>
+                              <Text style={{ fontSize: 12, color: T.hazard, fontWeight: "700" }}>Remove</Text>
                             </TouchableOpacity>
                           </View>
                         ))}
                         {idleCrew.length > 0 && (
                           <>
-                            <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }]}>Idle workers:</Text>
+                            <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.sm, marginBottom: SPACING.xs }]}>Available to assign</Text>
                             {idleCrew.slice(0, 4).map(w => (
                               <TouchableOpacity
                                 key={w.id}
-                                style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: T.green + "18", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3, marginBottom: 2, borderWidth: 1, borderColor: T.green + "55" }}
+                                style={{
+                                  flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                                  backgroundColor: alpha(T.safe, 0.1), borderRadius: RADIUS.xs,
+                                  paddingHorizontal: SPACING.md, minHeight: MIN_TAP_TARGET, marginBottom: SPACING.xs,
+                                  borderWidth: 1, borderColor: alpha(T.safe, 0.4),
+                                }}
                                 onPress={() => handleAssignCrewToSite(w.id, site.id)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Assign ${w.name}, ${w.role}, to ${site.label}`}
                               >
-                                <Text style={{ fontSize: 10, color: T.text }}>{w.name.split(" ")[0]} · {w.role}</Text>
-                                <Text style={{ fontSize: 9, color: T.green, fontWeight: "700" }}>+ Assign</Text>
+                                <Text style={[TYPE.body, { color: T.text, flex: 1 }]} numberOfLines={1}>{w.name} · {w.role}</Text>
+                                <Text style={{ fontSize: 12, color: T.safe, fontWeight: "700" }}>Assign</Text>
                               </TouchableOpacity>
                             ))}
                             {idleCrew.length > 4 && (
-                              <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }]}>+{idleCrew.length - 4} more in Crew tab</Text>
+                              <Text style={[TYPE.caption, { color: T.dim, marginTop: 2 }]}>+{idleCrew.length - 4} more in the Crew tab</Text>
                             )}
                           </>
                         )}
                         {idleCrew.length === 0 && siteCrew.length === 0 && (
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }]}>No idle workers available</Text>
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.sm }]}>
+                            Nobody is free. Hire in the Crew tab, or pull crew off another site.
+                          </Text>
                         )}
                       </View>
                     );
                   })()}
 
-                  {/* Equipment assignment */}
+                  {/* Equipment on site. The machine's own artwork rides every row — the game
+                      ships 45 equipment renders and used to show them only in the shop and the
+                      owned list. See FLEETFLOW_PARITY_AUDIT.md §2 gap 5. */}
                   {(() => {
                     const idleEquip = game.equipment.filter(e => e.status === "Idle" && !e.assignedSiteId);
-                    const brokenOnSite = siteEquip.filter(e => e.status === "Maintenance" || e.condition < 30);
                     return (
-                      <View style={{ backgroundColor: T.panel2, borderRadius: 6, padding: 8, marginBottom: 6 }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700" }]}>EQUIPMENT ({siteEquip.length})</Text>
-                        </View>
-                        {siteEquip.map(e => (
-                          <View key={e.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                            <Text style={[styles.sub, { fontSize: 10, color: e.condition < 30 ? T.red : T.text, flex: 1 }]} numberOfLines={1}>{e.name} {e.condition < 30 ? "⚠" : ""}</Text>
-                            <View style={{ flexDirection: "row", gap: 4 }}>
-                              {(e.condition < 80 || e.status === "Maintenance") && (
+                      <View style={{ backgroundColor: T.panel2, borderRadius: RADIUS.sm, padding: SPACING.md - 2, marginBottom: SPACING.sm }}>
+                        <SectionLabel T={T}>{`Equipment · ${siteEquip.length}`}</SectionLabel>
+                        {siteEquip.map(e => {
+                          const img = EQUIPMENT_IMAGES[e.shopId];
+                          const condTone = conditionTone(e.condition);
+                          return (
+                            <View
+                              key={e.id}
+                              style={{
+                                flexDirection: "row", alignItems: "center", minHeight: MIN_TAP_TARGET + 8,
+                                borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.border,
+                              }}
+                            >
+                              {img ? (
+                                <Image
+                                  source={img}
+                                  style={{ width: 46, height: 34, borderRadius: RADIUS.xs, marginRight: SPACING.sm, backgroundColor: "#ffffff" }}
+                                  resizeMode="contain"
+                                />
+                              ) : null}
+                              <View style={{ flex: 1, marginRight: SPACING.sm }}>
+                                <Text style={[TYPE.body, { color: T.text }]} numberOfLines={1}>{e.name}</Text>
+                                <Text style={[TYPE.caption, { color: toneColor(condTone, T) }]} numberOfLines={1}>
+                                  {e.status === "Maintenance" ? "In maintenance" : `Condition ${Math.round(e.condition)}%`}
+                                </Text>
+                              </View>
+                              <View style={{ flexDirection: "row", gap: SPACING.xs }}>
+                                {(e.condition < 80 || e.status === "Maintenance") && (
+                                  <TouchableOpacity
+                                    style={{
+                                      borderRadius: RADIUS.xs, paddingHorizontal: SPACING.sm + 2, paddingVertical: SPACING.sm,
+                                      borderWidth: 1, borderColor: alpha(T.steel, 0.6), backgroundColor: alpha(T.steel, 0.14),
+                                    }}
+                                    onPress={() => handleRepairEquipmentNew(e.id, e.status === "Maintenance")}
+                                    hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Repair ${e.name}`}
+                                  >
+                                    <Text style={{ fontSize: 12, color: T.steel, fontWeight: "700" }}>Repair</Text>
+                                  </TouchableOpacity>
+                                )}
                                 <TouchableOpacity
-                                  style={{ backgroundColor: T.blue + "33", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: T.blue }}
-                                  onPress={() => handleRepairEquipmentNew(e.id, e.status === "Maintenance")}
+                                  style={{
+                                    borderRadius: RADIUS.xs, paddingHorizontal: SPACING.sm + 2, paddingVertical: SPACING.sm,
+                                    borderWidth: 1, borderColor: alpha(T.hazard, 0.6), backgroundColor: alpha(T.hazard, 0.14),
+                                  }}
+                                  onPress={() => handleUnassignEquipFromSite(e.id, site.id)}
+                                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Remove ${e.name} from ${site.label}`}
                                 >
-                                  <Text style={{ fontSize: 9, color: T.blue, fontWeight: "700" }}>Repair</Text>
+                                  <Text style={{ fontSize: 12, color: T.hazard, fontWeight: "700" }}>Remove</Text>
                                 </TouchableOpacity>
-                              )}
-                              <TouchableOpacity
-                                style={{ backgroundColor: T.red + "33", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.red }}
-                                onPress={() => handleUnassignEquipFromSite(e.id, site.id)}
-                              >
-                                <Text style={{ fontSize: 9, color: T.red, fontWeight: "700" }}>Remove</Text>
-                              </TouchableOpacity>
+                              </View>
                             </View>
-                          </View>
-                        ))}
+                          );
+                        })}
                         {idleEquip.length > 0 && (
                           <>
-                            <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, marginBottom: 2 }]}>Available equipment:</Text>
-                            {idleEquip.slice(0, 3).map(e => (
-                              <TouchableOpacity
-                                key={e.id}
-                                style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: T.cyan + "18", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3, marginBottom: 2, borderWidth: 1, borderColor: T.cyan + "55" }}
-                                onPress={() => handleAssignEquipToSite(e.id, site.id)}
-                              >
-                                <Text style={{ fontSize: 10, color: T.text }}>{e.name}</Text>
-                                <Text style={{ fontSize: 9, color: T.cyan, fontWeight: "700" }}>+ Assign</Text>
-                              </TouchableOpacity>
-                            ))}
+                            <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.sm, marginBottom: SPACING.xs }]}>In the yard</Text>
+                            {idleEquip.slice(0, 3).map(e => {
+                              const img = EQUIPMENT_IMAGES[e.shopId];
+                              return (
+                                <TouchableOpacity
+                                  key={e.id}
+                                  style={{
+                                    flexDirection: "row", alignItems: "center",
+                                    backgroundColor: alpha(T.steel, 0.1), borderRadius: RADIUS.xs,
+                                    paddingHorizontal: SPACING.sm, minHeight: MIN_TAP_TARGET + 4, marginBottom: SPACING.xs,
+                                    borderWidth: 1, borderColor: alpha(T.steel, 0.4),
+                                  }}
+                                  onPress={() => handleAssignEquipToSite(e.id, site.id)}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Assign ${e.name} to ${site.label}`}
+                                >
+                                  {img ? (
+                                    <Image
+                                      source={img}
+                                      style={{ width: 40, height: 30, borderRadius: RADIUS.xs, marginRight: SPACING.sm, backgroundColor: "#ffffff" }}
+                                      resizeMode="contain"
+                                    />
+                                  ) : null}
+                                  <Text style={[TYPE.body, { color: T.text, flex: 1 }]} numberOfLines={1}>{e.name}</Text>
+                                  <Text style={{ fontSize: 12, color: T.steel, fontWeight: "700" }}>Assign</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
                             {idleEquip.length > 3 && (
-                              <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 2, fontStyle: "italic" }]}>+{idleEquip.length - 3} more in Vehicles tab</Text>
+                              <Text style={[TYPE.caption, { color: T.dim, marginTop: 2 }]}>+{idleEquip.length - 3} more in the Equipment tab</Text>
                             )}
                           </>
                         )}
                         {siteEquip.length === 0 && idleEquip.length === 0 && (
-                          <Text style={[styles.sub, { color: T.sub, fontSize: 9, fontStyle: "italic" }]}>No equipment available</Text>
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.sm }]}>
+                            No machines free. Buy or finance one in the Equipment tab.
+                          </Text>
                         )}
                       </View>
                     );
                   })()}
-
                   {/* Materials status */}
                   {allMats.length > 0 && (
-                    <View style={{ marginBottom: 6 }}>
+                    <View style={{ marginBottom: SPACING.sm }}>
                       {hasMissingMats && (
-                        <View style={{ backgroundColor: T.orange + "22", borderRadius: 6, padding: 6, marginBottom: 6, borderWidth: 1, borderColor: T.orange }}>
-                          <Text style={{ color: T.orange, fontWeight: "700", fontSize: 11, marginBottom: 2 }}>⚠ Materials Missing — Work Stalled</Text>
-                          {missingMats.map(m => {
-                            const shortfall = totalCostNormal - game.cash;
-                            return (
-                              <View key={m.matId} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 1 }}>
-                                <View style={{ flex: 1, marginRight: 8 }}>
-                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-                                    <Ionicons name={m.icon} size={10} color={T.text} />
-                                    <Text style={[styles.sub, { fontSize: 10, color: T.text }]}>{m.label}: {m.fulfilled}/{m.needed} {m.unit}</Text>
-                                  </View>
-                                  <View style={[styles.progressTrack, { backgroundColor: T.track, marginTop: 2, height: 3 }]}>
-                                    <View style={[styles.progressFill, { width: `${Math.round((m.fulfilled / m.needed) * 100)}%`, backgroundColor: T.orange, height: 3 }]} />
-                                  </View>
+                        <View style={{
+                          backgroundColor: alpha(T.caution, 0.1), borderRadius: RADIUS.sm, padding: SPACING.md - 2,
+                          marginBottom: SPACING.sm, borderWidth: 1, borderColor: alpha(T.caution, 0.55),
+                          borderLeftWidth: 4, borderLeftColor: T.caution,
+                        }}>
+                          <Text style={[TYPE.bodyStrong, { color: T.caution, marginBottom: SPACING.sm }]}>
+                            Work stalled — materials missing
+                          </Text>
+                          {missingMats.map(m => (
+                            <View key={m.matId} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: SPACING.xs }}>
+                              <View style={{ flex: 1, marginRight: SPACING.sm }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                                  <Ionicons name={m.icon} size={13} color={T.text} />
+                                  <Text style={[TYPE.caption, { color: T.text }]}>{m.label}: {m.fulfilled}/{m.needed} {m.unit}</Text>
                                 </View>
-                                <Text style={[styles.sub, { fontSize: 10, color: T.orange }]}>Need {money(m.costNormal)}</Text>
+                                <ProgressBar
+                                  T={T}
+                                  percent={Math.round((m.fulfilled / m.needed) * 100)}
+                                  tone="caution"
+                                  height={3}
+                                  style={{ marginTop: 3 }}
+                                />
                               </View>
-                            );
-                          })}
+                              <Text style={[TYPE.caption, { color: T.caution, fontWeight: "700" }]}>{money(m.costNormal)}</Text>
+                            </View>
+                          ))}
                           {!canAffordNormal && (
-                            <View style={{ marginTop: 4, backgroundColor: T.red + "18", borderRadius: 4, padding: 4 }}>
-                              <Text style={[styles.sub, { fontSize: 10, color: T.red }]}>Cash shortfall: {money(Math.max(0, totalCostNormal - game.cash))}</Text>
+                            <View style={{ marginTop: SPACING.sm, backgroundColor: alpha(T.hazard, 0.12), borderRadius: RADIUS.xs, padding: SPACING.sm }}>
+                              <Text style={[TYPE.caption, { color: T.hazard }]}>
+                                Cash shortfall: {money(Math.max(0, totalCostNormal - game.cash))}
+                              </Text>
                               {(game.creditScore || 600) >= 600 && (
-                                <Text style={[styles.sub, { fontSize: 10, color: T.cyan }]}>Supplier credit available (Credit {game.creditScore})</Text>
+                                <Text style={[TYPE.caption, { color: T.steel, marginTop: 2 }]}>
+                                  Supplier credit available (credit {game.creditScore})
+                                </Text>
                               )}
                             </View>
                           )}
-                          <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
+                          <View style={{ flexDirection: "row", gap: SPACING.sm, marginTop: SPACING.md }}>
                             <TouchableOpacity
-                              style={{ flex: 1, backgroundColor: canAffordNormal ? T.green : T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: canAffordNormal ? T.green : T.border, paddingVertical: 7, alignItems: "center" }}
+                              style={{
+                                flex: 1, backgroundColor: canAffordNormal ? T.accent : T.panel2, borderRadius: RADIUS.sm,
+                                borderWidth: 1.5, borderColor: canAffordNormal ? T.accent : T.border,
+                                minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                              }}
                               onPress={() => handleBuyMaterialsForSite(site.id)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Buy materials for ${money(totalCostNormal)}`}
                             >
-                              <Text style={{ fontSize: 11, fontWeight: "700", color: canAffordNormal ? "#fff" : T.sub }}>Buy Materials</Text>
-                              <Text style={{ fontSize: 9, color: canAffordNormal ? "#ffffffcc" : T.sub }}>{money(totalCostNormal)}</Text>
+                              <Text style={{ fontSize: 13, fontWeight: "800", color: canAffordNormal ? "#0a1018" : T.sub }}>Buy materials</Text>
+                              <Text style={{ fontSize: 11, color: canAffordNormal ? "#0a1018cc" : T.sub }}>{money(totalCostNormal)}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              style={{ flex: 1, backgroundColor: canAffordEmergency ? T.orange + "33" : T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: canAffordEmergency ? T.orange : T.border, paddingVertical: 7, alignItems: "center" }}
+                              style={{
+                                flex: 1, backgroundColor: canAffordEmergency ? alpha(T.caution, 0.18) : T.panel2, borderRadius: RADIUS.sm,
+                                borderWidth: 1.5, borderColor: canAffordEmergency ? T.caution : T.border,
+                                minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                              }}
                               onPress={() => handleEmergencyPurchase(site.id)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Emergency order at 1.5 times price, ${money(totalCostEmergency)}`}
                             >
-                              <Text style={{ fontSize: 11, fontWeight: "700", color: canAffordEmergency ? T.orange : T.sub }}>Emergency</Text>
-                              <Text style={{ fontSize: 9, color: canAffordEmergency ? T.orange : T.sub }}>{money(totalCostEmergency)} (1.5×)</Text>
+                              <Text style={{ fontSize: 13, fontWeight: "800", color: canAffordEmergency ? T.caution : T.sub }}>Emergency</Text>
+                              <Text style={{ fontSize: 11, color: canAffordEmergency ? T.caution : T.sub }}>{money(totalCostEmergency)} · 1.5×</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 6, borderWidth: 1.5, borderColor: T.blue, paddingVertical: 7, alignItems: "center" }}
+                              style={{
+                                flex: 1, backgroundColor: T.panel2, borderRadius: RADIUS.sm,
+                                borderWidth: 1.5, borderColor: alpha(T.steel, 0.6),
+                                minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
+                              }}
                               onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) { s.status = "Paused"; s.pausedDays = 999; } })}
+                              accessibilityRole="button"
+                              accessibilityLabel="Pause this site, no penalty"
                             >
-                              <Text style={{ fontSize: 11, fontWeight: "700", color: T.blue }}>Pause</Text>
-                              <Text style={{ fontSize: 9, color: T.sub }}>No penalty</Text>
+                              <Text style={{ fontSize: 13, fontWeight: "800", color: T.steel }}>Pause</Text>
+                              <Text style={{ fontSize: 11, color: T.sub }}>No penalty</Text>
                             </TouchableOpacity>
                           </View>
                         </View>
                       )}
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SPACING.xs }}>
                         {allMats.map(m => (
-                          <View key={m.id} style={{ flexDirection: "row", alignItems: "center", backgroundColor: m.ok ? T.panel3 : T.orange + "22", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }}>
-                            <Ionicons name={m.icon} size={10} color={m.ok ? T.sub : T.orange} />
-                            <Text style={[styles.sub, { fontSize: 9, color: m.ok ? T.sub : T.orange, marginLeft: 2 }]}>{m.fulfilled}/{m.needed}</Text>
+                          <View
+                            key={m.id}
+                            style={{
+                              flexDirection: "row", alignItems: "center",
+                              backgroundColor: m.ok ? T.panel3 : alpha(T.caution, 0.15),
+                              borderRadius: RADIUS.xs, paddingHorizontal: SPACING.sm, paddingVertical: 3,
+                            }}
+                          >
+                            <Ionicons name={m.icon} size={13} color={m.ok ? T.sub : T.caution} />
+                            <Text style={[TYPE.caption, { color: m.ok ? T.sub : T.caution, marginLeft: 3 }]}>
+                              {m.fulfilled}/{m.needed}
+                            </Text>
                           </View>
                         ))}
                       </View>
                     </View>
                   )}
 
-                  {/* Weather + last chaos row */}
+                  {/* Weather + last incident row */}
                   {(site.currentWeather || lastChaos) && (
-                    <View style={{ flexDirection: "row", gap: 6, marginBottom: 6 }}>
+                    <View style={{ flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.sm, alignItems: "center", flexWrap: "wrap" }}>
                       {site.currentWeather && (
-                        <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: T.blue + "28", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
-                          <Ionicons name={site.currentWeather.icon} size={11} color={T.blue} />
-                          <Text style={[styles.sub, { color: T.blue, fontSize: 9, marginLeft: 3 }]}>{site.currentWeather.label}</Text>
+                        <View style={{
+                          flexDirection: "row", alignItems: "center", backgroundColor: alpha(T.steel, 0.18),
+                          borderRadius: RADIUS.xs, paddingHorizontal: SPACING.sm, paddingVertical: 3,
+                        }}>
+                          <Ionicons name={site.currentWeather.icon} size={13} color={T.steel} />
+                          <Text style={[TYPE.caption, { color: T.steel, marginLeft: 4 }]}>{site.currentWeather.label}</Text>
                         </View>
                       )}
                       {lastChaos && (
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.sub, { color: T.orange, fontSize: 9 }]} numberOfLines={1}>⚡ {lastChaos.text}</Text>
-                        </View>
+                        <Text style={[TYPE.caption, { color: T.caution, flex: 1 }]} numberOfLines={2}>⚡ {lastChaos.text}</Text>
                       )}
                     </View>
                   )}
 
-                  {/* Projected profit */}
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Contract value</Text>
-                    <View style={{ flexDirection: "row", gap: 8 }}>
-                      <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 11 }]}>{money(site.totalValue)}</Text>
-                      {daysLate > 0 && <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>→ {money(valueAfterPenalty)}</Text>}
-                    </View>
-                  </View>
-                  {/* Running cost — so the player watches margin move during the job rather
-                      than only meeting it on the completion screen. */}
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Spent so far</Text>
-                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                      <Text style={[styles.sub, { color: T.orange, fontWeight: "700", fontSize: 11 }]}>{money(liveEconomics.directCosts)}</Text>
-                      <Text style={[styles.sub, { color: liveEconomics.netProfit >= 0 ? T.green : T.red, fontSize: 10 }]}>
-                        {liveEconomics.netProfit >= 0 ? "+" : "−"}{money(Math.abs(liveEconomics.netProfit))} if it finishes now
-                      </Text>
-                    </View>
-                  </View>
-                  {(site.depositPaid || 0) > 0 && !isOverdue && (
-                    <Text style={[styles.sub, { color: T.cyan, fontSize: 10, marginBottom: 4 }]}>
-                      💰 25% deposit received: {money(site.depositPaid)}
-                    </Text>
-                  )}
-                  {isOverdue && daysLate > 0 && (
-                    <View style={{ marginBottom: 6 }}>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
-                        <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Value remaining</Text>
-                        <Text style={[styles.sub, { color: T.red, fontSize: 10, fontWeight: "700" }]}>
-                          -{money(daysLate * site.penaltyPerDay)} penalty{daysLate > 5 ? " (1.5× escalated)" : ""}
+                  {/* ── PROJECT P&L ───────────────────────────────────────────────
+                      buildProjectEconomics is one of Construction Flow's best original
+                      systems — a live running cost against contract value, updating as the
+                      job burns wages, fuel and materials. It used to render as three 10px
+                      label/value rows lost among a dozen others. Promoted to its own panel
+                      with the margin as the headline, because margin is the number the whole
+                      game is about. Same values, same calculation. */}
+                  <View style={{
+                    backgroundColor: T.panel2, borderRadius: RADIUS.sm, padding: SPACING.md,
+                    marginBottom: SPACING.sm, borderWidth: 1, borderColor: T.border,
+                  }}>
+                    <SectionLabel
+                      T={T}
+                      right={
+                        <Text style={[TYPE.bodyStrong, { color: liveEconomics.netProfit >= 0 ? T.safe : T.hazard }]}>
+                          {liveEconomics.netProfit >= 0 ? "+" : "−"}{money(Math.abs(liveEconomics.netProfit))}
                         </Text>
-                      </View>
-                      <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
-                        <View style={{ height: 4, width: `${Math.max(0, Math.round((valueAfterPenalty / site.totalValue) * 100))}%`, backgroundColor: valueAfterPenalty > site.totalValue * 0.5 ? T.orange : T.red, borderRadius: 2 }} />
-                      </View>
-                      <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 1 }]}>
-                        {money(valueAfterPenalty)} of {money(site.totalValue)} remaining
-                      </Text>
+                      }
+                    >
+                      Margin if it finishes now
+                    </SectionLabel>
+                    <View style={{ marginTop: SPACING.sm }}>
+                      <KeyValueRow
+                        T={T}
+                        label="Contract value"
+                        value={daysLate > 0 ? `${money(site.totalValue)} → ${money(valueAfterPenalty)}` : money(site.totalValue)}
+                        tone={daysLate > 0 ? "hazard" : "safe"}
+                      />
+                      <KeyValueRow
+                        T={T}
+                        label="Spent so far"
+                        value={money(liveEconomics.directCosts)}
+                        tone="accent"
+                        divider={(site.depositPaid || 0) > 0 || (isOverdue && daysLate > 0)}
+                      />
+                      {(site.depositPaid || 0) > 0 && (
+                        <KeyValueRow
+                          T={T}
+                          label="Deposit received (25%)"
+                          value={money(site.depositPaid)}
+                          tone="info"
+                          divider={isOverdue && daysLate > 0}
+                        />
+                      )}
+                      {isOverdue && daysLate > 0 && (
+                        <KeyValueRow
+                          T={T}
+                          label={`Late penalty · ${daysLate}d${daysLate > 5 ? " (1.5× escalated)" : ""}`}
+                          value={`−${money(daysLate * site.penaltyPerDay)}`}
+                          tone="hazard"
+                          divider={false}
+                        />
+                      )}
                     </View>
-                  )}
+                    {isOverdue && daysLate > 0 && (
+                      <ProgressBar
+                        T={T}
+                        percent={Math.max(0, Math.round((valueAfterPenalty / site.totalValue) * 100))}
+                        tone={valueAfterPenalty > site.totalValue * 0.5 ? "caution" : "hazard"}
+                        label="Value remaining"
+                        value={`${money(valueAfterPenalty)} of ${money(site.totalValue)}`}
+                        height={4}
+                        style={{ marginTop: SPACING.sm }}
+                      />
+                    )}
+                  </View>
 
                   {/* Strategy selector */}
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 4 }]}>SITE STRATEGY</Text>
-                  <View style={{ flexDirection: "row", gap: 4 }}>
-                    {SITE_MODES.map(m => (
-                      <TouchableOpacity
-                        key={m.key}
-                        style={{ flex: 1, paddingVertical: 5, paddingHorizontal: 2, borderRadius: 6, borderWidth: 1.5,
-                          borderColor: mode === m.key ? m.color : T.border,
-                          backgroundColor: mode === m.key ? m.color + "28" : "transparent",
-                          alignItems: "center" }}
-                        onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) s.siteMode = m.key; })}
-                      >
-                        <Ionicons name={m.icon} size={12} color={mode === m.key ? m.color : T.sub} />
-                        <Text style={{ fontSize: 9, color: mode === m.key ? m.color : T.sub, fontWeight: mode === m.key ? "700" : "400" }}>{m.label}</Text>
-                      </TouchableOpacity>
-                    ))}
+                  <SectionLabel T={T} style={{ marginBottom: SPACING.sm }}>Site strategy</SectionLabel>
+                  <View style={{ flexDirection: "row", gap: SPACING.xs }}>
+                    {SITE_MODES.map(m => {
+                      const selected = mode === m.key;
+                      return (
+                        <TouchableOpacity
+                          key={m.key}
+                          style={{
+                            flex: 1, paddingVertical: SPACING.sm, paddingHorizontal: 2, borderRadius: RADIUS.sm,
+                            borderWidth: 1.5, minHeight: MIN_TAP_TARGET,
+                            borderColor: selected ? m.color : T.border,
+                            backgroundColor: selected ? alpha(m.color, 0.16) : "transparent",
+                            alignItems: "center", justifyContent: "center",
+                          }}
+                          onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) s.siteMode = m.key; })}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected }}
+                          accessibilityLabel={`${m.label} pace — ${m.desc}`}
+                        >
+                          <Ionicons name={m.icon} size={15} color={selected ? m.color : T.sub} />
+                          <Text style={{ fontSize: 11, marginTop: 2, color: selected ? m.color : T.sub, fontWeight: selected ? "700" : "500" }}>
+                            {m.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                   {modeDef.key !== "normal" && (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 }}>
-                      <Ionicons name={modeDef.icon} size={10} color={modeDef.color} />
-                      <Text style={[styles.sub, { color: modeDef.color, fontSize: 10 }]}>{modeDef.desc}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: SPACING.xs, marginTop: SPACING.sm }}>
+                      <Ionicons name={modeDef.icon} size={13} color={modeDef.color} />
+                      <Text style={[TYPE.caption, { color: modeDef.color }]}>{modeDef.desc}</Text>
                     </View>
                   )}
                   <TouchableOpacity
-                    style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: T.cyan, marginTop: 6 }}
+                    style={{
+                      alignSelf: "flex-start", paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+                      borderRadius: RADIUS.sm, borderWidth: 1, borderColor: alpha(T.steel, 0.7), marginTop: SPACING.md,
+                    }}
                     onPress={() => setTab("Crew")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Hire a subcontractor crew"
                   >
-                    <Text style={{ color: T.cyan, fontSize: 10, fontWeight: "700" }}>⚡ Hire Sub Crew →</Text>
+                    <Text style={{ color: T.steel, fontSize: 12, fontWeight: "700" }}>⚡ Hire sub crew →</Text>
                   </TouchableOpacity>
 
-                  {/* R14-3: Crew completion bonus */}
-                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>On-time bonus:</Text>
+                  {/* On-time completion bonus offered to the crew */}
+                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: SPACING.sm, marginTop: SPACING.md }}>
+                    <Text style={[TYPE.caption, { color: T.sub }]}>On-time bonus</Text>
                     {[0, 500, 1000, 2500].map(amt => {
                       const sel = (site.completionBonus || 0) === amt;
                       return (
                         <TouchableOpacity
                           key={amt}
-                          style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: sel ? T.yellow : T.border, backgroundColor: sel ? T.yellow + "33" : "transparent" }}
+                          style={{
+                            paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: RADIUS.sm,
+                            borderWidth: 1, borderColor: sel ? T.caution : T.border,
+                            backgroundColor: sel ? alpha(T.caution, 0.18) : "transparent",
+                          }}
                           onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) s.completionBonus = amt; })}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: sel }}
+                          accessibilityLabel={amt === 0 ? "No on-time bonus" : `On-time bonus of ${money(amt)}`}
                         >
-                          <Text style={[styles.sub, { color: sel ? T.yellow : T.sub, fontSize: 10, fontWeight: sel ? "700" : "400" }]}>
+                          <Text style={{ fontSize: 12, color: sel ? T.caution : T.sub, fontWeight: sel ? "700" : "500" }}>
                             {amt === 0 ? "None" : money(amt)}
                           </Text>
                         </TouchableOpacity>
@@ -7660,7 +7953,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
                     <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 13 }]}>{money(job.value)}</Text>
-                    {job.quality && <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{job.quality} quality</Text>}
+                    {job.quality && <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{job.quality} quality</Text>}
                   </View>
                 </View>
               </View>
@@ -7813,7 +8106,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {/* Auto-dispatch toggles */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
           <Text style={[styles.label, col]}>⚡ Auto Dispatch</Text>
-          <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }]}>Hire a Senior PM or Director to auto-manage your operation.</Text>
+          <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginBottom: 8 }]}>Hire a Senior PM or Director to auto-manage your operation.</Text>
           {[
             { key: "autoAssignCrew",        label: "Auto-Assign Crew",     icon: "👷", color: T.green  },
             { key: "autoAssignEquipment",   label: "Auto-Assign Vehicles", icon: "🚛", color: T.cyan   },
@@ -7863,7 +8156,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 ].map(s => (
                   <View key={s.label} style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 6, padding: 8, alignItems: "center" }}>
                     <Text style={{ color: s.color, fontSize: 18, fontWeight: "900" }}>{s.val}</Text>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{s.label}</Text>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{s.label}</Text>
                   </View>
                 ))}
               </View>
@@ -7879,15 +8172,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         })()}
 
         {/* Owned equipment */}
-        {(game.equipment||[]).length === 0 ? (
-          <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.border, alignItems: "center", padding: 24 }]}>
-            <Text style={{ fontSize: 32, marginBottom: 8 }}>🚜</Text>
-            <Text style={[styles.label, col, { textAlign: "center" }]}>No Vehicles Yet</Text>
-            <Text style={[styles.sub, subCol, { textAlign: "center", marginTop: 4 }]}>
-              Buy a vehicle below to boost site efficiency and unlock contracts.
-            </Text>
-          </View>
-        ) : (() => {
+        {(game.equipment||[]).length === 0 ? (() => {
+          const empty = getEmptyState("Equipment");
+          return <EmptyState T={T} icon={empty.icon} title={empty.title} body={empty.body} />;
+        })() : (() => {
           const _filteredEquip = equipFilter === "All" ? (game.equipment||[]) : (game.equipment||[]).filter(e =>
             equipFilter === "Active"       ? e.status === "Active" :
             equipFilter === "Idle"         ? e.status === "Idle" :
@@ -7943,7 +8231,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </View>
                 {/* Equipment Upgrades */}
                 <View style={{ marginTop: 10, marginBottom: 2 }}>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10, fontWeight: "700", marginBottom: 5 }]}>UPGRADES</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12, fontWeight: "700", marginBottom: 5 }]}>UPGRADES</Text>
                   {EQUIPMENT_UPGRADES.map(upg => {
                     const currentTier = (equip.upgrades || {})[upg.id] || 0;
                     const nextTier = upg.tiers[currentTier];
@@ -7953,7 +8241,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       <View key={upg.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
                         <Text style={{ fontSize: 13, marginRight: 6 }}>{upg.icon}</Text>
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.sub, { color: isMax ? T.green : currentTier > 0 ? T.cyan : T.sub, fontSize: 10 }]}>
+                          <Text style={[styles.sub, { color: isMax ? T.green : currentTier > 0 ? T.cyan : T.sub, fontSize: 12 }]}>
                             {upg.label}{currentTier > 0 ? ` T${currentTier} — ${upg.tiers[currentTier - 1].effect}` : " — not installed"}
                           </Text>
                         </View>
@@ -7967,7 +8255,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                             </Text>
                           </TouchableOpacity>
                         ) : (
-                          <Text style={[styles.sub, { color: T.green, fontSize: 10 }]}>✓ Max</Text>
+                          <Text style={[styles.sub, { color: T.green, fontSize: 12 }]}>✓ Max</Text>
                         )}
                       </View>
                     );
@@ -8064,7 +8352,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   >
                     <Text style={[styles.btnText, { color: game.cash >= newPrice ? "#fff" : T.red, fontSize: 12 }]}>🆕 New</Text>
                     <Text style={[styles.sub, { color: game.cash >= newPrice ? T.sub : T.red, textAlign: "center" }]}>{money(newPrice)}</Text>
-                    <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }]}>100% condition · reliable</Text>
+                    <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 12 }]}>100% condition · reliable</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.btn, { flex: 1, backgroundColor: game.cash >= usedPrice ? T.orange+"44" : T.panel2, borderColor: T.orange }]}
@@ -8072,7 +8360,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   >
                     <Text style={[styles.btnText, { color: game.cash >= usedPrice ? T.orange : T.red, fontSize: 12 }]}>🔄 Used</Text>
                     <Text style={[styles.sub, { color: game.cash >= usedPrice ? T.orange : T.red, textAlign: "center" }]}>{money(usedPrice)}</Text>
-                    <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 10 }]}>~55% cond · higher risk</Text>
+                    <Text style={[styles.sub, { color: T.sub, textAlign: "center", fontSize: 12 }]}>~55% cond · higher risk</Text>
                   </TouchableOpacity>
                 </View>
                 </>
@@ -8123,7 +8411,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {/* Company Valuation */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.strongBorder, borderWidth: 2 }]}>
           <Text style={[styles.sectionTitle, col]}>Company Valuation</Text>
-          <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 6 }]}>
+          <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginBottom: 6 }]}>
             Home market: {displayCityName}, {displayStateCode} · {displayCompetition} competition
           </Text>
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
@@ -8185,7 +8473,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   <View style={{ flex: playerShare, height: 4, backgroundColor: T.green }} />
                   <View style={{ flex: 100 - playerShare, height: 4, backgroundColor: ahead ? T.panel2 : T.red }} />
                 </View>
-                <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 2 }]}>
+                <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginTop: 2 }]}>
                   {ahead ? `You're ahead by ${money(gap)}` : `Behind by ${money(gap)}`}
                 </Text>
               </View>
@@ -8268,8 +8556,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   {!done && progressLabel && (
                     <View style={{ marginTop: 5 }}>
                       <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                        <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>{progressLabel}</Text>
-                        <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{Math.round(progressPct)}%</Text>
+                        <Text style={[styles.sub, { color: T.cyan, fontSize: 12 }]}>{progressLabel}</Text>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{Math.round(progressPct)}%</Text>
                       </View>
                       <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
                         <View style={{ height: 4, width: `${progressPct}%`, backgroundColor: T.cyan, borderRadius: 2 }} />
@@ -8422,7 +8710,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const isAhead = gap >= 0;
           return (
             <View style={[styles.card, { backgroundColor: T.panel2, borderColor: T.orange, borderWidth: 1, marginBottom: 8 }]}>
-              <Text style={[styles.sub, { color: T.orange, fontSize: 10, fontWeight: "700", marginBottom: 2 }]}>
+              <Text style={[styles.sub, { color: T.orange, fontSize: 12, fontWeight: "700", marginBottom: 2 }]}>
                 🎯 CLOSEST RIVAL — {closestRival.name}
               </Text>
               <Text style={[styles.sub, subCol]}>
@@ -8459,7 +8747,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       const aggColor = (rival.aggression || 0) >= 0.70 ? T.red : (rival.aggression || 0) >= 0.55 ? T.orange : T.sub;
                       const inHomeCity = (rival.cityPresence || ["salem"]).includes(game.startingCityId || "salem");
                       return (
-                        <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginTop: 1 }]}>
+                        <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginTop: 1 }]}>
                           {focusIcon} {focusLabel} · <Text style={{ color: aggColor }}>{aggLabel}</Text>{inHomeCity ? " · 🏠 In your market" : ""}
                         </Text>
                       );
@@ -8470,17 +8758,17 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               </View>
               {rival && !entry.acquired && entry.status !== "Bankrupt" && (
                 <View style={{ flexDirection: "row", gap: 12, marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>👷 {rival.employees || 0} crew</Text>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>🚛 {rival.equipment || 0} vehicles</Text>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>🏙️ {(rival.cityPresence || ["salem"]).length} {(rival.cityPresence || ["salem"]).length === 1 ? "city" : "cities"}</Text>
-                  <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>💰 {money(rival.cash || 0)}</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>👷 {rival.employees || 0} crew</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>🚛 {rival.equipment || 0} vehicles</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>🏙️ {(rival.cityPresence || ["salem"]).length} {(rival.cityPresence || ["salem"]).length === 1 ? "city" : "cities"}</Text>
+                  <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>💰 {money(rival.cash || 0)}</Text>
                 </View>
               )}
               {rival && (rival.aggression || 0) >= 0.70 && !entry.acquired && entry.status !== "Bankrupt" && (
                 <View style={{ marginTop: 5 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
-                    <Text style={[styles.sub, { color: T.red, fontSize: 10, fontWeight: "700" }]}>⚠ High aggression rival</Text>
-                    <Text style={[styles.sub, { color: T.red, fontSize: 10 }]}>{Math.round((rival.aggression || 0) * 100)}%</Text>
+                    <Text style={[styles.sub, { color: T.red, fontSize: 12, fontWeight: "700" }]}>⚠ High aggression rival</Text>
+                    <Text style={[styles.sub, { color: T.red, fontSize: 12 }]}>{Math.round((rival.aggression || 0) * 100)}%</Text>
                   </View>
                   <View style={{ height: 3, backgroundColor: T.track, borderRadius: 2 }}>
                     <View style={{ height: 3, width: `${Math.round((rival.aggression || 0) * 100)}%`, backgroundColor: T.red, borderRadius: 2 }} />
@@ -8523,7 +8811,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   {earned && <Text style={{ color: T.green, fontSize: 13, fontWeight: "bold", marginLeft: "auto" }}>✓</Text>}
                 </View>
                 <Text style={{ fontWeight: "bold", fontSize: 12, color: earned ? T.text : T.sub, marginBottom: 3 }}>{ach.title}</Text>
-                <Text style={[styles.sub, { color: earned ? T.sub : T.border, fontSize: 10, lineHeight: 14 }]}>{ach.desc}</Text>
+                <Text style={[styles.sub, { color: earned ? T.sub : T.border, fontSize: 12, lineHeight: 14 }]}>{ach.desc}</Text>
               </View>
             );
           })}
@@ -8576,7 +8864,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         </View>
                         <View style={{ alignItems: "flex-end" }}>
                           <Text style={[styles.sub, { color: sharePct >= 50 ? T.green : sharePct >= 25 ? T.cyan : T.sub, fontWeight: "700" }]}>{sharePct}%</Text>
-                          <Text style={[{ fontSize: 9, color: T.sub }]}>market share</Text>
+                          <Text style={[{ fontSize: 12, color: T.sub }]}>market share</Text>
                         </View>
                       </View>
                       <View style={{ height: 6, backgroundColor: T.track, borderRadius: 3 }}>
@@ -8623,8 +8911,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         {!done && progressLabel && (
                           <View style={{ marginTop: 5 }}>
                             <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                              <Text style={[styles.sub, { color: T.yellow, fontSize: 10 }]}>{progressLabel}</Text>
-                              <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{Math.round(progressPct)}%</Text>
+                              <Text style={[styles.sub, { color: T.yellow, fontSize: 12 }]}>{progressLabel}</Text>
+                              <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{Math.round(progressPct)}%</Text>
                             </View>
                             <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2, marginTop: 2 }}>
                               <View style={{ height: 4, width: `${progressPct}%`, backgroundColor: T.yellow, borderRadius: 2 }} />
@@ -8755,7 +9043,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </View>
               )}
               {row.note && (
-                <Text style={[styles.sub, { color: row.bar?.color || T.sub, fontSize: 10, marginTop: 2 }]}>{row.note}</Text>
+                <Text style={[styles.sub, { color: row.bar?.color || T.sub, fontSize: 12, marginTop: 2 }]}>{row.note}</Text>
               )}
             </View>
           ))}
@@ -8802,7 +9090,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             ].map((item) => (
               <View key={item.label} style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 8, padding: 9, alignItems: "center" }}>
                 <Text style={{ color: item.color, fontSize: 13, fontWeight: "800" }}>{item.prefix}{money(item.value)}</Text>
-                <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>{item.label}</Text>
+                <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{item.label}</Text>
               </View>
             ))}
           </View>
@@ -8842,7 +9130,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={[styles.sub, col]} numberOfLines={1}>{entry.description || ledgerCategoryLabels[entry.category] || "Transaction"}</Text>
-                    <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Day {entry.day || 0} · {ledgerCategoryLabels[entry.category] || entry.category || "Other"} · Balance {money(entry.balance || 0)}</Text>
+                    <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Day {entry.day || 0} · {ledgerCategoryLabels[entry.category] || entry.category || "Other"} · Balance {money(entry.balance || 0)}</Text>
                   </View>
                   <Text style={[styles.sub, { color: entry.amount >= 0 ? T.green : T.red, fontWeight: "800" }]}>
                     {entry.amount >= 0 ? "+" : "-"}{money(Math.abs(entry.amount))}
@@ -8865,7 +9153,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             <Text style={[styles.sectionTitle, { color: T.cyan }]}>🏦 Reserve Savings</Text>
             <Text style={[styles.label, { color: T.cyan }]}>{money(game.savings || 0)}</Text>
           </View>
-          <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }]}>
+          <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginBottom: 8 }]}>
             {(game.savings || 0) > 0 ? `Earning ${money(Math.round((game.savings || 0) * 0.0012))}/day · 4.4% annual` : "Deposit to earn 4.4% annual interest on reserves."}
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
@@ -8932,7 +9220,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       <View style={[styles.progressTrack, { backgroundColor: T.track }]}>
                         <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: barColor }]} />
                       </View>
-                      <Text style={[styles.sub, { color: T.sub, marginTop: 2, fontSize: 10 }]}>
+                      <Text style={[styles.sub, { color: T.sub, marginTop: 2, fontSize: 12 }]}>
                         {loan.weeksLeft <= 4 ? `Almost done — ${loan.weeksLeft} wk${loan.weeksLeft !== 1 ? "s" : ""} left` : `${loan.weeksLeft} weeks remaining`}
                       </Text>
                     </View>
@@ -8994,7 +9282,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={[styles.sub, subCol]}>Available</Text>
               <Text style={[styles.label, { color: T.green }]}>{money((game.creditLine.limit || 75000) - (game.creditLine.drawn || 0))}</Text>
             </View>
-            <Text style={[styles.sub, { color: T.sub, fontSize: 10, marginBottom: 8 }]}>
+            <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginBottom: 8 }]}>
               {(game.creditLine.drawn || 0) > 0 ? `Interest: ~${money(Math.round((game.creditLine.drawn || 0) * 0.14 / 365))}/day` : "No interest until you draw funds."}
             </Text>
             <TextInput style={[styles.input, col, { marginBottom: 8 }]} value={creditLineAmt} onChangeText={setCreditLineAmt} keyboardType="numeric" placeholder="Amount to draw or repay" placeholderTextColor={T.sub} />
@@ -9020,13 +9308,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             {product.eligible ? (
               <>
                 <Text style={[styles.sub, subCol]}>{product.apr}% APR · {product.weeks} weeks · {money(product._offer.weeklyPayment)}/week · Total {money(product._offer.totalRepayment)}</Text>
-                <Text style={[styles.sub, { color: T.green, fontSize: 10, marginTop: 3 }]}>{product._offer.approvalReason}</Text>
-                {product.collateralRequired && <Text style={[styles.sub, { color: T.orange, fontSize: 10, marginTop: 2 }]}>Secured financing · collateral required</Text>}
+                <Text style={[styles.sub, { color: T.green, fontSize: 12, marginTop: 3 }]}>{product._offer.approvalReason}</Text>
+                {product.collateralRequired && <Text style={[styles.sub, { color: T.orange, fontSize: 12, marginTop: 2 }]}>Secured financing · collateral required</Text>}
               </>
             ) : (
               <>
                 <Text style={[styles.sub, { color: T.red }]}>Not currently eligible</Text>
-                <Text style={[styles.sub, subCol, { fontSize: 10, marginTop: 3 }]}>{product.declineReasons[0] || `Needs ${product.minCredit}+ credit score.`}</Text>
+                <Text style={[styles.sub, subCol, { fontSize: 12, marginTop: 3 }]}>{product.declineReasons[0] || `Needs ${product.minCredit}+ credit score.`}</Text>
               </>
             )}
             <TouchableOpacity
@@ -9237,7 +9525,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 const toneColor = { positive: T.green, negative: T.red, neutral: T.text };
                 return (
                   <View style={{ width: "100%", backgroundColor: T.panel2, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: T.border }}>
-                    <Text style={{ fontSize: 10, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }}>WHAT THIS JOB MADE</Text>
+                    <Text style={{ fontSize: 12, color: T.sub, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 }}>WHAT THIS JOB MADE</Text>
                     {buildProjectProfitLines(ec, money).map((line, i) => (
                       <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
                         <Text style={[styles.sub, { color: T.sub, flex: 1 }]} numberOfLines={1}>{line.label}</Text>
@@ -9391,12 +9679,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     const site = g.activeSites.find(s => s.id === bd.siteId);
                     if (site) site.assignedEquipmentIds = (site.assignedEquipmentIds || []).filter(id => id !== bd.equipId);
                   }
-                  addLog(g, `🔧 ${bd.equipName} pulled for scheduled maintenance — repair from Vehicles tab.`);
+                  addLog(g, `🔧 ${bd.equipName} pulled for scheduled maintenance — repair from the Equipment tab.`);
                   g.pendingBreakdown = null;
                 })}
               >
                 <Text style={[styles.btnText, { color: T.text }]}>Delay Repair — Pull from site for later</Text>
-                <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }]}>No cost · repair later from Vehicles tab</Text>
+                <Text style={[styles.sub, { color: T.sub, textAlign: "center", marginTop: 2 }]}>No cost · repair later from the Equipment tab</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.btn, { marginBottom: 4, backgroundColor: T.panel2, borderColor: T.red }]}
@@ -9467,9 +9755,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       {game.pendingOfflineSummary && (
         <Modal transparent animationType="fade" visible={true}>
           <View style={[styles.modalOverlay, { justifyContent: "center", backgroundColor: "rgba(0,0,0,0.82)" }]}>
-            <View style={{ margin: 16, backgroundColor: T.panel, borderRadius: 20, borderWidth: 2, borderColor: T.strongBorder, overflow: "hidden" }}>
+            {/* Entrance animation on the rising edge of pendingOfflineSummary. Opacity and
+                transform only, so nothing inside is delayed from being tappable, and Reduce
+                Motion removes it entirely (the hook is passed `!reducedMotion &&` upstream). */}
+            <Animated.View style={[{ margin: SPACING.lg, backgroundColor: T.panel, borderRadius: RADIUS.xl, borderWidth: 1.5, borderColor: alpha(T.accent, 0.5), overflow: "hidden" }, ELEVATION.hero, offlineEntrance]}>
               {/* Header */}
-              <View style={{ backgroundColor: T.green, paddingVertical: 18, alignItems: "center" }}>
+              <View style={{ backgroundColor: T.accent, paddingVertical: 18, alignItems: "center" }}>
                 <Text style={{ fontSize: 32, marginBottom: 4 }}>🏗️</Text>
                 <Text style={{ fontSize: 20, fontWeight: "900", color: "#000" }}>While You Were Away</Text>
                 <Text style={{ fontSize: 13, color: "rgba(0,0,0,0.75)", marginTop: 3 }}>
@@ -9483,13 +9774,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 {/* Cash row */}
                 <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
                   <View style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }}>
-                    <Text style={{ fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>NET CASH</Text>
+                    <Text style={{ fontSize: 12, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>NET CASH</Text>
                     <Text style={{ fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashDelta >= 0 ? T.green : T.red }}>
                       {game.pendingOfflineSummary.cashDelta >= 0 ? "+" : ""}{money(game.pendingOfflineSummary.cashDelta)}
                     </Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1.5, borderColor: T.cyan }}>
-                    <Text style={{ fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>CASH NOW</Text>
+                    <Text style={{ fontSize: 12, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>CASH NOW</Text>
                     <Text style={{ fontSize: 19, fontWeight: "800", color: game.pendingOfflineSummary.cashNow >= 0 ? T.cyan : T.red }}>
                       {money(game.pendingOfflineSummary.cashNow)}
                     </Text>
@@ -9499,16 +9790,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 {/* Jobs / Rep / Overhead row */}
                 <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                   <View style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.orange }}>
-                    <Text style={{ fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>JOBS DONE</Text>
+                    <Text style={{ fontSize: 12, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>JOBS DONE</Text>
                     <Text style={{ fontSize: 19, fontWeight: "800", color: T.orange }}>{game.pendingOfflineSummary.jobsDelta}</Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.purple }}>
-                    <Text style={{ fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>REP</Text>
+                    <Text style={{ fontSize: 12, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>REP</Text>
                     <Text style={{ fontSize: 19, fontWeight: "800", color: T.purple }}>{game.pendingOfflineSummary.repDelta >= 0 ? "+" : ""}{game.pendingOfflineSummary.repDelta}</Text>
                   </View>
                   {(game.pendingOfflineSummary.overheadPerDay || 0) > 0 && (
                     <View style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 12, padding: 12, alignItems: "center", borderWidth: 1, borderColor: T.red }}>
-                      <Text style={{ fontSize: 10, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>BURN/DAY</Text>
+                      <Text style={{ fontSize: 12, color: T.sub, marginBottom: 3, fontWeight: "700", letterSpacing: 0.8 }}>BURN/DAY</Text>
                       <Text style={{ fontSize: 15, fontWeight: "800", color: T.red }}>{money(game.pendingOfflineSummary.overheadPerDay)}</Text>
                     </View>
                   )}
@@ -9525,13 +9816,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 )}
 
                 <TouchableOpacity
-                  style={{ backgroundColor: T.green, borderRadius: 12, paddingVertical: 14, alignItems: "center" }}
+                  style={{ backgroundColor: T.accent, borderRadius: RADIUS.md, minHeight: MIN_TAP_TARGET + 6, alignItems: "center", justifyContent: "center" }}
                   onPress={() => update(g => { g.pendingOfflineSummary = null; })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss the away report and get back to work"
                 >
-                  <Text style={{ fontSize: 16, fontWeight: "900", color: "#000", letterSpacing: 0.5 }}>Get Back to Work →</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "900", color: "#0a1018", letterSpacing: 0.5 }}>Get Back to Work →</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </Animated.View>
           </View>
         </Modal>
       )}
@@ -9711,7 +10004,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {tab === "Bids"      && renderBids()}
         {tab === "Sites"     && renderSites()}
         {tab === "Crew"      && renderCrew()}
-        {tab === "Vehicles"  && renderEquipment()}
+        {tab === "Equipment" && renderEquipment()}
         {tab === "Finance"   && renderFinance()}
         {tab === "Empire"    && renderEmpire()}
       </View>
@@ -9721,7 +10014,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const badgeVal = {
             Bids:      getOpenContracts(game).length,
             Crew:      game.applicants.length,
-            Vehicles:  (game.equipment||[]).filter(e => e.condition < 40 || e.status === "Maintenance").length || 0,
+            Equipment: (game.equipment||[]).filter(e => e.condition < 40 || e.status === "Maintenance").length || 0,
             Finance:   (game.taxDue || 0) > 0 ? "!" : 0,
             Empire:    (game.empireGoalsCompleted||[]).length < EMPIRE_GOALS.length && EMPIRE_GOALS.some(g2 => !(game.empireGoalsCompleted||[]).includes(g2.id) && (() => { try { return g2.check(game); } catch(_){return false;} })()) ? "!" : 0,
           }[t];
@@ -9730,7 +10023,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Bids:     { active: "document-text", inactive: "document-text-outline" },
             Sites:    { active: "construct",      inactive: "construct-outline"     },
             Crew:     { active: "people",         inactive: "people-outline"        },
-            Vehicles: { active: "car",            inactive: "car-outline"           },
+            Equipment:{ active: "hammer",         inactive: "hammer-outline"        },
             Finance:  { active: "wallet",         inactive: "wallet-outline"        },
             Empire:   { active: "trophy",         inactive: "trophy-outline"        },
           };
@@ -9755,21 +10048,21 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <View
                   style={{
                     position: "absolute", top: 2, alignSelf: "center",
-                    width: 7, height: 7, borderRadius: 4, backgroundColor: T.cyan,
+                    width: 7, height: 7, borderRadius: 4, backgroundColor: T.accentSoft,
                   }}
                   accessibilityElementsHidden
                   importantForAccessibility="no"
                 />
               )}
               {!!badgeVal && (
-                <View style={[styles.badge, { backgroundColor: t === "Finance" ? T.red : T.orange }]}>
+                <View style={[styles.badge, { backgroundColor: t === "Finance" ? T.hazard : T.accent }]}>
                   <Text style={styles.badgeText}>{badgeVal}</Text>
                 </View>
               )}
-              <Ionicons name={iconName} size={20} color={active ? T.green : T.sub} />
+              <Ionicons name={iconName} size={20} color={active ? T.accent : T.sub} />
               <Text style={[styles.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }]}>{t}</Text>
               {active
-                ? <View style={[styles.tabDot, { backgroundColor: T.green }]} />
+                ? <View style={[styles.tabDot, { backgroundColor: T.accent }]} />
                 : <View style={[styles.tabDot, { backgroundColor: "transparent" }]} />
               }
             </TouchableOpacity>
@@ -9862,25 +10155,16 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
         </ScrollView>
 
         {openContracts.length === 0 && (
-          <View style={{ alignItems: "center", padding: 24 }}>
-            <Text style={{ fontSize: 32, marginBottom: 8 }}>📋</Text>
-            <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 6 }]}>
-              {categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : "No contracts available"}
-            </Text>
-            <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
-              {categoryFilter !== "All"
-                ? `Nothing in ${categoryFilter} right now — other categories may still have work.`
-                : "New contracts arrive every day. Finishing jobs on time raises your reputation, which brings bigger ones."}
-            </Text>
-            {categoryFilter !== "All" && (
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: T.orange, borderColor: T.orange }]}
-                onPress={() => onSetFilter("All")}
-              >
-                <Text style={[styles.btnText, { color: "#fff" }]}>Show All Contracts</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          <EmptyState
+            T={T}
+            icon={getEmptyState("Bids").icon}
+            title={categoryFilter !== "All" ? `No ${categoryFilter} contracts right now` : getEmptyState("Bids").title}
+            body={categoryFilter !== "All"
+              ? `Nothing in ${categoryFilter} right now — other categories may still have work.`
+              : getEmptyState("Bids").body}
+            ctaLabel={categoryFilter !== "All" ? "Show all categories" : null}
+            onCta={categoryFilter !== "All" ? () => onSetFilter("All") : null}
+          />
         )}
 
         {openContracts.map((c) => {
@@ -9905,7 +10189,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
                     <Text style={[styles.label, col]} numberOfLines={1}>{c.label}</Text>
-                    <Text style={{ fontSize: 10, color: T.purple, borderWidth: 1, borderColor: T.purple, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>{c.category || "Commercial"}</Text>
+                    <Text style={{ fontSize: 12, color: T.purple, borderWidth: 1, borderColor: T.purple, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>{c.category || "Commercial"}</Text>
                   </View>
                   <Text style={[styles.sub, subCol]}>{c.client}{(() => {
                     const bidCity = CITIES.find(ct => ct.id === (c.cityId || "salem"));
@@ -9929,7 +10213,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
               {/* R15-2: Weekend Rush banner */}
               {c.isWeeklyRush && (
                 <View style={{ backgroundColor: T.yellow + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 6, borderWidth: 1, borderColor: T.yellow }}>
-                  <Text style={[styles.sub, { color: T.yellow, fontWeight: "700", fontSize: 10 }]}>
+                  <Text style={[styles.sub, { color: T.yellow, fontWeight: "700", fontSize: 12 }]}>
                     ⚡ WEEKEND RUSH — 2× Pay · Expires Day {c.expiresDay}
                   </Text>
                 </View>
@@ -9943,7 +10227,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
               </View>
               {/* R15-3: Rival interest warning */}
               {c.interestedRival && c.status === "Open" && (
-                <Text style={[styles.sub, { color: T.red, fontSize: 10, marginTop: 3, fontWeight: "600" }]}>
+                <Text style={[styles.sub, { color: T.red, fontSize: 12, marginTop: 3, fontWeight: "600" }]}>
                   🔥 {c.interestedRival} is also bidding — don&apos;t wait
                 </Text>
               )}
@@ -10044,18 +10328,18 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                           return (
                             <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border }}>
                               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-                                <Text style={[styles.sub, { color: T.sub, fontSize: 10 }]}>Profit margin</Text>
-                                <Text style={[styles.sub, { color: barColor, fontSize: 10, fontWeight: "600" }]}>{marginPct}%</Text>
+                                <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>Profit margin</Text>
+                                <Text style={[styles.sub, { color: barColor, fontSize: 12, fontWeight: "600" }]}>{marginPct}%</Text>
                               </View>
                               <View style={{ height: 4, backgroundColor: T.track, borderRadius: 2 }}>
                                 <View style={{ height: 4, width: `${Math.max(0, Math.min(100, marginPct * 2))}%`, backgroundColor: barColor, borderRadius: 2 }} />
                               </View>
                               {marginPct < 0 && (
-                                <Text style={[styles.sub, { color: T.red, fontSize: 10, marginTop: 4 }]}>
+                                <Text style={[styles.sub, { color: T.red, fontSize: 12, marginTop: 4 }]}>
                                   ⚠ At your current wages and material prices this job loses money. Bid premium, or take it only to build reputation.
                                 </Text>
                               )}
-                              <Text style={[styles.sub, { color: T.sub, fontSize: 9, marginTop: 4, fontStyle: "italic" }]}>
+                              <Text style={[styles.sub, { color: T.sub, fontSize: 12, marginTop: 4, fontStyle: "italic" }]}>
                                 Estimate assumes {c.durationDays}d at minimum crew. Delays, weather and repairs come out of this margin.
                               </Text>
                             </View>
@@ -10121,7 +10405,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   {/* Equipment selection */}
                   <Text style={[styles.label, col, { marginTop: 12, marginBottom: 4 }]}>Assign Equipment ({selectedEquipIds.length} selected, need {c.equipMin})</Text>
                   {idleEquip.length === 0 && (
-                    <Text style={[styles.sub, { color: T.orange }]}>No idle vehicles — buy machines in the Vehicles tab.</Text>
+                    <Text style={[styles.sub, { color: T.orange }]}>No idle machines — buy equipment in the Equipment tab.</Text>
                   )}
                   {idleEquip.map((e) => {
                     const sel = selectedEquipIds.includes(e.id);
@@ -10160,7 +10444,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                             return (
                               <TouchableOpacity key={opt.key} onPress={() => onSetBidStyle(c.id, opt.key)} style={{ flex: 1, paddingVertical: 7, paddingHorizontal: 4, borderRadius: 7, borderWidth: 1.5, borderColor: opt.color, backgroundColor: active ? opt.color + "33" : "transparent", alignItems: "center" }}>
                                 <Text style={{ fontWeight: "bold", fontSize: 12, color: active ? opt.color : T.sub }}>{opt.label}</Text>
-                                <Text style={{ fontSize: 9, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }}>{opt.sub}</Text>
+                                <Text style={{ fontSize: 12, color: active ? opt.color : T.border, textAlign: "center", marginTop: 1 }}>{opt.sub}</Text>
                               </TouchableOpacity>
                             );
                           })}
@@ -10293,9 +10577,14 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
 
       {/* Applicants */}
       {game.applicants.length === 0 && (
-        <Text style={[styles.sub, subCol, { textAlign: "center", padding: 16, fontStyle: "italic" }]}>
-          Post a job to attract applicants.
-        </Text>
+        <EmptyState
+          T={T}
+          icon="person-add-outline"
+          title="No applicants waiting"
+          body="Post a job ad to attract trades. Applicants arrive over the following days and expire if you leave them too long."
+          ctaLabel="Post a job ad"
+          onCta={onPostJob}
+        />
       )}
       {game.applicants.length > 0 && (
         <>
@@ -10353,15 +10642,14 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
         </TouchableOpacity>
       )}
       {game.crew.length === 0 && (
-        <View style={{ alignItems: "center", padding: 16 }}>
-          <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 4 }]}>No crew on the books</Text>
-          <Text style={[styles.sub, subCol, { textAlign: "center", marginBottom: 12 }]}>
-            A site can&apos;t start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for.
-          </Text>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: T.cyan, borderColor: T.cyan }]} onPress={onPostJob}>
-            <Text style={[styles.btnText, { color: "#fff" }]}>Post a Job Ad</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          T={T}
+          icon={getEmptyState("Crew").icon}
+          title={getEmptyState("Crew").title}
+          body="A site cannot start without crew. Post a job ad to bring in applicants, then hire the trades your contracts call for."
+          ctaLabel="Post a job ad"
+          onCta={onPostJob}
+        />
       )}
       {game.crew.map((w) => {
         const trait = w.trait || {};
@@ -10383,13 +10671,13 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               {(() => {
                 const curLvl = WORKER_LEVELS.find(l => l.level === (w.level || 1));
                 const nextLvl = WORKER_LEVELS.find(l => l.level === (w.level || 1) + 1);
-                if (!nextLvl) return <Text style={[styles.sub, { color: T.yellow, fontSize: 10 }]}>⭐ Max Level</Text>;
+                if (!nextLvl) return <Text style={[styles.sub, { color: T.yellow, fontSize: 12 }]}>⭐ Max Level</Text>;
                 const xpProgress = Math.min(1, ((w.xp || 0) - curLvl.xpRequired) / (nextLvl.xpRequired - curLvl.xpRequired));
                 return (
                   <View style={{ marginTop: 3, marginBottom: 2 }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={[styles.sub, { color: T.sub, fontSize: 9 }]}>XP {w.xp || 0} / {nextLvl.xpRequired}</Text>
-                      <Text style={[styles.sub, { color: T.cyan, fontSize: 9 }]}>Next: {nextLvl.label}</Text>
+                      <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>XP {w.xp || 0} / {nextLvl.xpRequired}</Text>
+                      <Text style={[styles.sub, { color: T.cyan, fontSize: 12 }]}>Next: {nextLvl.label}</Text>
                     </View>
                     <View style={[styles.progressTrack, { backgroundColor: T.track, height: 4, marginTop: 2 }]}>
                       <View style={[styles.progressFill, { width: `${Math.round(xpProgress * 100)}%`, backgroundColor: T.cyan, height: 4 }]} />
@@ -10414,7 +10702,7 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 const loyalty = w.loyalty ?? 0;
                 if (daysWorked > 0 || jobsDone > 0) {
                   return (
-                    <Text style={[styles.sub, { color: loyalty >= 80 ? T.yellow : loyalty >= 40 ? T.cyan : T.sub, fontSize: 10, marginTop: 1 }]}>
+                    <Text style={[styles.sub, { color: loyalty >= 80 ? T.yellow : loyalty >= 40 ? T.cyan : T.sub, fontSize: 12, marginTop: 1 }]}>
                       {loyalty >= 80 ? "⭐ " : ""}Hired Day {w.hireDay || 0} · {jobsDone} project{jobsDone !== 1 ? "s" : ""} complete{loyalty >= 80 ? " · Veteran" : ""}
                     </Text>
                   );
@@ -10427,7 +10715,7 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               {w.status === "Active" && (() => {
                 const workingSite = (game.activeSites || []).find(s => (s.assignedCrewIds || []).includes(w.id));
                 return workingSite ? (
-                  <Text style={[styles.sub, { color: T.cyan, fontSize: 10, marginTop: 2 }]}>🏗️ {workingSite.label}</Text>
+                  <Text style={[styles.sub, { color: T.cyan, fontSize: 12, marginTop: 2 }]}>🏗️ {workingSite.label}</Text>
                 ) : null;
               })()}
               <View style={[styles.statusPill, { backgroundColor: T.panel2, marginTop: 4 }]}>
@@ -10468,7 +10756,7 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 const prog = TRAINING_PROGRAMS.find(p => p.certId === cert);
                 return (
                   <View key={cert} style={{ backgroundColor: T.blue + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: T.blue }}>
-                    <Text style={[styles.sub, { fontSize: 9, color: T.blue, fontWeight: "700" }]}>🎓 {prog?.label || cert}</Text>
+                    <Text style={[styles.sub, { fontSize: 12, color: T.blue, fontWeight: "700" }]}>🎓 {prog?.label || cert}</Text>
                   </View>
                 );
               })}
@@ -10480,30 +10768,30 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               style={{ flex: 1, minWidth: 80, backgroundColor: T.green + "22", borderRadius: 7, borderWidth: 1, borderColor: T.green, paddingVertical: 6, alignItems: "center" }}
               onPress={() => onRaiseWage && onRaiseWage(w.id)}
             >
-              <Text style={{ fontSize: 10, fontWeight: "700", color: T.green }}>Raise Wage</Text>
-              <Text style={{ fontSize: 9, color: T.sub }}>+10%</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: T.green }}>Raise Wage</Text>
+              <Text style={{ fontSize: 12, color: T.sub }}>+10%</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={{ flex: 1, minWidth: 80, backgroundColor: T.orange + "22", borderRadius: 7, borderWidth: 1, borderColor: T.orange, paddingVertical: 6, alignItems: "center" }}
               onPress={() => onLowerWage && onLowerWage(w.id)}
             >
-              <Text style={{ fontSize: 10, fontWeight: "700", color: T.orange }}>Lower Wage</Text>
-              <Text style={{ fontSize: 9, color: T.sub }}>-10%</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: T.orange }}>Lower Wage</Text>
+              <Text style={{ fontSize: 12, color: T.sub }}>-10%</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={{ flex: 1, minWidth: 80, backgroundColor: T.yellow + "22", borderRadius: 7, borderWidth: 1, borderColor: T.yellow, paddingVertical: 6, alignItems: "center" }}
               onPress={() => onGiveBonus && onGiveBonus(w.id)}
             >
-              <Text style={{ fontSize: 10, fontWeight: "700", color: T.yellow }}>Give Bonus</Text>
-              <Text style={{ fontSize: 9, color: T.sub }}>2× daily</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: T.yellow }}>Give Bonus</Text>
+              <Text style={{ fontSize: 12, color: T.sub }}>2× daily</Text>
             </TouchableOpacity>
             {w.status !== "Resting" && (w.stamina ?? 50) < 80 && (
               <TouchableOpacity
                 style={{ flex: 1, minWidth: 80, backgroundColor: T.cyan + "22", borderRadius: 7, borderWidth: 1, borderColor: T.cyan, paddingVertical: 6, alignItems: "center" }}
                 onPress={() => onRest && onRest(w.id)}
               >
-                <Text style={{ fontSize: 10, fontWeight: "700", color: T.cyan }}>Rest</Text>
-                <Text style={{ fontSize: 9, color: T.sub }}>→80 stamina</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: T.cyan }}>Rest</Text>
+                <Text style={{ fontSize: 12, color: T.sub }}>→80 stamina</Text>
               </TouchableOpacity>
             )}
             {w.lastLunchDay !== game.day && (
@@ -10511,8 +10799,8 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 style={{ flex: 1, minWidth: 80, backgroundColor: T.orange + "22", borderRadius: 7, borderWidth: 1, borderColor: T.orange, paddingVertical: 6, alignItems: "center" }}
                 onPress={() => onBuyLunch && onBuyLunch(w.id)}
               >
-                <Text style={{ fontSize: 10, fontWeight: "700", color: T.orange }}>Buy Lunch</Text>
-                <Text style={{ fontSize: 9, color: T.sub }}>$25 · mood+8</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: T.orange }}>Buy Lunch</Text>
+                <Text style={{ fontSize: 12, color: T.sub }}>$25 · mood+8</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -10538,7 +10826,7 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
           )}
           {w.status === "Resting" && (
             <View style={{ marginTop: 6, backgroundColor: T.cyan + "18", borderRadius: 6, padding: 6, borderWidth: 1, borderColor: T.cyan }}>
-              <Text style={[styles.sub, { color: T.cyan, fontSize: 10 }]}>😴 Resting — stamina recovering to {w.restUntilStamina || 80}</Text>
+              <Text style={[styles.sub, { color: T.cyan, fontSize: 12 }]}>😴 Resting — stamina recovering to {w.restUntilStamina || 80}</Text>
             </View>
           )}
         </View>
@@ -10701,38 +10989,53 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
+// Shared stylesheet, rebuilt on the design system's tokens.
+//
+// These names are unchanged, because ~500 call sites across this file reference them. What
+// changed is the values, and that is deliberate: raising `sub` from 12 to 13 and `smallBtn`
+// from 5pt to a 44pt minimum tap target fixes readability and reachability on every screen at
+// once, not only on the ones rewritten by hand. See FLEETFLOW_PARITY_AUDIT.md §2 gaps 2 and 9.
+//
+// Colours stay out of here on purpose. The screen flips between dark and light at runtime and
+// applies theme colours inline; a static StyleSheet cannot hold a value that changes with the
+// theme. Layout, radius, type and spacing are theme-independent, so they belong here.
 const styles = StyleSheet.create({
-  card:        { borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 10 },
-  h2:          { fontSize: 18, fontWeight: "700" },
-  label:       { fontSize: 15, fontWeight: "600" },
-  body:        { fontSize: 14, marginTop: 4 },
-  sub:         { fontSize: 12, marginTop: 2 },
-  sectionTitle:{ fontSize: 16, fontWeight: "700", marginBottom: 4 },
-  cashBig:     { fontSize: 22, fontWeight: "800" },
-  kpi:         { borderRadius: 8, borderWidth: 1, padding: 10, alignItems: "center" },
+  card:        { borderRadius: RADIUS.md, borderWidth: 1, padding: SPACING.md + 2, marginBottom: SPACING.md - 2 },
+  h2:          { fontSize: 18, fontWeight: "800" },
+  label:       { fontSize: 15, fontWeight: "700" },
+  body:        { fontSize: 14, lineHeight: 20, marginTop: SPACING.xs },
+  // Was 12. This is the workhorse text style in the file and the main reason Construction
+  // Flow read as small next to FleetFlow.
+  sub:         { fontSize: 13, lineHeight: 18, marginTop: 2 },
+  sectionTitle:{ fontSize: 16, fontWeight: "800", marginBottom: SPACING.xs },
+  cashBig:     { fontSize: 24, fontWeight: "900" },
+  kpi:         { borderRadius: RADIUS.sm, borderWidth: 1, padding: SPACING.md - 2, alignItems: "center" },
   kpiVal:      { fontSize: 20, fontWeight: "800" },
-  kpiLabel:    { fontSize: 11, marginTop: 2 },
+  kpiLabel:    { fontSize: 12, marginTop: 3 },
   progressTrack:{ height: 6, borderRadius: 3, overflow: "hidden" },
   progressFill: { height: 6, borderRadius: 3 },
-  tabBar:      { position: "absolute", left: 10, right: 10, bottom: Platform.select({ ios: 24, android: 12, default: 10 }), flexDirection: "row", borderRadius: 20, borderWidth: 1.2, justifyContent: "space-around", alignItems: "center", paddingVertical: 8, paddingHorizontal: 4, elevation: 10 },
-  tabItem:     { flex: 1, alignItems: "center", justifyContent: "center", position: "relative", paddingVertical: 8, paddingHorizontal: 2 },
+  tabBar:      { position: "absolute", left: 10, right: 10, bottom: Platform.select({ ios: 24, android: 12, default: 10 }), flexDirection: "row", borderRadius: RADIUS.xl, borderWidth: 1.2, justifyContent: "space-around", alignItems: "center", paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xs, elevation: 10, shadowColor: "#000000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+  tabItem:     { flex: 1, alignItems: "center", justifyContent: "center", position: "relative", paddingVertical: SPACING.sm, paddingHorizontal: 2 },
   tabIcon:     { fontSize: 14, fontWeight: "700" },
-  tabLabel:    { fontSize: 11, fontWeight: "600" },
+  tabLabel:    { fontSize: 11, fontWeight: "600", marginTop: 2 },
   tabDot:      { marginTop: 4, width: 5, height: 5, borderRadius: 999 },
-  badge:       { position: "absolute", top: 0, right: 10, minWidth: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
-  badgeText:   { color: "#fff", fontSize: 9, fontWeight: "700" },
-  btn:         { borderRadius: 8, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 14, alignItems: "center" },
-  btnText:     { fontSize: 14, fontWeight: "600" },
-  smallBtn:    { borderRadius: 6, paddingVertical: 5, paddingHorizontal: 10, alignItems: "center" },
-  smallBtnText:{ color: "#fff", fontSize: 12, fontWeight: "600" },
-  chip:        { fontSize: 11, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  rowItem:     { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 6 },
-  selDot:      { width: 16, height: 16, borderRadius: 8, marginLeft: 8 },
-  finRow:      { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth },
-  input:         { borderWidth: 1, borderRadius: 8, padding: 10, fontSize: 16 },
-  modalOverlay:  { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
-  modalCard:     { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, padding: 20, backgroundColor: "#111a0f" },
-  feedItem:      { fontSize: 12, paddingVertical: 3 },
-  statusPill:    { borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
-  statusPillText:{ fontSize: 11, fontWeight: "600" },
+  badge:       { position: "absolute", top: 0, right: 8, minWidth: 17, height: 17, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
+  badgeText:   { color: "#0a1018", fontSize: 12, fontWeight: "800" },
+  // Both button styles now meet the 44pt minimum tap target. `smallBtn` was 5pt of vertical
+  // padding around 12px text, which is roughly a 22pt target.
+  btn:         { borderRadius: RADIUS.sm, borderWidth: 1, minHeight: MIN_TAP_TARGET, paddingHorizontal: SPACING.lg, alignItems: "center", justifyContent: "center" },
+  btnText:     { fontSize: 14, fontWeight: "700" },
+  smallBtn:    { borderRadius: RADIUS.xs, minHeight: MIN_TAP_TARGET - 8, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md, alignItems: "center", justifyContent: "center" },
+  smallBtnText:{ color: "#fff", fontSize: 13, fontWeight: "700" },
+  chip:        { fontSize: 12, borderWidth: 1, borderRadius: RADIUS.xs, paddingHorizontal: SPACING.sm, paddingVertical: 3 },
+  rowItem:     { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.md - 2, marginBottom: SPACING.sm - 2 },
+  selDot:      { width: 18, height: 18, borderRadius: 9, marginLeft: SPACING.sm },
+  finRow:      { flexDirection: "row", justifyContent: "space-between", paddingVertical: SPACING.sm, borderBottomWidth: StyleSheet.hairlineWidth },
+  input:         { borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.md - 2, fontSize: 16 },
+  modalOverlay:  { flex: 1, backgroundColor: "rgba(0,0,0,0.72)", justifyContent: "flex-end" },
+  // The inherited value hard-coded a green-tinted panel from a different game's palette.
+  modalCard:     { borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, borderTopWidth: 1, padding: SPACING.xl, backgroundColor: "#141c28" },
+  feedItem:      { fontSize: 13, lineHeight: 19, paddingVertical: SPACING.xs },
+  statusPill:    { borderRadius: RADIUS.pill, paddingHorizontal: SPACING.sm + 2, paddingVertical: 3 },
+  statusPillText:{ fontSize: 12, fontWeight: "700" },
 });
