@@ -5,6 +5,125 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 7 — The company you can read
+
+**Not built into a TestFlight build.** `ios.buildNumber` stays at **5** at the app owner's
+instruction: no new build without an explicit go-ahead.
+
+### The finding — the analytics engine was not "unsurfaced", it was measuring nothing
+
+Audit rows 36/37 said `analyticsEngine` was "ticked every day and almost never shown — data is
+collected; the player can't see it." That was half right, and the wrong half is the interesting
+one. `analyticsEngine.js` is FleetFlow's module, shared verbatim, and **every input it reads is
+a field Construction Flow does not have**:
+
+| It reads | Construction Flow has | So the KPI was |
+| --- | --- | --- |
+| `weeklyStats.completedRoutes` | — | on-time rate **1.00, always** |
+| `weeklyStats.lateDeliveries` | — | " |
+| `weeklyStats.routeIncome` | — | revenue **0, always** |
+| `weeklyStats.wages` / `fuel` / `rent` | — | expenses **0, always** |
+| `status === "En Route"` | `Active` / `Idle` / `Broken` | utilisation **0.00, always** |
+| `game.customerRating` | — | **3.5, forever** |
+
+Construction Flow's `weeklyStats` is `{revenue, expenses, jobsCompleted, unexpectedCosts,
+savingsInterest}` — not one of those names. So the engine was snapshotting a row of zeros, a
+permanent 100% on-time rate and a permanent 0% utilisation every seven days and keeping 26 of
+them in the save.
+
+**Surfacing those numbers, as the audit's own recommendation implied, would have been worse than
+leaving them hidden** — precise, confident and wrong is worse than absent.
+
+It also carries a real operator-precedence bug that would misreport FleetFlow too:
+
+```js
+const totalExpenses = game.weeklyStats?.wages || 0 + (game.weeklyStats?.fuel || 0) + ...
+```
+
+`||` binds looser than `+`, so that is `wages || (0 + fuel + repairs + ...)`. Whenever wages is
+non-zero, every other expense line is silently discarded.
+
+### `src/systems/constructionKPIs.js` (new)
+
+Eight measures computed from state this game actually maintains — translated to construction
+rather than copied: revenue per **crew**, **plant** utilisation, cost per **job site**.
+
+On-Time Completion · Plant Utilisation · Crew Utilisation · Profit Margin · Revenue/Crew/Week ·
+Bid Win Rate · Plant Condition · Client Retention
+
+Two design rules that do most of the work:
+
+- **A measure with no data behind it is `null`, never zero.** Zero is a claim — "you are failing"
+  — and a company on day 3 that has never bid has not earned that claim. Those render as "Not
+  enough history yet".
+- **Nothing is blamed on the player that is not their doing.** A *broken* machine is excluded
+  from the utilisation denominator, and *resting* crew from theirs, so a breakdown or a rest day
+  never reads as a management failure. Plant *condition*, by contrast, counts the whole yard —
+  a yard full of wrecks really is a condition problem.
+
+The card leads with a verdict, not a grid: the weakest measure by name, with advice attached to
+it. And it prints the counts behind the percentages, so "67%" reads as "2 of 3 jobs on time".
+
+### New counters, and what migration deliberately does not do
+
+`bidsPlaced` / `bidsWon` / `bidsLost` are new, because nothing tracked bid outcomes at all, and
+`jobHistory` entries now carry `daysLate`.
+
+**Migration starts all of them at zero rather than inferring them.** A returning player's
+`completedJobs` is not evidence of bids won — there is no record of the bids they *lost*, and a
+fabricated win rate would be the game making something up about them. Job-history entries written
+before this sprint are excluded from the on-time rate rather than assumed on time, which would
+flatter that record.
+
+The stale `analytics` blob is dropped on load, reclaiming the save space 26 rows of zeros
+occupied.
+
+### Clients came out of the drawer
+
+Audit row 28: the loyalty system — tier ceilings, value bonuses, deadline extensions, repeat
+business — was simulated in full inside a `CollapsibleSection` that defaults to closed. It is now
+a card at the same level as everything it competes with, leading with what loyalty is actually
+worth: *"3 of them pay you a loyalty premium — worth about +18% across their contracts."*
+
+### Two device-reported fixes
+
+**The tab label that fell off the bar.** "Equipment" is the longest entry in `TABS` and was
+wrapping to two lines and overflowing the bottom bar on a real iPhone. It had no wrap guard at
+all. Now `numberOfLines={1}` with `adjustsFontSizeToFit`, so only the label that needs to shrink
+does, plus `minWidth: 0` on the tab item — without it a flex child refuses to shrink past its
+intrinsic text width, which is what pushed the label onto a second line in the first place.
+
+**The clock.** Reported as "feels off", and the reason is that there wasn't one. Construction
+Flow has always HAD a clock — `gameMinutes` starts at 480 (8:00 AM) and advances 30 per tick, 48
+ticks to the day — it was simply never rendered, so time passed invisibly and the day appeared to
+jump. The header now reads `Day 12 · 8:30 AM`, using a `formatClock` that is deliberately
+identical to FleetFlow's so the two games tell the time the same way.
+
+### Tests — 525 → 585
+
+- `__tests__/constructionKPIs.test.js` (29). Opens by **pinning the claim that the old engine
+  could not measure this game**, including an executable demonstration of the precedence bug, so
+  nobody "fixes" this by wiring the dead engine back up.
+- `__tests__/constructionKPIsIntegration.test.js` (17). Proves the counters are incremented by
+  the real bid path, that won + lost always equals placed across 120 simulated days, and that a
+  job driven to completion through the actual tick reaches the KPIs.
+- Three render probes: the populated card, the no-history case, and clients as a card.
+- `__tests__/clockAndTabBar.test.js` (11). Clock edges, the 8:00 AM start, junk-value fallback,
+  the day rolling over after exactly 48 ticks, and guards so no future tab rename can overflow
+  the bar again.
+
+One test corrected during the work: it asserted a legacy save should show **no** poor grades, and
+that was wrong. A fresh company's plant and crew genuinely *are* idle — that is measured from the
+roster in front of it, not from missing history, and "0% — assign them to sites" is exactly the
+nudge a new player needs. The guard now covers the measures that really do depend on absent
+history.
+
+### Save compatibility
+
+Additive only: `kpiHistory`, `bidsPlaced`, `bidsWon`, `bidsLost`. Corrupted values are repaired
+rather than crashing the load. Covered by five tests.
+
+
 ## Phase 6 — A company with a memory, and the approved icon
 
 ### Release (1.0.0, build 5)
