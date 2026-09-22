@@ -59,6 +59,13 @@ import {
   PROPERTY_TYPES,
 } from "../../systems/companyPerkTables.js";
 import {
+  recordMemory,
+  resolveMemoryEffects,
+  summarizeCompanyStory,
+  describeStanding,
+  pickMemoryCallback,
+} from "../../systems/companyMemory.js";
+import {
   resolveCompanyPerks,
   contractBoardSize,
   dailyOfficeRent,
@@ -953,11 +960,25 @@ export function getTotalCrewCap(g) {
 // Every bid call site goes through this so the chance shown on the card is by construction
 // the chance that gets rolled.
 function withBidPerks(g) {
-  return { ...g, bidBonus: resolveCompanyPerks(g).bidBonus };
+  // Phase 6: what your company has DONE moves the odds alongside what it has BOUGHT.
+  // A record of delivered work makes you a safer bet; a market you bought your way through
+  // leaves rivals bidding against you personally. Net of the two, clamped in
+  // getBidCompetition so history can never make a bid a certainty or an impossibility.
+  const memory = resolveMemoryEffects(g);
+  return {
+    ...g,
+    bidBonus: resolveCompanyPerks(g).bidBonus,
+    memoryEdge: memory.bidEdge - memory.rivalGrudge,
+  };
 }
 
 function getMaterialDiscount(g) {
-  return resolveCompanyPerks(g).materialDiscount;
+  // Phase 6: dealing straight with suppliers earns terms; stiffing them costs terms. Added to
+  // the buildings' discount and re-clamped, so goodwill can lift you but never to free
+  // materials, and a grudge can price you up but never past paying double.
+  const { supplierGoodwill } = resolveMemoryEffects(g);
+  const combined = resolveCompanyPerks(g).materialDiscount + supplierGoodwill;
+  return Math.max(-0.25, Math.min(0.5, combined));
 }
 
 function getEquipCapBonus(g) {
@@ -1319,7 +1340,9 @@ const DECISION_EVENTS = [
     id: "supplier_deal", title: "📦 Supplier Deal", tone: "cyan",
     desc: "Your materials supplier offers a one-time 30% discount on bulk lumber and concrete if you commit $8,000 today.",
     options: [
-      { label: "Take the deal", sub: "Spend $8,000 → receive 40 lumber + 15 concrete", apply: (g) => { if (g.cash >= 8000) { g.cash -= 8000; g.expenses += 8000; g.materials.lumber = (g.materials.lumber||0)+40; g.materials.concrete = (g.materials.concrete||0)+15; addLog(g, "📦 Took supplier deal — 40 lumber + 15 concrete at 30% off!"); addImportantNotice(g, "Bulk deal: 40 lumber + 15 concrete purchased for $8,000.", "green"); } } },
+      { label: "Pay up front", sub: "Spend $8,000 → receive 40 lumber + 15 concrete", apply: (g) => { if (g.cash >= 8000) { g.cash -= 8000; g.expenses += 8000; g.materials.lumber = (g.materials.lumber||0)+40; g.materials.concrete = (g.materials.concrete||0)+15; addLog(g, "📦 Took supplier deal — 40 lumber + 15 concrete at 30% off!"); addImportantNotice(g, "Bulk deal: 40 lumber + 15 concrete purchased for $8,000.", "green"); recordMemory(g, { tag: `supplier_paid_${g.day}`, kind: "supplier", valence: "good", weight: 1.5, label: "Paid the supplier up front", detail: "you paid your materials supplier up front, in full" }); } } },
+      // Phase 6: the cost of this one is not on the invoice. Materials now, goodwill later.
+      { label: "Take it, settle later", sub: "Materials now, nothing paid — your supplier will remember", apply: (g) => { g.materials.lumber = (g.materials.lumber||0)+40; g.materials.concrete = (g.materials.concrete||0)+15; addLog(g, "📦 Took the materials on account — supplier not paid."); addImportantNotice(g, "Materials taken on account. Your supplier noted it.", "orange"); recordMemory(g, { tag: `supplier_stiffed_${g.day}`, kind: "supplier", valence: "bad", weight: 2, label: "Took materials without paying", detail: "you took a bulk order on account and never settled it" }); } },
       { label: "Pass", sub: "Keep your cash", apply: (g) => { addImportantNotice(g, "Supplier deal declined — cash kept.", "neutral"); } },
     ],
   },
@@ -2518,6 +2541,12 @@ export function checkWorkerTurnover(g) {
       w.mood = Math.max(0, (w.mood ?? 50) - rand(10, 18));
       quitChance = Math.max(quitChance, 0.60);
       addLog(g, `😰 ${w.name} is completely burned out — about to quit!`);
+      // Running someone into the ground is remembered by everyone else on the crew.
+      recordMemory(g, {
+        tag: `burnout_${w.id}`, kind: "crew", valence: "bad", weight: 2, subject: w.name,
+        label: `Ran ${w.name} into the ground`,
+        detail: `you worked ${w.name} to burnout`,
+      });
     } else if ((w.stamina ?? 50) < 20 && w.status !== "Idle") {
       w.mood = Math.max(0, (w.mood ?? 50) - rand(6, 12));
       if ((w.mood ?? 50) < 20) quitChance = Math.max(quitChance, 0.30);
@@ -2562,12 +2591,23 @@ export function checkWorkerTurnover(g) {
           w.lastRaiseDay = g.day;
           w.mood = Math.min(100, (w.mood ?? 50) + 10);
           addLog(g, `💰 ${w.name} got a raise (+$${raise}/day) — ${w.trait.label} demands it.`);
+          recordMemory(g, {
+            tag: `raise_${w.id}`, kind: "crew", valence: "good", weight: 1, subject: w.name,
+            label: `Gave ${w.name} a raise`,
+            detail: `you paid ${w.name} properly when they asked`,
+          });
         } else {
           w.mood = Math.max(0, (w.mood ?? 50) - 15);
           quitChance = Math.max(quitChance, 0.10);
         }
       }
     }
+
+    // Phase 6: people remember how they were treated. A company with a history of looking
+    // after its crew holds on to them; one with the opposite history bleeds them faster.
+    // Applied to the CHANCE, never to the reasons — a burned-out worker is still burned out.
+    const _loyalty = resolveMemoryEffects(g).crewLoyalty;
+    if (_loyalty !== 0) quitChance = Math.max(0, Math.min(1, quitChance * (1 - _loyalty)));
 
     if (quitChance > 0 && Math.random() < quitChance) {
       quitters.push(w.id);
@@ -3251,6 +3291,7 @@ export function freshState() {
     unlockedCities: [],    // city ids unlocked by valuation threshold
     selectedEmpireCity: "portland",
     trainingQueue: [],
+    companyMemory: [],
     cityJobsWon: {},
 
     // Sprint 5 — Safety, Insurance, Economy History, Achievements, Legacy
@@ -3376,6 +3417,9 @@ export function migrateState(saved) {
   if (!g.unlockedCities)                   g.unlockedCities = [];
   if (!g.selectedEmpireCity)              g.selectedEmpireCity = "portland";
   if (!g.trainingQueue)                   g.trainingQueue = [];
+  // Phase 6. A build-4 save has no chronicle; it starts one from the day it is loaded rather
+  // than inventing a history it never had.
+  if (!Array.isArray(g.companyMemory))    g.companyMemory = [];
   if (!g.cityJobsWon)                     g.cityJobsWon = {};
   // Sprint 5 fields
   if (g.safetyScore     === undefined)    g.safetyScore = 60;
@@ -3971,6 +4015,41 @@ export function gameTick(prev) {
             addLog(g, `💔 On-time streak broken at ${g.onTimeStreak} — ${site.label} was ${daysLate} day(s) late.`);
           }
           g.onTimeStreak = 0;
+        }
+        // Phase 6: the company remembers how this one went. Weighted by the size of the job,
+        // so a fence and a tower do not echo equally.
+        {
+          const _weight = (site.totalValue || 0) >= 250000 ? 3 : (site.totalValue || 0) >= 80000 ? 2 : 1;
+          if (daysLate === 0) {
+            recordMemory(g, {
+              tag: `delivered_${site.id}`, kind: "triumph", valence: "good", weight: _weight,
+              subject: site.client || "",
+              label: `Delivered ${site.label} on time`,
+              detail: `you delivered ${site.label} on time for ${site.client || "the client"}`,
+            });
+          } else {
+            recordMemory(g, {
+              tag: `blew_${site.id}`, kind: "setback", valence: "bad", weight: _weight,
+              subject: site.client || "",
+              label: `${site.label} ran ${daysLate} day${daysLate === 1 ? "" : "s"} late`,
+              detail: `${site.label} ran ${daysLate} day${daysLate === 1 ? "" : "s"} late`,
+            });
+          }
+          if (effectiveQuality >= 1.15) {
+            recordMemory(g, {
+              tag: `praised_${site.id}`, kind: "client", valence: "good", weight: _weight,
+              subject: site.client || "",
+              label: `${site.client || "A client"} got premium work`,
+              detail: `you handed ${site.client || "them"} premium work on ${site.label}`,
+            });
+          } else if (effectiveQuality < 0.95) {
+            recordMemory(g, {
+              tag: `disappointed_${site.id}`, kind: "client", valence: "bad", weight: _weight,
+              subject: site.client || "",
+              label: `${site.client || "A client"} got below-standard work`,
+              detail: `you handed ${site.client || "them"} below-standard work on ${site.label}`,
+            });
+          }
         }
         checkWeeklyChallenge(g, "job_complete", 1);
         checkWeeklyChallenge(g, "revenue", earned);
@@ -6035,6 +6114,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
       if (!g.acquiredRivals) g.acquiredRivals = [];
       g.acquiredRivals.push(rivalId);
+
+      // Phase 6: buying a competitor out wins you the market and earns you enemies. The firms
+      // still standing remember who did the buying, and bid against you on principle.
+      recordMemory(g, {
+        tag: `acquired_${rivalId}`, kind: "rivalry", valence: "bad", weight: 2,
+        subject: plan.rivalName,
+        label: `Bought out ${plan.rivalName}`,
+        detail: `you bought ${plan.rivalName} out of the market`,
+      });
       g.lastAcquisitionDay = g.day;
       g.reputation = Math.min(100, (g.reputation||0) + plan.repGain);
       g.creditScore = Math.min(850, (g.creditScore||600) + plan.creditGain);
@@ -9048,6 +9136,105 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
+        {/* ─── Company Story — Phase 6 ─────────────────────────────────────────
+            What this company has done, and what it is costing or earning it now.
+
+            Audit row 23 was the last untouched gap: "FleetFlow's events REMEMBER. A decision
+            made on day 20 can be referenced on day 60. Construction Flow's chains are per-site
+            and short-lived, so the world doesn't accumulate a history." Before Phase 6 the
+            only event history was site.chaosHistory — capped at 10, scoped to one job, and
+            destroyed when that job finished. Nothing survived a completed project.
+
+            Every line here is backed by a live modifier. The standing text is derived from the
+            same resolveMemoryEffects() the bidding, material pricing and turnover code reads,
+            so this card cannot claim an effect the simulation is not applying. */}
+        {(() => {
+          const story = summarizeCompanyStory(game, 6);
+          const effects = resolveMemoryEffects(game);
+          const callback = pickMemoryCallback(game);
+          const toneFor = (v) => (v === "bad" ? "hazard" : v === "neutral" ? "neutral" : "success");
+
+          const live = [
+            effects.bidEdge !== 0 && {
+              label: "Bid win chance", tone: effects.bidEdge > 0 ? "success" : "hazard",
+              value: `${effects.bidEdge > 0 ? "+" : "−"}${Math.abs(Math.round(effects.bidEdge * 100))}%`,
+            },
+            effects.supplierGoodwill !== 0 && {
+              label: "Material prices", tone: effects.supplierGoodwill > 0 ? "success" : "hazard",
+              value: `${effects.supplierGoodwill > 0 ? "−" : "+"}${Math.abs(Math.round(effects.supplierGoodwill * 100))}%`,
+            },
+            effects.crewLoyalty !== 0 && {
+              label: "Crew staying power", tone: effects.crewLoyalty > 0 ? "success" : "hazard",
+              value: `${effects.crewLoyalty > 0 ? "+" : "−"}${Math.abs(Math.round(effects.crewLoyalty * 100))}%`,
+            },
+            effects.rivalGrudge > 0 && {
+              label: "Rivals bidding against you", tone: "hazard",
+              value: `−${Math.round(effects.rivalGrudge * 100)}%`,
+            },
+          ].filter(Boolean);
+
+          return (
+            <Card T={T} tone={effects.rivalGrudge > 0 ? "hazard" : "steel"} elevated style={{ marginTop: 8 }}>
+              <SectionLabel T={T} tone="steel">Company Story</SectionLabel>
+              <Text style={[TYPE.body, { color: T.text, marginTop: SPACING.xs }]}>
+                {describeStanding(game)}
+              </Text>
+
+              {live.length > 0 && (
+                <View style={{ marginTop: SPACING.md }}>
+                  <SectionLabel T={T}>What your history is doing right now</SectionLabel>
+                  {live.map((row, i) => (
+                    <KeyValueRow
+                      key={row.label}
+                      T={T}
+                      label={row.label}
+                      value={row.value}
+                      tone={row.tone}
+                      divider={i < live.length - 1}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* The world referring back to something the player actually did. */}
+              {callback && (
+                <View style={{ marginTop: SPACING.md }}>
+                  <AlertBanner
+                    T={T}
+                    tone={callback.tone === "red" ? "hazard" : callback.tone === "green" ? "success" : callback.tone === "orange" ? "caution" : "info"}
+                    title={callback.title}
+                    body={callback.desc}
+                  />
+                </View>
+              )}
+
+              {story.length > 0 ? (
+                <View style={{ marginTop: SPACING.md }}>
+                  <SectionLabel T={T}>What this company has done</SectionLabel>
+                  {story.map((entry) => (
+                    <View key={entry.key} style={{ flexDirection: "row", alignItems: "flex-start", marginTop: SPACING.sm }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, marginTop: 6, marginRight: SPACING.sm, backgroundColor: toneColor(toneFor(entry.valence), T), opacity: entry.stillCounts ? 1 : 0.35 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[TYPE.label, { color: entry.stillCounts ? T.text : T.sub }]} numberOfLines={2}>
+                          {entry.label}
+                        </Text>
+                        <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]} numberOfLines={1}>
+                          {entry.when}{entry.stillCounts ? "" : " · no longer counts"}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.md }]}>
+                  Nothing on the record yet. Deliver a job, deal straight with a supplier, or buy
+                  out a rival, and this is where it stays.
+                </Text>
+              )}
+            </Card>
+          );
+        })()}
+
         {/* Market Position */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border, marginTop: 8 }]}>
           <Text style={[styles.sectionTitle, col]}>Market Position</Text>
@@ -11050,18 +11237,34 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   {idleEquip.length === 0 && (
                     <Text style={[styles.sub, { color: T.orange }]}>No idle machines — buy equipment in the Equipment tab.</Text>
                   )}
+                  {/* Phase 6: the machine's own artwork rides the picker row. Site cards got
+                      this in Phase 3, but the PICKER — the screen where the player actually
+                      chooses what to send — was still a text list, which is the one place
+                      knowing a grader from a paver changes the decision. */}
                   {idleEquip.map((e) => {
                     const sel = selectedEquipIds.includes(e.id);
                     const tierOk = e.tier >= c.minTier;
+                    const img = EQUIPMENT_IMAGES[e.shopId];
                     return (
                       <TouchableOpacity
                         key={e.id}
-                        style={[styles.rowItem, { backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : tierOk ? T.border : T.red, opacity: tierOk ? 1 : 0.6 }]}
+                        style={[styles.rowItem, { alignItems: "center", minHeight: MIN_TAP_TARGET + 8, backgroundColor: sel ? T.panel3 : T.panel2, borderColor: sel ? T.orange : tierOk ? T.border : T.red, opacity: tierOk ? 1 : 0.6 }]}
                         onPress={() => tierOk && toggleEquip(e.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${sel ? "Deselect" : "Select"} ${e.name}, tier ${e.tier}, condition ${Math.round(e.condition)} percent`}
                       >
+                        {img ? (
+                          <Image
+                            source={img}
+                            style={{ width: 46, height: 34, borderRadius: RADIUS.xs, marginRight: SPACING.sm, backgroundColor: "#ffffff" }}
+                            resizeMode="contain"
+                          />
+                        ) : null}
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.label, col]}>{e.name}</Text>
-                          <Text style={[styles.sub, subCol]}>Tier {e.tier} · Cond {Math.round(e.condition)}%</Text>
+                          <Text style={[styles.label, col]} numberOfLines={1}>{e.name}</Text>
+                          <Text style={[styles.sub, { color: toneColor(conditionTone(e.condition), T) }]} numberOfLines={1}>
+                            Tier {e.tier} · Cond {Math.round(e.condition)}%
+                          </Text>
                           {!tierOk && <Text style={[styles.sub, { color: T.red }]}>Needs Tier {c.minTier}+</Text>}
                         </View>
                         <View style={[styles.selDot, { backgroundColor: sel ? T.orange : T.border }]} />

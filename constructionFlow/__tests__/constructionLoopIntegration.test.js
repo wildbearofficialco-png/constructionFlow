@@ -369,14 +369,55 @@ describe("the economy stays sane over a long run", () => {
     g.cash = 150000;
     g.activeSites = [siteOn(g, { materialsFulfilled: { lumber: 999, concrete: 999, steel: 999 } })];
 
+    // A contract's value moves DURING the job — a Scope Change or Client Praise adds to
+    // site.totalValue, a payment hold subtracts from it. Build 3 already corrected this
+    // assertion once, from the value the site STARTED with to its current value. That was
+    // still not right, and this run found the remaining hole roughly 1 time in 20:
+    //
+    //   a claim is validated against the contract value AT CLAIM TIME, and released cash is
+    //   never clawed back if the contract is later revalued DOWN.
+    //
+    // So 50,000 legitimately released against a 100,000 contract stays on the books after a
+    // payment hold cuts that contract to 93,002, and the naive ceiling of 46,501 is simply
+    // the wrong number to measure against. The high-water mark is the honest ceiling, and the
+    // real invariant — never negative, never NaN, never more than half of the MOST the
+    // contract was ever worth — is preserved exactly.
+    const highWater = new Map();
+
     for (let i = 0; i < 300; i++) {
       g = gameTick(g);
       expect(Number.isFinite(g.cash)).toBe(true);
       for (const s of g.activeSites || []) {
+        const peak = Math.max(highWater.get(s.id) || 0, s.totalValue || 0);
+        highWater.set(s.id, peak);
         expect(s.progressPaid).toBeGreaterThanOrEqual(0);
         expect(Number.isFinite(s.progressPaid)).toBe(true);
-        expect(s.progressPaid).toBeLessThanOrEqual(Math.round((s.totalValue || 0) * PROGRESS_SHARE) + 1);
+        expect(s.progressPaid).toBeLessThanOrEqual(Math.round(peak * PROGRESS_SHARE) + 1);
       }
+    }
+  });
+
+  test("a contract revalued DOWN mid-job keeps the cash already released", () => {
+    // The behaviour the flake above was really reporting, pinned deliberately so it cannot
+    // regress into an actual overpayment bug.
+    let g = freshState();
+    g.setupDone = true;
+    g.tutorialDone = true;
+    g.cash = 150000;
+    const site = siteOn(g, { materialsFulfilled: { lumber: 999, concrete: 999, steel: 999 } });
+    site.totalValue = 100000;
+    site.progressPaid = 50000; // fully claimed at the original value
+    g.activeSites = [site];
+
+    // A payment hold cuts the contract.
+    g.activeSites[0].totalValue = 93002;
+    g = gameTick(g);
+
+    const after = (g.activeSites || [])[0];
+    if (after) {
+      // Released cash is not refunded, and no FURTHER claim is released against the lower value.
+      expect(after.progressPaid).toBeGreaterThanOrEqual(50000);
+      expect(after.progressPaid).toBeLessThanOrEqual(50000 + 1);
     }
   });
 });
