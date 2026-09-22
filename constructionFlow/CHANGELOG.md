@@ -5,6 +5,30 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Release (1.0.0, build 6)
+
+- iOS `buildNumber` 5 -> 6. Version stays **1.0.0**. Android `versionCode` untouched at 1.
+- **Carries three sprints' worth of work.** Build 5 shipped Phase 6 (company memory, the approved
+  icon); everything since has been merged and unbuilt:
+  - **Sprint 7** — eight construction-native KPIs and the Performance card, replacing a FleetFlow
+    analytics engine that was measuring fields this game does not have; clients lifted out of a
+    collapsed drawer onto a real card.
+  - **Sprint 7 device fixes** — the "Equipment" tab label that wrapped and fell off the bar, and
+    the clock the game always had but never rendered.
+  - **Sprint 8** — the Site Office inbox, replacing a single `importantNotice` slot behind 102
+    call sites.
+- **Two save migrations run on an existing build-5 save**, and this build is the first chance to
+  validate either on a device: Sprint 7's `kpiHistory` + bid counters, and Sprint 8's `inbox` +
+  `_noticeSeq`. Both are additive, both repair corrupted values rather than crashing, and neither
+  invents history the player never had. Eleven tests cover them.
+- Release gate: lint 0 errors (33 pre-existing warnings), typecheck clean, **623/623 tests across
+  31 suites run three consecutive times**, Expo config resolves to Construction Flow / 1.0.0 / 6 /
+  `co.wildbear.constructionflow` / EAS project `72e9062c-b382-478a-b226-b3ea5559e117`,
+  `npx expo export --platform ios` bundles cleanly.
+- Identity preserved: bundle identifier, EAS project, App Store Connect app `6793354537`, the
+  approved artwork.
+
+
 ## Sprint 8 — The Site Office inbox
 
 **Not built.** `ios.buildNumber` stays at **5**; nothing ships without an explicit go-ahead.
