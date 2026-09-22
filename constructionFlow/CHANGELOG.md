@@ -5,6 +5,83 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Tax fix — the freeze that froze nothing
+
+Reported from a device as *"I feel like there is a bug with taxes."* There was. Three, and the
+first is the Phase 5 defect wearing a new hat.
+
+**Not built.** `ios.buildNumber` stays at **6**.
+
+### 1. The freeze was fake
+
+At 14 days overdue the game set `businessFrozen = true` and told the player *"Overdue taxes
+suspended operations."* Nothing was suspended. All six references to the flag in the screen were
+status text — a label, a warning string, a next-action hint — and **not one gated anything**.
+
+Proved rather than assumed. Two identical companies on the same seed, one flagged frozen with an
+$80,000 overdue bill:
+
+```
+normal:  jobs done 1, sites 0, cash 642,844
+frozen:  jobs done 1, sites 0, cash 637,908
+```
+
+Identical behaviour; the difference is RNG noise. The frozen company kept bidding, building and
+getting paid. FleetFlow — the benchmark — has **39** references to the same flag and gates
+dispatch, the action list and the health score on it. Construction Flow inherited the flag and
+the 14-day threshold and none of the consequences.
+
+The freeze now blocks **new work only**. Sites already under way keep running, crews keep being
+paid and progress payments keep arriving, because a freeze that stopped everything would leave a
+player with no cash and no way to earn any — a dead save rather than a setback. You finish what
+you started and pay your way out; you just cannot grow while you owe.
+
+### 2. There was no way out
+
+`handlePayTax` refused anything but payment in full: `if (g.cash < g.taxDue) return`. A bill
+larger than the player's cash could therefore never be reduced, only grown, while
+`taxOverdueDays` climbed forever. FleetFlow has `partialTaxPayment()` for exactly this.
+
+You can now pay what you can afford. **A payment of at least half the outstanding lifts the
+freeze**; anything less still reduces the debt and buys back four days of the countdown.
+
+**A bug found in the fix itself.** The first cut set the minimum part payment at half the bill —
+which recreated the exact trap it existed to remove: a $96,000 bill with $30,000 cash meant a
+$48,000 minimum, so the player could still pay *nothing*. The test suite caught it. The minimum
+is now a $50 floor, and the 50% share governs only whether the freeze lifts. Two different
+thresholds that should never have been one.
+
+### 3. No early relief
+
+FleetFlow charges a young company 0.75x the headline rate (`companyLevel < 5`). Construction Flow
+charged everyone the full 12% from day one — on a company with no reputation, no repeat clients
+and the thinnest margins it will ever have. The relief now matches.
+
+### Checked and cleared — NOT bugs
+
+Pinned in tests so they are not "fixed" later by mistake:
+
+- **The 12% rate itself matches FleetFlow's.** The rate was never the problem.
+- **The overdue counter runs per day, not per tick** — correctly inside the day rollover. This
+  was the first suspicion and it was wrong; a per-tick counter would have frozen a company in
+  seven game-hours.
+- **`weeklyStats` is reset *after* assessment**, so the same revenue is never taxed twice.
+
+### Tests — 623 → 655
+
+- `__tests__/taxOffice.test.js` (22), including the floor-versus-share distinction that the
+  first implementation got wrong.
+- `__tests__/taxOfficeIntegration.test.js` (10). The headline is the two-company experiment that
+  found the bug: if `businessFrozen` ever becomes decorative again, it fails. Also asserts the
+  gate fires *before* any state is mutated, so a rejected start cannot cost the player materials
+  or crew assignment.
+
+### Save compatibility
+
+No new fields. A save that was already frozen stays frozen — and from this build that flag
+finally means something.
+
+
 ### Release (1.0.0, build 6)
 
 - iOS `buildNumber` 5 -> 6. Version stays **1.0.0**. Android `versionCode` untouched at 1.

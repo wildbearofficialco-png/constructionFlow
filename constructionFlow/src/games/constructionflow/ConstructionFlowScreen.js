@@ -58,6 +58,21 @@ import {
   PROPERTY_TYPES,
 } from "../../systems/companyPerkTables.js";
 import {
+  TAX_RATE,
+  FREEZE_DAYS,
+  taxRateFor,
+  assessWeeklyTax,
+  canTakeNewWork,
+  blockedReason,
+  minPartialPayment,
+  suggestedPayment,
+  unfreezeThreshold,
+  canPayPartial,
+  canPayInFull,
+  applyTaxPayment,
+  describeTaxStatus,
+} from "../../systems/taxOffice.js";
+import {
   pushNotice,
   expireNotices,
   sortedNotices,
@@ -4611,7 +4626,15 @@ export function gameTick(prev) {
       }
       const weeklyRevenue = g.weeklyStats.revenue || 0;
       if (weeklyRevenue > 0) {
-        g.taxDue = (g.taxDue || 0) + Math.round(weeklyRevenue * 0.12);
+        // assessWeeklyTax applies FleetFlow's early-game relief (0.75x below company level 5).
+        // A young company has the thinnest margins it will ever have and the fewest tools to
+        // fix them; charging it the full headline rate from day one is what made tax feel
+        // punitive rather than difficult.
+        const _bill = assessWeeklyTax(g, weeklyRevenue);
+        g.taxDue = (g.taxDue || 0) + _bill;
+        if (_bill > 0) {
+          addLog(g, `🧾 Tax assessed: ${money(_bill)} on ${money(weeklyRevenue)} of revenue.`);
+        }
       }
       // Weekly summary log
       const weekRev = g.weeklyStats.revenue || 0;
@@ -4659,7 +4682,10 @@ export function gameTick(prev) {
 
     if ((g.taxDue || 0) > 0) {
       g.taxOverdueDays = (g.taxOverdueDays || 0) + 1;
-      if (g.taxOverdueDays >= 14) g.businessFrozen = true;
+      if (g.taxOverdueDays >= FREEZE_DAYS && !g.businessFrozen) {
+        g.businessFrozen = true;
+        addImportantNotice(g, `Operations frozen — ${money(g.taxDue || 0)} of tax is ${g.taxOverdueDays} days overdue. You cannot take new work until it is paid down.`, "red", { actionLabel: "Pay in Finance", actionTab: "Finance" });
+      }
     }
 
     if (g.cash < 0) {
@@ -5764,6 +5790,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const c = g.contracts.find((c) => c.id === contract.id);
       if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
+
+      // The freeze is real now. It was set at 14 days overdue and read by NOTHING — every
+      // reference in this screen was status text, so "operations suspended" suspended nothing.
+      // Scoped to NEW work only: sites already running keep going and keep paying, so a frozen
+      // player can finish what they started and earn their way out instead of being stuck.
+      if (!canTakeNewWork(g)) {
+        Alert.alert("Operations Frozen", blockedReason(g));
+        return;
+      }
       const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
       if (blockReason) {
         const { title, body } = buildAssignBlockAlert(blockReason, getAssignBlockKind(c, crewIds, equipIds, g));
@@ -5938,14 +5973,20 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handlePayTax = useCallback(() => {
     update((g) => {
       if ((g.taxDue || 0) <= 0) return;
-      if (g.cash < g.taxDue) { alertInsufficientFunds(g, g.taxDue, "This tax bill"); return; }
-      g.cash -= g.taxDue;
-      g.expenses += g.taxDue;
-      recordTransaction(g, "taxes", -g.taxDue, "Tax bill paid");
-      addLog(g, `✅ Tax bill of ${money(g.taxDue)} paid.`);
-      g.taxDue = 0;
-      g.taxOverdueDays = 0;
-      g.businessFrozen = false;
+      // Pay what you can. The old handler did `if (g.cash < g.taxDue) return`, so a bill
+      // larger than the player's cash could never be reduced — only grown — while the overdue
+      // counter climbed forever. That was a permanent, unrecoverable state.
+      const _want = suggestedPayment(g);
+      if (g.cash < _want) { alertInsufficientFunds(g, _want, "A part payment on this tax bill"); return; }
+      const _res = applyTaxPayment(g, _want);
+      if (_res.paid <= 0) return;
+      recordTransaction(g, "taxes", -_res.paid, _res.cleared ? "Tax bill paid" : "Tax bill part payment");
+      addLog(g, _res.cleared
+        ? `✅ Tax bill of ${money(_res.paid)} paid in full.`
+        : `🧾 Part payment of ${money(_res.paid)} — ${money(_res.remaining)} still owed.`);
+      if (_res.unfrozen) {
+        addImportantNotice(g, "Operations resumed — the tax freeze has been lifted.", "green");
+      }
     });
   }, [update]);
 
@@ -10303,7 +10344,20 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {(game.taxDue || 0) > 0 && (
           <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 1.5 }]}>
             <Text style={[styles.label, { color: T.red }]}>⚠ Tax Due: {money(game.taxDue)}</Text>
-            <Text style={[styles.sub, subCol]}>Overdue {game.taxOverdueDays} day(s). Business freezes at 14 days.</Text>
+            {(() => {
+              const st = describeTaxStatus(game);
+              return (
+                <>
+                  <Text style={[styles.sub, { color: st.level === "frozen" || st.level === "urgent" ? T.red : T.sub }]}>
+                    {st.headline} — {st.detail}
+                  </Text>
+                  <Text style={[styles.sub, subCol, { marginTop: 2 }]}>
+                    Charged at {Math.round(taxRateFor(game) * 100)}% of revenue
+                    {taxRateFor(game) < TAX_RATE ? " (reduced rate while your company is young)" : ""}.
+                  </Text>
+                </>
+              );
+            })()}
             {game.taxOverdueDays > 0 && (
               <View style={{ marginTop: 6 }}>
                 <View style={[styles.progressTrack, { backgroundColor: T.track, height: 8 }]}>
@@ -10314,12 +10368,37 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </Text>
               </View>
             )}
+            {/* Pay in full when you can; pay down when you cannot. The old card offered only
+                "Pay Tax Bill", and the handler behind it refused anything short of the full
+                amount — so a bill bigger than your cash could never be reduced, only grown. */}
             <TouchableOpacity
-              style={[styles.btn, { marginTop: 8, backgroundColor: game.cash >= (game.taxDue || 0) ? T.red : T.panel2, borderColor: T.red }]}
+              style={[styles.btn, { marginTop: 8, backgroundColor: canPayInFull(game) ? T.red : T.panel2, borderColor: T.red }]}
               onPress={handlePayTax}
+              accessibilityRole="button"
+              accessibilityLabel={canPayInFull(game)
+                ? `Pay the full tax bill of ${money(game.taxDue || 0)}`
+                : `Pay ${money(suggestedPayment(game))} towards the tax bill`}
             >
-              <Text style={[styles.btnText, { color: game.cash >= (game.taxDue || 0) ? "#fff" : T.red }]}>Pay Tax Bill</Text>
+              <Text style={[styles.btnText, { color: canPayInFull(game) ? "#fff" : T.red }]}>
+                {canPayInFull(game)
+                  ? `Pay Tax Bill — ${money(game.taxDue || 0)}`
+                  : canPayPartial(game)
+                    ? `Pay ${money(minPartialPayment(game))} Now (part payment)`
+                    : "Pay Tax Bill"}
+              </Text>
             </TouchableOpacity>
+            {!canPayInFull(game) && canPayPartial(game) && (
+              <Text style={[styles.sub, { color: T.sub, marginTop: 4 }]}>
+                {game.businessFrozen
+                  ? `${money(unfreezeThreshold(game))} lifts the freeze. Anything less still reduces the debt.`
+                  : "A part payment reduces the debt and buys back time."}
+              </Text>
+            )}
+            {!canPayInFull(game) && !canPayPartial(game) && (
+              <Text style={[styles.sub, { color: T.orange, marginTop: 4 }]}>
+                You need {money(minPartialPayment(game))} to make a payment. Finish a job or take a loan.
+              </Text>
+            )}
           </View>
         )}
 

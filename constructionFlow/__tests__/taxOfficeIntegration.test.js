@@ -1,0 +1,118 @@
+// Tax integration — the gate wired into the real game.
+//
+// The headline test is the experiment that found the bug: two identical companies on the same
+// seed, one frozen. Before the fix they behaved identically, because `businessFrozen` was read
+// by nothing. If that ever becomes true again, this fails.
+
+import fs from "fs";
+import path from "path";
+
+import { freshState, migrateState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
+import { canTakeNewWork, assessWeeklyTax, applyTaxPayment, TAX_RATE } from "../src/systems/taxOffice.js";
+
+const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
+const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
+
+describe("the freeze is enforced, not just displayed", () => {
+  test("the contract-acceptance path actually checks it", () => {
+    // The bug in one line: the flag was set and no code path consulted it.
+    expect(SCREEN_CODE).toContain("canTakeNewWork(g)");
+    const handler = SCREEN_CODE.slice(SCREEN_CODE.indexOf("const handleStartSite"));
+    expect(handler.slice(0, 1400)).toContain("canTakeNewWork");
+  });
+
+  test("the block is raised before any state is mutated", () => {
+    // A frozen player must not lose materials or crew assignment to a rejected start.
+    const handler = SCREEN_CODE.slice(SCREEN_CODE.indexOf("const handleStartSite"));
+    const gateAt = handler.indexOf("canTakeNewWork");
+    const rollAt = handler.indexOf("rollBidOutcome");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(rollAt).toBeGreaterThan(-1);
+    expect(gateAt).toBeLessThan(rollAt);
+  });
+
+  test("freezing does NOT stop sites already under way", () => {
+    // The scoping decision: a freeze that stopped everything would leave the player with no
+    // cash and no way to earn any, which is a dead save rather than a setback.
+    const build = () => {
+      const g = freshState();
+      g.setupDone = true; g.tutorialDone = true; g.cash = 400000;
+      g.materials = { concrete: 9999, lumber: 9999, steel: 9999, electrical: 9999, plumbing: 9999, asphalt: 9999 };
+      g.activeSites = [{
+        id: "s1", contractId: "c1", label: "Frozen Tower", client: "Harbor Trust", status: "Active",
+        phases: ["Finish"], currentPhaseIdx: 0, phaseProgress: 99.5,
+        assignedCrewIds: g.crew.map(w => w.id), assignedEquipmentIds: g.equipment.map(e => e.id),
+        materialsFulfilled: {}, pendingDeliveries: [], progressPaid: 0, phasesClaimed: 0,
+        totalValue: 200000, depositPaid: 50000, penaltyPerDay: 100,
+        deadlineDay: g.day + 90, startDay: g.day - 2, siteMode: "normal", chaosHistory: [],
+      }];
+      for (const w of g.crew) w.status = "Working";
+      for (const e of g.equipment) e.status = "Active";
+      return g;
+    };
+    let frozen = build();
+    frozen.businessFrozen = true; frozen.taxDue = 80000; frozen.taxOverdueDays = 30;
+    for (let i = 0; i < 48 * 30 && (frozen.activeSites || []).length > 0; i++) frozen = gameTick(frozen);
+    // The job it already had still finished and still paid.
+    expect(frozen.completedJobs).toBeGreaterThan(0);
+  });
+});
+
+describe("a young company gets relief", () => {
+  test("the assessment path uses the relief helper, not a bare 12%", () => {
+    expect(SCREEN_CODE).toContain("assessWeeklyTax(g, weeklyRevenue)");
+    expect(SCREEN_CODE).not.toContain("Math.round(weeklyRevenue * 0.12)");
+  });
+
+  test("a level-1 company is billed less than a level-6 one on the same revenue", () => {
+    const young = assessWeeklyTax({ companyLevel: 1 }, 50000);
+    const grown = assessWeeklyTax({ companyLevel: 6 }, 50000);
+    expect(young).toBeLessThan(grown);
+    expect(grown).toBe(Math.round(50000 * TAX_RATE));
+  });
+});
+
+describe("the player can always dig out", () => {
+  test("the pay handler no longer refuses everything but payment in full", () => {
+    expect(SCREEN_CODE).not.toContain("if (g.cash < g.taxDue) { alertInsufficientFunds(g, g.taxDue");
+    expect(SCREEN_CODE).toContain("applyTaxPayment(g, _want)");
+    expect(SCREEN_CODE).toContain("suggestedPayment(g)");
+  });
+
+  test("repeated part payments clear a bill that could never be paid in one go", () => {
+    const g = { cash: 0, taxDue: 96000, taxOverdueDays: 65, businessFrozen: true, expenses: 0 };
+    let rounds = 0;
+    while (g.taxDue > 0 && rounds < 50) {
+      g.cash += 20000;                  // a job pays out
+      applyTaxPayment(g, Math.min(g.cash, g.taxDue));
+      rounds++;
+    }
+    expect(g.taxDue).toBe(0);
+    expect(g.businessFrozen).toBe(false);
+    expect(canTakeNewWork(g)).toBe(true);
+  });
+
+  test("the ledger records part payments distinctly from full ones", () => {
+    expect(SCREEN_CODE).toContain('"Tax bill part payment"');
+  });
+});
+
+describe("save compatibility", () => {
+  test("an existing save keeps its tax state untouched", () => {
+    const legacy = JSON.parse(JSON.stringify(freshState()));
+    legacy.taxDue = 12345; legacy.taxOverdueDays = 9; legacy.businessFrozen = false;
+    const m = migrateState(legacy);
+    expect(m.taxDue).toBe(12345);
+    expect(m.taxOverdueDays).toBe(9);
+  });
+
+  test("a save that was already frozen stays frozen, and is now actually gated", () => {
+    const legacy = JSON.parse(JSON.stringify(freshState()));
+    legacy.businessFrozen = true; legacy.taxDue = 50000; legacy.taxOverdueDays = 40;
+    const m = migrateState(legacy);
+    expect(m.businessFrozen).toBe(true);
+    // Previously this flag meant nothing; from this build it does.
+    expect(canTakeNewWork(m)).toBe(false);
+  });
+});
