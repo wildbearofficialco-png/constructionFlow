@@ -5,6 +5,41 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Release (1.0.0, build 4) — the first binary carrying any parity work
+
+- iOS `buildNumber` 3 -> 4. Version stays **1.0.0**: build 1 is what is on TestFlight and
+  1.0.0 has never been publicly released, so there is no `CFBundleShortVersionString`
+  collision to avoid. Android `versionCode` untouched at 1 (iOS-only build).
+- **Why 4 and not 2.** Numbers 2 and 3 were spent in `app.json` by earlier sessions without
+  ever producing a binary. Build numbers are not reusable in the App Store Connect sense once
+  committed to the release record, and the safe rule is monotonic increase from the highest
+  value the source has ever carried. Source said 3, so this is 4.
+- **This is the first build to carry ANY of the five parity phases.** TestFlight build 1
+  predates Phase 1 entirely. Everything from Phase 1 through Phase 5 lands in this single
+  install:
+  - Phase 1 — the presentation layer (design tokens, UI primitives, motion, hierarchy)
+  - Phase 2 — the construction loop as a game (bidding you can lose, material lead times,
+    phase completion, progress payments)
+  - Phase 3 — the company you can see (worker standing and voice, equipment economics,
+    the while-you-were-away site report)
+  - Phase 4 — a market that keeps living (rival lifecycle, new entrants, market news,
+    acquisitions that transfer a real business)
+  - Phase 5 — the progression ladder pays what it advertises (six formerly phantom perks
+    made real, Company Ladder card on Empire)
+- Release gate: lint 0 errors (34 pre-existing warnings), typecheck clean, **439/439 tests
+  across 23 suites**, Expo config resolves (Construction Flow / 1.0.0 / 4 /
+  co.wildbear.constructionflow / EAS project 72e9062c-b382-478a-b226-b3ea5559e117),
+  `npx expo-doctor` 19/21 (both failures are network-policy-blocked checks in the agent
+  sandbox, not project defects), `npx expo export --platform ios` bundles cleanly.
+- Save compatibility: no new save fields and no new migration in this build. Two migrations
+  written in earlier phases run against a build-1 save — Phase 2's delivery/claim fields and
+  Phase 4's rival-record rewrite — both covered by tests across 8 suites. Installing over
+  build 1 rather than deleting the app is the intended upgrade path.
+- Identity preserved: bundle identifier `co.wildbear.constructionflow`, EAS project
+  `72e9062c-b382-478a-b226-b3ea5559e117`, App Store Connect app `6793354537`, artwork and
+  branding untouched.
+
+
 ## Phase 5 — Long-term progression: the ladder now pays what it advertises
 
 ### The finding
