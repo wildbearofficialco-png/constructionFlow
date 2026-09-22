@@ -3,7 +3,36 @@ const expoConfig = require("eslint-config-expo/flat");
 module.exports = [
   ...expoConfig,
   {
-    ignores: ["node_modules/**", "assets/**", ".expo/**", "dist/**"],
+    // snack/ConstructionFlowSnack.js is a GENERATED single-file bundle for Expo Snack, not
+    // app source — linting it reports ~100 style errors from the bundler's output that no
+    // one can act on, and it never reaches the shipped binary.
+    ignores: ["node_modules/**", "assets/**", ".expo/**", "dist/**", "snack/**"],
+  },
+  {
+    // Jest injects describe/test/expect/jest as globals; without declaring them here every
+    // assertion in __tests__/ reported as no-undef, which buried real findings under ~1,670
+    // spurious errors.
+    files: ["__tests__/**/*.js", "jest.setup.js"],
+    languageOptions: {
+      globals: {
+        describe: "readonly",
+        test: "readonly",
+        it: "readonly",
+        expect: "readonly",
+        jest: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        // Jest runs tests in a CommonJS/Node context; several suites read fixture files
+        // relative to __dirname.
+        __dirname: "readonly",
+        __filename: "readonly",
+        require: "readonly",
+        module: "writable",
+        process: "readonly",
+      },
+    },
   },
   {
     // scripts/ runs under Node, not the RN/browser globals eslint-config-expo assumes.

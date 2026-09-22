@@ -5,6 +5,53 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Release automation — the iOS workflow could not authenticate
+
+The first run of `.github/workflows/eas-build-ios.yml` failed at **Verify EAS authentication**.
+The build never started; install, build and submit were all skipped.
+
+**Root cause, from the run log:** `expo/expo-github-action@v8` printed
+`Skipped authentication: 'token' not provided.`, so `eas whoami` reported `Not logged in` and
+exited 1. That message is emitted only when the action's `token` input is empty — the workflow
+passes `${{ secrets.EXPO_TOKEN }}`, so **`EXPO_TOKEN` is not set on this repository**. Secrets
+do not cross repositories: the token that builds FleetFlow lives on
+`wildbearofficialco-png/Fleetflow` and is invisible here. Nothing in the workflow, `app.json`,
+`eas.json`, the working directory or the Expo owner/project configuration was wrong.
+
+### Changed
+
+- **Secrets are checked before anything expensive runs.** A new first step fails in seconds
+  with a GitHub error annotation naming the missing secret and where to add it, instead of
+  dying several minutes in on `Not logged in`. `APPLE_APP_SPECIFIC_PASSWORD` is required only
+  when a production build is actually going to submit.
+- **`eas whoami` now explains itself.** A token that is present but expired, revoked, or scoped
+  to an account without access to the `wildbear` owner gets its own annotation, which the bare
+  `Not logged in` did not distinguish from a missing secret.
+- **TestFlight receives the binary this run produced.** The submit step was a second job doing
+  `eas submit --latest`, which resolves to whichever build finished most recently on the EAS
+  project — not necessarily this one. Build and submit are now one job using
+  `eas build --auto-submit`, which also drops a redundant checkout and `npm ci`.
+- **A `submit` input** allows cutting a production build without uploading it.
+- **The run log states what is being built** — name, owner/slug, EAS project id, bundle
+  identifier, version and `ios.buildNumber` — so a submit rejected for a duplicate build number
+  is diagnosable from the log alone.
+- **A `concurrency` group** stops two builds of the same app racing.
+
+### Lint
+
+`npx eslint .` reported 1,771 errors, none of them in shipped code: ~1,670 were Jest's
+`describe`/`test`/`expect` globals undeclared for `__tests__/`, 3 were `__dirname` in test
+fixtures, and 98 came from `snack/ConstructionFlowSnack.js`, a generated single-file Expo Snack
+bundle. `eslint.config.js` now declares the Jest globals and ignores the generated bundle.
+Lint is clean: 0 errors, 35 pre-existing unused-import warnings in `src/systems/`. No game code
+changed.
+
+### Unchanged
+
+Bundle identifier, App Store Connect app id, EAS project id, version `1.0.0`,
+`ios.buildNumber` `3`, artwork, and all five parity phases. No save migration. 439 tests across
+23 suites pass; TypeScript is clean; `expo export --platform ios` bundles.
+
 ## Phase 5 — Long-term progression: the ladder now pays what it advertises
 
 ### The finding

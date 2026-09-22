@@ -15,14 +15,28 @@ name: EAS Build — iOS
 # This repo is already correctly configured to build: app.json carries the same EAS project id
 # (72e9062c-b382-478a-b226-b3ea5559e117) and bundle identifier (co.wildbear.constructionflow)
 # as the FleetFlow variant, and eas.json's submit profile carries the same App Store Connect
-# app id (6793354537). The only missing piece was this workflow.
+# app id (6793354537). Because the EAS project is the same one FleetFlow's construction variant
+# built from, the iOS signing credentials already live on it and `--non-interactive` can reuse
+# them.
 #
 # The app lives in the `constructionFlow/` subdirectory, so every step sets its
 # working-directory accordingly.
 #
 # REQUIRED REPOSITORY SECRETS
-#   EXPO_TOKEN                      — Expo access token (Expo dashboard → Access Tokens)
-#   APPLE_APP_SPECIFIC_PASSWORD     — only needed by the TestFlight submit job
+#   (Settings → Secrets and variables → Actions → Repository secrets, on THIS repository —
+#   secrets do not cross repositories, so the ones on wildbearofficialco-png/Fleetflow are
+#   not visible here.)
+#
+#   EXPO_TOKEN                   — Expo access token. expo.dev → account settings →
+#                                  Access tokens → Create token. Must belong to an account
+#                                  with access to the `wildbear` owner.
+#   APPLE_APP_SPECIFIC_PASSWORD  — App-specific password for the Apple ID in eas.json's submit
+#                                  profile. appleid.apple.com → Sign-In and Security →
+#                                  App-Specific Passwords. Only needed when submitting.
+#
+# The "Check required secrets" step below fails within seconds, with an explicit message
+# naming the missing secret, rather than letting the run die several minutes later on an
+# opaque authentication error.
 
 on:
   workflow_dispatch:
@@ -37,6 +51,17 @@ on:
           - preview
           - development
           - simulator
+      submit:
+        description: 'Submit to TestFlight (production profile only)'
+        required: false
+        default: true
+        type: boolean
+
+# Two EAS builds of the same app racing each other just burns build minutes and makes it
+# ambiguous which binary reached TestFlight.
+concurrency:
+  group: eas-build-ios
+  cancel-in-progress: false
 
 env:
   APP_DIR: constructionFlow
@@ -49,6 +74,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Runs before anything expensive. Secrets cannot be read in `if:` conditions, so they
+      # are passed through env and tested in the shell.
+      - name: Check required secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          WILL_SUBMIT: ${{ inputs.profile == 'production' && inputs.submit }}
+        run: |
+          missing=0
+
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error title=Missing repository secret: EXPO_TOKEN::This repository has no EXPO_TOKEN secret, so the EAS CLI cannot log in and every build step is skipped. Add it at Settings -> Secrets and variables -> Actions -> New repository secret, named exactly EXPO_TOKEN. Create the value at expo.dev -> account settings -> Access tokens, using an account with access to the 'wildbear' owner."
+            missing=1
+          fi
+
+          if [ "$WILL_SUBMIT" = "true" ] && [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+            echo "::error title=Missing repository secret: APPLE_APP_SPECIFIC_PASSWORD::A production build with submit enabled needs APPLE_APP_SPECIFIC_PASSWORD to upload to TestFlight. Add it at Settings -> Secrets and variables -> Actions -> New repository secret, named exactly APPLE_APP_SPECIFIC_PASSWORD. Generate the value at appleid.apple.com -> Sign-In and Security -> App-Specific Passwords, for the Apple ID in eas.json's submit profile. To build without submitting, re-run this workflow with 'Submit to TestFlight' unchecked."
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Required secrets are missing — see the annotations above. Nothing was built."
+            exit 1
+          fi
+
+          echo "Required secrets are present."
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -62,48 +114,50 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      # Fails fast and legibly if EXPO_TOKEN is missing or invalid, rather than surfacing as a
-      # confusing error several minutes into the build step.
+      # Catches a token that is present but expired, revoked, or scoped to the wrong account —
+      # which the secret check above cannot see.
       - name: Verify EAS authentication
         working-directory: ${{ env.APP_DIR }}
-        run: eas whoami
+        run: |
+          if ! eas whoami; then
+            echo "::error title=EAS authentication failed::EXPO_TOKEN is set but the EAS CLI is not logged in. The token is most likely expired, revoked, or belongs to an account without access to the 'wildbear' owner. Generate a fresh token at expo.dev -> account settings -> Access tokens and update the EXPO_TOKEN repository secret."
+            exit 1
+          fi
 
       - name: Install dependencies
         working-directory: ${{ env.APP_DIR }}
         run: npm ci
 
-      - name: Build iOS
+      # Puts the identity of the binary in the run log, so a submit rejected for a duplicate
+      # build number is diagnosable without re-reading app.json.
+      - name: Show what will be built
         working-directory: ${{ env.APP_DIR }}
-        run: eas build --platform ios --profile ${{ github.event.inputs.profile }} --non-interactive
+        run: |
+          npx expo config --type public --json | node -e "
+            let d = '';
+            process.stdin.on('data', c => d += c);
+            process.stdin.on('end', () => {
+              const c = JSON.parse(d);
+              console.log('name            ', c.name);
+              console.log('owner/slug      ', c.owner + '/' + c.slug);
+              console.log('EAS project id  ', c.extra?.eas?.projectId);
+              console.log('bundle id       ', c.ios?.bundleIdentifier);
+              console.log('version         ', c.version);
+              console.log('ios.buildNumber ', c.ios?.buildNumber);
+            });
+          "
 
-  submit-testflight:
-    name: Submit to TestFlight
-    needs: build
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.profile == 'production' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: constructionFlow/package-lock.json
-
-      - name: Setup EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        working-directory: ${{ env.APP_DIR }}
-        run: npm ci
-
-      - name: Submit to TestFlight
+      # --auto-submit hands TestFlight exactly the binary this step produced. The previous
+      # arrangement submitted from a second job with `--latest`, which resolves to whatever
+      # build finished most recently on the EAS project — not necessarily this one.
+      - name: Build iOS and submit to TestFlight
+        if: ${{ inputs.profile == 'production' && inputs.submit }}
         working-directory: ${{ env.APP_DIR }}
         env:
           EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: eas submit --platform ios --profile production --latest --non-interactive
+        run: eas build --platform ios --profile production --auto-submit --non-interactive
+
+      - name: Build iOS
+        if: ${{ !(inputs.profile == 'production' && inputs.submit) }}
+        working-directory: ${{ env.APP_DIR }}
+        run: eas build --platform ios --profile ${{ inputs.profile }} --non-interactive
