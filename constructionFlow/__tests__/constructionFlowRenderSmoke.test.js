@@ -29,6 +29,14 @@ jest.useFakeTimers();
 
 const STORAGE_KEY = "constructionflow_v1_save";
 
+// First client id from the real roster, so the fixture cannot drift from the data.
+const CLIENT_ROSTER_FIRST_ID = (() => {
+  const src = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js"), "utf8");
+  const block = src.slice(src.indexOf("const CLIENT_ROSTER"));
+  return (block.match(/id:\s*"([^"]+)"/) || [])[1];
+})();
+
 // Mounts the screen against a seeded save and returns the renderer.
 async function mountWith(mutate = () => {}) {
   const g = freshState();
@@ -466,6 +474,56 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("Company Story");
     expect(json).toContain("Nothing on the record yet");
     expect(json).not.toContain("What your history is doing right now");
+  });
+
+  test("Finance leads with how the company is performing, and names the weakest measure", async () => {
+    // Sprint 7. The KPIs the old analyticsEngine produced were zeros measured from FleetFlow
+    // fields this game does not have; these come from crew, plant, the ledger and job history.
+    const tree = await mountWith((g) => {
+      g.day = 70;
+      g.jobHistory = [
+        { label: "A", client: "C", value: 1000, day: 60, quality: "Standard", daysLate: 0 },
+        { label: "B", client: "C", value: 1000, day: 65, quality: "Standard", daysLate: 4 },
+      ];
+      g.bidsPlaced = 10; g.bidsWon = 2; g.bidsLost = 8;
+      g.ledger = [{ id: "1", day: 60, category: "contracts", amount: 40000, description: "Job" },
+                  { id: "2", day: 61, category: "payroll", amount: -9000, description: "Wages" }];
+    });
+    const finance = tabButton(tree, "Finance");
+    await act(async () => { finance.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+
+    expect(json).toContain("Performance");
+    expect(json).toContain("On-Time Completion");
+    expect(json).toContain("Plant Utilisation");
+    expect(json).toContain("Bid Win Rate");
+    // A verdict, not just a grid of numbers.
+    expect(json).toContain("Weakest:");
+    // And the counts behind the percentages.
+    expect(json).toMatch(/of 2 jobs on time/);
+  });
+
+  test("a company with no history is told so on Finance, not graded on nothing", async () => {
+    const tree = await mountWith((g) => {
+      g.jobHistory = []; g.bidsPlaced = 0; g.bidsWon = 0; g.bidsLost = 0; g.ledger = [];
+    });
+    const finance = tabButton(tree, "Finance");
+    await act(async () => { finance.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Performance");
+    expect(json).toContain("Not enough history yet");
+  });
+
+  test("clients are a card on Home now, not a collapsed drawer", async () => {
+    // Audit row 28: the loyalty system was simulated in full inside a CollapsibleSection that
+    // defaulted to closed, so most players never saw it.
+    const tree = await mountWith((g) => {
+      g.tutorialDone = true;
+      g.clientRelationships = { [CLIENT_ROSTER_FIRST_ID]: { loyalty: 55, jobsDone: 4, lastJobDay: 10 } };
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Clients");
+    expect(json).toContain("loyalty premium");
   });
 
   test("an empty Sites tab explains itself and offers a way out", async () => {

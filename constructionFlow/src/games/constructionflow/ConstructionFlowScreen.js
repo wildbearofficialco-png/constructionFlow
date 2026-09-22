@@ -20,7 +20,6 @@ import { initPricing, tickDemand } from "../../systems/demandPricing.js";
 import { initWeather, tickWeather, getConstructionWeatherDelay } from "../../systems/weatherRouteConditions.js";
 import { tickPerformanceReviews, tickTeamMorale } from "../../systems/staffPerformance.js";
 import { tickContractRFPs } from "../../systems/contractBidding.js";
-import { initAnalytics, tickAnalytics } from "../../systems/analyticsEngine.js";
 import { initTerritories, tickTerritories } from "../../systems/territorySystem.js";
 import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
 import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
@@ -58,6 +57,13 @@ import {
   REGIONAL_OFFICE_TYPES,
   PROPERTY_TYPES,
 } from "../../systems/companyPerkTables.js";
+import {
+  tickConstructionKPIs,
+  buildKPIRows,
+  computeKPIs,
+  summarizePerformance,
+  describeKPIDirection,
+} from "../../systems/constructionKPIs.js";
 import {
   recordMemory,
   resolveMemoryEffects,
@@ -187,6 +193,19 @@ export function clone(obj) {
     copy[key] = clone(obj[key]);
   }
   return copy;
+}
+
+// Identical to FleetFlow's formatClock, deliberately: the two games should tell the time the
+// same way. Construction Flow has always HAD a clock — `gameMinutes` starts at 480 (8:00 AM) and
+// advances 30 per tick, 48 ticks to the day — it simply never showed it, so time passed
+// invisibly and the day appeared to jump. That is what felt off.
+export function formatClock(mins) {
+  const safe = Number.isFinite(mins) ? mins : 480;
+  let h = Math.floor(safe / 60) % 24;
+  const m = Math.round(safe % 60);
+  const suffix = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
 export function money(n) {
@@ -3292,6 +3311,10 @@ export function freshState() {
     selectedEmpireCity: "portland",
     trainingQueue: [],
     companyMemory: [],
+    kpiHistory: { snapshots: [], lastSnapshotDay: 0 },
+    bidsPlaced: 0,
+    bidsWon: 0,
+    bidsLost: 0,
     cityJobsWon: {},
 
     // Sprint 5 — Safety, Insurance, Economy History, Achievements, Legacy
@@ -3420,6 +3443,18 @@ export function migrateState(saved) {
   // Phase 6. A build-4 save has no chronicle; it starts one from the day it is loaded rather
   // than inventing a history it never had.
   if (!Array.isArray(g.companyMemory))    g.companyMemory = [];
+  // Sprint 7. Counters start at zero rather than being inferred from completedJobs: a returning
+  // player has no record of the bids they LOST, and inventing a win rate would be a number the
+  // game made up about them.
+  if (!Number.isFinite(g.bidsPlaced))     g.bidsPlaced = 0;
+  if (!Number.isFinite(g.bidsWon))        g.bidsWon = 0;
+  if (!Number.isFinite(g.bidsLost))       g.bidsLost = 0;
+  if (!g.kpiHistory || typeof g.kpiHistory !== "object" || Array.isArray(g.kpiHistory)) {
+    g.kpiHistory = { snapshots: [], lastSnapshotDay: 0 };
+  }
+  // Reclaim the space the FleetFlow analytics blob occupied. Nothing ever read it, and every
+  // figure in it was measured from fields this game does not have.
+  if (g.analytics) delete g.analytics;
   if (!g.cityJobsWon)                     g.cityJobsWon = {};
   // Sprint 5 fields
   if (g.safetyScore     === undefined)    g.safetyScore = 60;
@@ -3995,7 +4030,7 @@ export function gameTick(prev) {
         const penaltyNote = penalty > 0 ? ` (${money(penalty)} late penalty)` : "";
         addLog(g, `✅ ${site.label} complete — earned ${money(earned + qualityBonus)}${penaltyNote}!`);
         const _qualLabel = effectiveQuality >= 1.15 ? "Premium" : effectiveQuality >= 1.05 ? "High" : effectiveQuality < 0.95 ? "Below Standard" : "Standard";
-        g.jobHistory = [...(g.jobHistory || []), { label: site.label, client: site.client, value: earned + qualityBonus, day: g.day, quality: _qualLabel }].slice(-20);
+        g.jobHistory = [...(g.jobHistory || []), { label: site.label, client: site.client, value: earned + qualityBonus, day: g.day, quality: _qualLabel, daysLate }].slice(-20);
         // On-time streak tracking
         if (daysLate === 0) {
           g.onTimeStreak = (g.onTimeStreak || 0) + 1;
@@ -5026,7 +5061,11 @@ export function gameTick(prev) {
     tickPerformanceReviews(g);
     if ((g.day || 0) % 7 === 0) tickTeamMorale(g);
     tickContractRFPs(g);
-    tickAnalytics(g);
+    // Sprint 7: analyticsEngine.js is FleetFlow's and every input it reads
+    // (weeklyStats.completedRoutes/routeIncome/wages, status "En Route", customerRating) is a
+    // field Construction Flow does not have, so it snapshotted a row of zeros every 7 days and
+    // kept 26 of them in the save. Replaced with KPIs measured from state that exists.
+    tickConstructionKPIs(g);
     initTerritories(g, "construction");
     tickTerritories(g);
     // Weather delays active projects
@@ -5689,6 +5728,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       // read one number. `withBidPerks` is used at every call site for exactly that reason.
       const outcome = rollBidOutcome(c, bidStyle, withBidPerks(g));
       const effectiveValue = outcome.effectiveValue;
+
+      g.bidsPlaced = (g.bidsPlaced || 0) + 1;
+      if (outcome.won) g.bidsWon = (g.bidsWon || 0) + 1;
+      else g.bidsLost = (g.bidsLost || 0) + 1;
 
       if (!outcome.won) {
         // Losing costs the contract, not the crew. Nothing is consumed: no materials drawn,
@@ -6780,7 +6823,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               </Text>
             </View>
             <View style={{ alignItems: "flex-end" }}>
-              <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>Day {game.day}</Text>
+              <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>
+                {`Day ${game.day} · ${formatClock(game.gameMinutes)}`}
+              </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 {game.seasonEmoji ? (
                   <Text style={[TYPE.caption, { color: T.sub }]}>{game.seasonEmoji} {game.currentSeason}</Text>
@@ -7167,19 +7212,37 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           );
         })()}
 
-        {/* ── Client Relationships ─────────────────────────────────────────── */}
+        {/* ── Clients ───────────────────────────────────────────────────────
+            Sprint 7. This was a CollapsibleSection, collapsed by default, so the loyalty
+            system — tier ceilings, value bonuses, deadline extensions, repeat business — was
+            simulated in full and seen by almost nobody (audit row 28).
+
+            It is now a card at the same level as everything else it competes with, and it
+            leads with the thing the player can act on: who is about to become more valuable,
+            and what that is already worth. */}
         {game.tutorialDone && (() => {
           const rels = game.clientRelationships || {};
           const activeClients = CLIENT_ROSTER.filter(c => rels[c.id]?.jobsDone > 0);
           if (activeClients.length === 0) return null;
           const _loyalClients = activeClients.filter(c => (rels[c.id]?.loyalty || 0) >= 40).length;
+          const _bonusValue = activeClients.reduce((sum, c) => {
+            const t = getClientTier(rels[c.id]?.loyalty || 0);
+            return sum + Math.max(0, (t.valueMult || 1) - 1);
+          }, 0);
           return (
-            <CollapsibleSection
-              title="🤝 Client Relationships"
-              summary={`${activeClients.length} client${activeClients.length !== 1 ? "s" : ""}${_loyalClients > 0 ? ` · ${_loyalClients} paying a loyalty bonus` : ""}`}
-              persistKey="home_client_relationships"
-              colors={{ background: T.panel, border: T.border, text: T.text, sub: T.sub, accent: T.cyan }}
-            >
+            <Card T={T} tone={_loyalClients > 0 ? "success" : "steel"} style={{ marginTop: 8 }}>
+              <SectionLabel
+                T={T}
+                tone={_loyalClients > 0 ? "success" : "steel"}
+                right={<Pill T={T} label={`${activeClients.length} client${activeClients.length !== 1 ? "s" : ""}`} tone="steel" />}
+              >
+                Clients
+              </SectionLabel>
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.xs, marginBottom: SPACING.sm }]}>
+                {_loyalClients > 0
+                  ? `${_loyalClients} of them pay you a loyalty premium — worth about +${Math.round(_bonusValue * 100)}% across their contracts.`
+                  : "Repeat work raises a client's tier. Higher tiers pay more and give you longer deadlines."}
+              </Text>
               {CLIENT_ROSTER.map(cl => {
                 const rel = rels[cl.id] || { loyalty: 0, jobsDone: 0 };
                 if (rel.jobsDone === 0) return null;
@@ -7204,7 +7267,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </View>
                 );
               })}
-            </CollapsibleSection>
+            </Card>
           );
         })()}
 
@@ -9807,6 +9870,91 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
     return (
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
+        {/* ─── Performance — Sprint 7 ──────────────────────────────────────────
+            How the company is actually doing, measured from state this game maintains.
+
+            Audit rows 36/37 said analyticsEngine was "collected but the player can't see it."
+            The truth was worse: it is FleetFlow's module, and every input it reads
+            (weeklyStats.completedRoutes / routeIncome / wages, status "En Route",
+            customerRating) is a field Construction Flow does not have. It was snapshotting a
+            row of zeros, a permanent 100% on-time rate and a permanent 0% utilisation every
+            seven days. Surfacing THOSE numbers would have been worse than hiding them.
+
+            Every figure below comes from src/systems/constructionKPIs.js, which measures crew,
+            plant, the ledger, job history and bid outcomes — all things that exist. */}
+        {(() => {
+          const rows = buildKPIRows(game);
+          const summary = summarizePerformance(game);
+          const ctx = computeKPIs(game).context;
+          const toneFor = (grade) =>
+            grade === "great" ? "success" : grade === "good" ? "steel" : grade === "poor" ? "caution" : "neutral";
+
+          return (
+            <Card
+              T={T}
+              tone={summary.ready && summary.weakest?.grade === "poor" ? "caution" : "steel"}
+              elevated
+            >
+              <SectionLabel
+                T={T}
+                tone="steel"
+                right={summary.ready
+                  ? <Pill T={T} label={`${summary.greatCount}/${summary.readyCount} strong`} tone={summary.poorCount > 0 ? "caution" : "success"} />
+                  : null}
+              >
+                Performance
+              </SectionLabel>
+
+              <Text style={[TYPE.label, { color: T.text, marginTop: SPACING.xs }]}>
+                {summary.headline}
+              </Text>
+              {summary.detail ? (
+                <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>{summary.detail}</Text>
+              ) : null}
+
+              <View style={{ marginTop: SPACING.md }}>
+                {rows.map((row, i) => {
+                  const dir = row.ready ? describeKPIDirection(game, row.key) : { direction: "flat", hasTrend: false };
+                  const arrow = !dir.hasTrend ? "" : dir.direction === "up" ? " ▲" : dir.direction === "down" ? " ▼" : "";
+                  return (
+                    <View
+                      key={row.key}
+                      style={{
+                        paddingVertical: SPACING.sm,
+                        borderBottomWidth: i < rows.length - 1 ? StyleSheet.hairlineWidth : 0,
+                        borderBottomColor: T.border,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <Text style={[TYPE.body, { color: T.text, flex: 1, marginRight: SPACING.sm }]} numberOfLines={1}>
+                          {row.label}
+                        </Text>
+                        <Text
+                          style={[TYPE.bodyStrong, { color: row.ready ? toneColor(toneFor(row.grade), T) : T.sub }]}
+                          numberOfLines={1}
+                        >
+                          {row.ready ? `${row.display}${arrow}` : "—"}
+                        </Text>
+                      </View>
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]} numberOfLines={1}>
+                        {row.ready ? row.help : "Not enough history yet"}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {/* The counts behind the percentages, so "67%" reads as "2 of 3 on time". */}
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.md }]}>
+                {ctx.ratedJobs > 0
+                  ? `${ctx.ratedJobs - ctx.lateJobs} of ${ctx.ratedJobs} job${ctx.ratedJobs === 1 ? "" : "s"} on time · `
+                  : ""}
+                {ctx.machinesWorking}/{ctx.machines} machines working · {ctx.crewOnSite}/{ctx.crew} crew on site
+                {ctx.bidsResolved > 0 ? ` · ${ctx.bidsResolved} bid${ctx.bidsResolved === 1 ? "" : "s"} resolved` : ""}
+              </Text>
+            </Card>
+          );
+        })()}
         {/* P&L summary */}
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
           <Text style={[styles.sectionTitle, col]}>Financial Overview</Text>
@@ -10886,7 +11034,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 </View>
               )}
               <Ionicons name={iconName} size={20} color={active ? T.accent : T.sub} />
-              <Text style={[styles.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }]}>{t}</Text>
+              {/* "Equipment" is the longest label in TABS and was wrapping to two lines and
+                  overflowing the bar on a real device. numberOfLines pins it to one line and
+                  adjustsFontSizeToFit shrinks only the label that needs it, so the other six
+                  keep their size. Guards every future label, not just this one. */}
+              <Text
+                style={[styles.tabLabel, { color: active ? T.text : T.sub, fontWeight: active ? "700" : "500" }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {t}
+              </Text>
               {active
                 ? <View style={[styles.tabDot, { backgroundColor: T.accent }]} />
                 : <View style={[styles.tabDot, { backgroundColor: "transparent" }]} />
@@ -11954,9 +12113,9 @@ const styles = StyleSheet.create({
   progressTrack:{ height: 6, borderRadius: 3, overflow: "hidden" },
   progressFill: { height: 6, borderRadius: 3 },
   tabBar:      { position: "absolute", left: 10, right: 10, bottom: Platform.select({ ios: 24, android: 12, default: 10 }), flexDirection: "row", borderRadius: RADIUS.xl, borderWidth: 1.2, justifyContent: "space-around", alignItems: "center", paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xs, elevation: 10, shadowColor: "#000000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  tabItem:     { flex: 1, alignItems: "center", justifyContent: "center", position: "relative", paddingVertical: SPACING.sm, paddingHorizontal: 2 },
+  tabItem:     { flex: 1, minWidth: 0, alignItems: "center", justifyContent: "center", position: "relative", paddingVertical: SPACING.sm, paddingHorizontal: 1 },
   tabIcon:     { fontSize: 14, fontWeight: "700" },
-  tabLabel:    { fontSize: 11, fontWeight: "600", marginTop: 2 },
+  tabLabel:    { fontSize: 11, fontWeight: "600", marginTop: 2, textAlign: "center", width: "100%" },
   tabDot:      { marginTop: 4, width: 5, height: 5, borderRadius: 999 },
   badge:       { position: "absolute", top: 0, right: 8, minWidth: 17, height: 17, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
   badgeText:   { color: "#0a1018", fontSize: 12, fontWeight: "800" },
