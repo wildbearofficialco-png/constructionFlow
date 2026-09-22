@@ -5,6 +5,90 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 8 — The Site Office inbox
+
+**Not built.** `ios.buildNumber` stays at **5**; nothing ships without an explicit go-ahead.
+
+### The finding — one slot behind 102 call sites
+
+Audit row 11 said Construction Flow had "`importantNotice` — one at a time." That undersells it.
+The entire channel was a single field:
+
+```js
+function addImportantNotice(state, message, tone = "green") {
+  state.importantNotice = { id: Date.now(), message, tone };
+}
+```
+
+One hundred and two call sites, one slot. Three defects follow:
+
+1. **Loss.** Every call overwrites the last. Complete a job, break a machine and lose a bid in the
+   same tick and the player sees one of the three; the other two are destroyed before they are
+   ever drawn.
+2. **Staleness.** Nothing expires. A seeded 120-day run left a **day-3** `🏆 "$100K Reserve"
+   milestone reached!` banner still occupying the top of Home on **day 120** — 117 game-days
+   later — because nobody had tapped Dismiss. The most prominent card on the home screen was a
+   congratulation from four months ago.
+3. **Colliding ids.** `Date.now()` is millisecond resolution, so every notice raised in the same
+   tick shares an id with its neighbours.
+
+Defect 2 was found by instrumenting a real run rather than by reading the code — the first probe
+written to measure defect 1 reported *zero* losses, which turned out to be the `Date.now()`
+collision (defect 3) defeating the probe's own comparison. The corrected probe found the stale
+banner instead.
+
+### `src/systems/noticeInbox.js` (new)
+
+A small queue that keeps what matters, ages out what does not, and distinguishes a thing you
+should **see** from a thing you must **do**.
+
+- Five levels: `action`, `urgent`, `warning`, `info`, `good`. The most important item leads;
+  within a level, newest first.
+- **Action items never expire.** They are waiting on the player, and silently removing something
+  they still owe a decision on is how a game loses their trust. "Clear all" keeps them too.
+- Everything else ages out in 2–3 days, so the home screen can never again lead with a
+  four-month-old congratulation.
+- Unique ids from a monotonic counter on the state — no RNG, no clock.
+- Deduped on identical text raised the same day; capped at 25, the same constraint Phase 4 put on
+  market news and Phase 6 on the chronicle.
+
+**All 102 call sites kept their existing signature.** The tone vocabulary (`green`/`red`/
+`orange`/`neutral`/`cyan`) maps to levels inside the module, so no call site needed individual
+rewriting and re-review. `importantNotice` is still written with the top of the queue, so
+anything reading it directly keeps working.
+
+### New — the Site Office card on Home
+
+The lead item gets the weight the old banner had, with its age and — for action items — a
+"Needs a decision" flag and a button to the tab that resolves it. Everything else is one tap
+away rather than destroyed. Unread items badge the **Home tab**, so something landing while the
+player is on another screen is visible instead of silently queued.
+
+### A wiring bug the tests caught
+
+The save migration carried a returning player's on-screen notice into the new queue — except it
+detected "legacy save" with `!Array.isArray(g.inbox)`, and `migrateState` opens with
+`{ ...freshState(), ...saved }`. Since `freshState` now carries `inbox: []`, **that check could
+never be true**, and the carry-over never ran. It now tests `saved.inbox`, the only honest
+witness to what the player actually had.
+
+### Tests — 585 → 623
+
+- `__tests__/noticeInbox.test.js` (21). Each of the three defects has a test named after it,
+  including the exact day-3-milestone-on-day-120 case.
+- `__tests__/noticeInboxIntegration.test.js` (14). Seeded 120- and 200-day runs asserting
+  nothing on screen is older than its lifespan, ids stay unique, the queue stays bounded, and
+  `importantNotice` still mirrors the top of the queue.
+- Three render probes: the lead-plus-rest case, an action item, and the empty inbox drawing no
+  card at all.
+
+### Save compatibility
+
+Additive: `inbox`, `_noticeSeq`. A returning player's single notice is carried into the queue at
+the current day, so it gets a normal lifespan from the upgrade rather than arriving pre-expired
+or living forever. A corrupted inbox is repaired rather than crashing the load.
+
+
 ## Sprint 7 — The company you can read
 
 **Not built into a TestFlight build.** `ios.buildNumber` stays at **5** at the app owner's

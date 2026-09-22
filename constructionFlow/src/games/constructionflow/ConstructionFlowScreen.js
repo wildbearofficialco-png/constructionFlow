@@ -58,6 +58,20 @@ import {
   PROPERTY_TYPES,
 } from "../../systems/companyPerkTables.js";
 import {
+  pushNotice,
+  expireNotices,
+  sortedNotices,
+  topNotice,
+  unreadCount,
+  actionCount,
+  dismissNotice,
+  clearInbox,
+  markAllRead,
+  describeNoticeAge,
+  summarizeInbox,
+  noticeTone,
+} from "../../systems/noticeInbox.js";
+import {
   tickConstructionKPIs,
   buildKPIRows,
   computeKPIs,
@@ -158,6 +172,10 @@ const STORAGE_KEY = "constructionflow_v1_save";
 // was the clearest tell on every screen that this game was a re-skin — a construction company
 // owns plant and equipment, not a vehicle fleet. `normalizeTabName` keeps any older persisted
 // or hard-coded "Vehicles" reference working rather than leaving the player on a blank screen.
+// How many inbox items are drawn at once when it is expanded. The queue holds more; this
+// is a rendering bound so a busy week cannot produce a card the length of the screen.
+const INBOX_VISIBLE = 6;
+
 export const TABS = ["Home", "Bids", "Sites", "Crew", "Equipment", "Finance", "Empire"];
 
 export function normalizeTabName(name) {
@@ -2017,8 +2035,16 @@ function addLog(state, text) {
   state.opsFeed = [{ id: uid(), text, tone, day: state.day || 1 }, ...state.opsFeed].slice(0, 20);
 }
 
-function addImportantNotice(state, message, tone = "green") {
-  state.importantNotice = { id: Date.now(), message, tone };
+// Sprint 8. This was `state.importantNotice = { id: Date.now(), message, tone }` — ONE slot
+// behind 102 call sites, so anything raised in the same tick as something else was destroyed
+// before it was ever drawn, nothing ever expired (a day-3 milestone was still on screen on day
+// 120), and `Date.now()` handed colliding ids to notices raised in the same millisecond.
+//
+// Every call site keeps its existing signature; the tone vocabulary is mapped to a level inside
+// the inbox. `importantNotice` is still written so anything reading it directly keeps working.
+function addImportantNotice(state, message, tone = "green", options = undefined) {
+  pushNotice(state, message, tone, options);
+  state.importantNotice = topNotice(state);
 }
 
 function getCreditLabel(score) {
@@ -3311,6 +3337,8 @@ export function freshState() {
     selectedEmpireCity: "portland",
     trainingQueue: [],
     companyMemory: [],
+    inbox: [],
+    _noticeSeq: 0,
     kpiHistory: { snapshots: [], lastSnapshotDay: 0 },
     bidsPlaced: 0,
     bidsWon: 0,
@@ -3443,6 +3471,24 @@ export function migrateState(saved) {
   // Phase 6. A build-4 save has no chronicle; it starts one from the day it is loaded rather
   // than inventing a history it never had.
   if (!Array.isArray(g.companyMemory))    g.companyMemory = [];
+  // Sprint 8. A pre-inbox save carries at most one notice in the old single slot; it is moved
+  // into the queue rather than dropped, so nothing the player had on screen disappears on
+  // upgrade.
+  // NOTE the `saved.inbox` rather than `g.inbox`. migrateState opens with
+  // `{ ...freshState(), ...saved }`, and freshState now carries `inbox: []`, so by this point
+  // g.inbox is ALWAYS an array and a check against it could never detect a legacy save. The
+  // saved object is the only honest witness to what the player actually had.
+  if (!Array.isArray(saved?.inbox)) {
+    g.inbox = Array.isArray(g.inbox) ? g.inbox : [];
+    if (g.importantNotice && g.importantNotice.message) {
+      pushNotice(g, g.importantNotice.message, g.importantNotice.tone || "info");
+    }
+  } else if (!Array.isArray(g.inbox)) {
+    g.inbox = [];
+  }
+  if (!Number.isFinite(g._noticeSeq)) g._noticeSeq = g.inbox.length;
+  expireNotices(g);
+  g.importantNotice = topNotice(g);
   // Sprint 7. Counters start at zero rather than being inferred from completedJobs: a returning
   // player has no record of the bids they LOST, and inventing a win rate would be a number the
   // game made up about them.
@@ -5066,6 +5112,12 @@ export function gameTick(prev) {
     // field Construction Flow does not have, so it snapshotted a row of zeros every 7 days and
     // kept 26 of them in the save. Replaced with KPIs measured from state that exists.
     tickConstructionKPIs(g);
+    // Notices age out daily so the home screen never leads with a four-month-old
+    // congratulation. Action items are exempt — they are waiting on the player.
+    if (newDay) {
+      expireNotices(g);
+      g.importantNotice = topNotice(g);
+    }
     initTerritories(g, "construction");
     tickTerritories(g);
     // Weather delays active projects
@@ -5246,6 +5298,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const tickRef = useRef(null);
   const [speedMode, setSpeedMode] = useState(false);
+  // Sprint 8: whether the Site Office inbox is showing everything beneath the lead item.
+  const [inboxOpen, setInboxOpen] = useState(false);
   const appStateRef = useRef(AppState.currentState);
   const gameRef = useRef(null);
   const saveTimerRef = useRef(null);
@@ -6917,17 +6971,145 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           />
         )}
 
-        {game.importantNotice && (() => {
-          const toneByKey = { green: "safe", orange: "caution", red: "hazard", neutral: "info" };
+        {/* ─── Site Office inbox — Sprint 8 ────────────────────────────────────
+            Audit row 11. This was a single `importantNotice` slot behind 102 call sites:
+            anything raised alongside something else was destroyed before it was drawn, and
+            nothing ever expired — a simulated run had a day-3 milestone still sitting here on
+            day 120.
+
+            Now a queue. The most important item leads; the rest are one tap away; things that
+            need a DECISION never age out, and everything else does. */}
+        {(() => {
+          const notices = sortedNotices(game);
+          if (notices.length === 0) return null;
+          const summary = summarizeInbox(game);
+          const lead = notices[0];
+          const rest = notices.slice(1, inboxOpen ? INBOX_VISIBLE : 0);
+          const hidden = Math.max(0, notices.length - 1 - rest.length);
+
           return (
-            <AlertBanner
-              T={T}
-              tone={toneByKey[game.importantNotice.tone] || "info"}
-              icon="megaphone-outline"
-              title="Company update"
-              body={game.importantNotice.message}
-              onDismiss={() => update((g) => { g.importantNotice = null; })}
-            />
+            <Card T={T} tone={noticeTone(lead.level)} elevated>
+              <SectionLabel
+                T={T}
+                tone={noticeTone(lead.level)}
+                right={
+                  <Pill
+                    T={T}
+                    label={summary.headline}
+                    tone={noticeTone(summary.level)}
+                    filled={summary.actions > 0}
+                  />
+                }
+              >
+                Site Office
+              </SectionLabel>
+
+              {/* The lead item, given the weight the old single banner had. */}
+              <View style={{ marginTop: SPACING.sm }}>
+                <Text style={[TYPE.body, { color: T.text }]}>{lead.message}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", marginTop: SPACING.xs, gap: SPACING.sm }}>
+                  <Text style={[TYPE.caption, { color: T.sub }]}>
+                    {describeNoticeAge(lead.day, game.day)}
+                  </Text>
+                  {lead.level === "action" ? (
+                    <Text style={[TYPE.caption, { color: toneColor("accent", T), fontWeight: "700" }]}>
+                      Needs a decision
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={{ flexDirection: "row", gap: SPACING.sm, marginTop: SPACING.sm }}>
+                  {lead.actionTab ? (
+                    <TouchableOpacity
+                      style={{
+                        minHeight: MIN_TAP_TARGET - 10, justifyContent: "center",
+                        paddingHorizontal: SPACING.md, borderRadius: RADIUS.xs,
+                        borderWidth: 1, borderColor: alpha(T.accent, 0.6), backgroundColor: alpha(T.accent, 0.14),
+                      }}
+                      onPress={() => setTab(lead.actionTab)}
+                      accessibilityRole="button"
+                      accessibilityLabel={lead.actionLabel || `Go to ${lead.actionTab}`}
+                    >
+                      <Text style={{ fontSize: 12, color: T.accent, fontWeight: "700" }}>
+                        {lead.actionLabel || `Go to ${lead.actionTab}`}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={{
+                      minHeight: MIN_TAP_TARGET - 10, justifyContent: "center",
+                      paddingHorizontal: SPACING.md, borderRadius: RADIUS.xs,
+                      borderWidth: 1, borderColor: T.border, backgroundColor: T.panel2,
+                    }}
+                    onPress={() => update((g) => { dismissNotice(g, lead.id); g.importantNotice = topNotice(g); })}
+                    accessibilityRole="button"
+                    accessibilityLabel="Dismiss this update"
+                  >
+                    <Text style={{ fontSize: 12, color: T.sub, fontWeight: "700" }}>Dismiss</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Everything the old single slot would have thrown away. */}
+              {notices.length > 1 && (
+                <>
+                  <TouchableOpacity
+                    style={{ minHeight: MIN_TAP_TARGET - 12, justifyContent: "center", marginTop: SPACING.sm }}
+                    onPress={() => {
+                      const opening = !inboxOpen;
+                      setInboxOpen(opening);
+                      if (opening) update((g) => { markAllRead(g); });
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={inboxOpen ? "Hide earlier updates" : `Show ${notices.length - 1} earlier updates`}
+                  >
+                    <Text style={[TYPE.caption, { color: toneColor("steel", T), fontWeight: "700" }]}>
+                      {inboxOpen ? "Hide earlier updates" : `${notices.length - 1} more update${notices.length - 1 === 1 ? "" : "s"}`}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {inboxOpen && rest.map((n) => (
+                    <View
+                      key={n.id}
+                      style={{
+                        flexDirection: "row", alignItems: "flex-start",
+                        paddingVertical: SPACING.sm,
+                        borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.border,
+                      }}
+                    >
+                      <View style={{
+                        width: 6, height: 6, borderRadius: 3, marginTop: 6, marginRight: SPACING.sm,
+                        backgroundColor: toneColor(noticeTone(n.level), T),
+                      }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[TYPE.caption, { color: T.text }]} numberOfLines={3}>{n.message}</Text>
+                        <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]}>
+                          {describeNoticeAge(n.day, game.day)}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+
+                  {inboxOpen && hidden > 0 && (
+                    <Text style={[TYPE.caption, { color: T.sub, marginTop: SPACING.xs }]}>
+                      and {hidden} older
+                    </Text>
+                  )}
+
+                  {inboxOpen && (
+                    <TouchableOpacity
+                      style={{ minHeight: MIN_TAP_TARGET - 12, justifyContent: "center", marginTop: SPACING.xs }}
+                      onPress={() => update((g) => { clearInbox(g); markAllRead(g); g.importantNotice = topNotice(g); })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear updates, keeping anything that needs a decision"
+                    >
+                      <Text style={[TYPE.caption, { color: T.sub, fontWeight: "700" }]}>
+                        Clear all{actionCount(game) > 0 ? " (keeps decisions)" : ""}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </Card>
           );
         })()}
 
@@ -10986,6 +11168,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {TABS.map((t) => {
           const active = tab === t;
           const badgeVal = {
+            // Sprint 8: unread inbox items show on Home, so something landing while the player
+            // is on another tab is visible rather than silently queued.
+            Home:      unreadCount(game),
             Bids:      getOpenContracts(game).length,
             Crew:      game.applicants.length,
             Equipment: (game.equipment||[]).filter(e => e.condition < 40 || e.status === "Maintenance").length || 0,

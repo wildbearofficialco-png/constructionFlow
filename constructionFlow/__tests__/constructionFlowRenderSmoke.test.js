@@ -526,6 +526,50 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("loyalty premium");
   });
 
+  test("the Site Office inbox shows the lead item AND keeps the rest", async () => {
+    // Sprint 8, audit row 11. The old single slot would have destroyed two of these three.
+    const tree = await mountWith((g) => {
+      g.day = 30;
+      g._noticeSeq = 3;
+      g.inbox = [
+        { id: "n3", message: "Excavator broke down on Harbor Tower.", level: "urgent", day: 30, read: false },
+        { id: "n2", message: "Bid lost: Riverside Depot went to Vance Bros.", level: "warning", day: 29, read: false },
+        { id: "n1", message: "Materials delivered to Site 2.", level: "good", day: 29, read: false },
+      ];
+      g.importantNotice = g.inbox[0];
+    });
+    const json = JSON.stringify(tree.toJSON());
+
+    expect(json).toContain("Site Office");
+    // The most important one leads.
+    expect(json).toContain("Excavator broke down on Harbor Tower.");
+    // And the others are not gone — they are one tap away.
+    expect(json).toContain("2 more updates");
+  });
+
+  test("an item needing a decision leads and says so", async () => {
+    const tree = await mountWith((g) => {
+      g.day = 12;
+      g._noticeSeq = 2;
+      g.inbox = [
+        { id: "n2", message: "Good news, a milestone.", level: "good", day: 12, read: false },
+        { id: "n1", message: "The inspector wants a decision on Harbor Tower.", level: "action",
+          day: 5, read: false, actionLabel: "Open Sites", actionTab: "Sites" },
+      ];
+      g.importantNotice = g.inbox[1];
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("The inspector wants a decision on Harbor Tower.");
+    expect(json).toContain("Needs a decision");
+    expect(json).toContain("Open Sites");
+  });
+
+  test("an empty inbox renders no Site Office card at all", async () => {
+    const tree = await mountWith((g) => { g.inbox = []; g.importantNotice = null; });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).not.toContain("Site Office");
+  });
+
   test("an empty Sites tab explains itself and offers a way out", async () => {
     const tree = await mountWith();
     const sites = tabButton(tree, "Sites");
