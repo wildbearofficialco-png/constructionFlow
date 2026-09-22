@@ -4,6 +4,7 @@
 // Each game type maps zones to their business context.
 
 import { clamp, rand, pick, uid, addLog } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 export const ZONE_TYPES = {
   fleet: [
@@ -60,6 +61,7 @@ export function unlockZone(game, zoneId, businessType) {
   }
 
   game.cash -= zone.unlockCost;
+  recordTransaction(game, "property", -zone.unlockCost, "Territory unlock");
   if (!game.territories) initTerritories(game, businessType);
   game.territories.unlockedZones.push(zoneId);
   addLog(game, `🗺️ Zone unlocked: ${zone.label} — ${zone.desc}. Presence income: $${zone.presenceIncome}/day.`);

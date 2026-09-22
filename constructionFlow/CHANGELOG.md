@@ -5,6 +5,160 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Phase 6 — A company with a memory, and the approved icon
+
+### Release (1.0.0, build 5)
+
+- iOS `buildNumber` 4 -> 5. Version stays **1.0.0**. Android `versionCode` untouched at 1.
+- Build 4 is on TestFlight and carried the five parity phases with a placeholder icon. Build 5
+  is the first to carry the approved artwork, and the first with a world that remembers.
+- Release gate: lint 0 errors (34 pre-existing warnings), typecheck clean, **525/525 tests
+  across 26 suites run four consecutive times**, Expo config resolves to Construction Flow /
+  1.0.0 / 5 / `co.wildbear.constructionflow` / EAS project
+  `72e9062c-b382-478a-b226-b3ea5559e117`, `expo export --platform ios` bundles cleanly.
+- Identity preserved: bundle identifier, EAS project, App Store Connect app `6793354537`.
+
+
+### The app icon was a placeholder, and had been since build 1
+
+Builds 1 through 4 all shipped a generated placeholder: a flat orange crane glyph on near-black,
+37KB at 1024x1024, produced by `scripts/generate_construction_icon.py` in the FleetFlow repo.
+
+Before replacing it, the approved artwork was searched for properly: constructionFlow history
+deepened to 84 commits, FleetFlow's full 1019-commit history, every branch, every blob in both
+object stores, and the whole working disk. **The only construction icon blobs that have ever
+existed in either repository are the three placeholders** (`a76ce666` icon/adaptive, `cf0b3ac0`
+splash, `665cf5f6` favicon), byte-identical across both repos. A 799KB `assets/images/icon.png`
+does exist in early history under a commit titled *"Use ConstructionFlow branding for app icon,
+splash, and favicon"* — it is the stock Expo template chevron, not the branding its message
+claims. Recorded so nobody repeats the search.
+
+The approved artwork supplied by the app owner is now in place: 1254x1254 RGB resampled to
+1024x1024 with Lanczos, flattened to RGB with **no alpha channel** at every size (an iOS icon
+carrying alpha is rejected at submission), applied to `icon`, the Android adaptive foreground,
+the splash image and the 48x48 web favicon.
+
+### The finding — audit row 23, the last untouched gap
+
+> "FleetFlow's events REMEMBER. A decision made on day 20 can be referenced on day 60.
+> Construction Flow's chains are per-site and short-lived, so the world doesn't accumulate a
+> history."
+
+Grep confirmed it exactly. Construction Flow's only event history was `site.chaosHistory` —
+capped at 10 entries, scoped to a single job site, and **destroyed when that site completed**.
+Nothing survived a finished project. A player on day 200 had a company with no past: the same
+events fired, worded the same way, referencing nothing they had ever done.
+
+### `src/systems/companyMemory.js` (new)
+
+A durable, capped chronicle of what the company has done — and, the part that matters, one that
+**costs and pays something**. Phase 5's lesson was that advertising an effect and delivering
+nothing is worse than never advertising it, so every memory kind feeds a modifier, every
+modifier is consumed by the running game, and the tests walk both directions.
+
+**The design rule: your history helps you AND haunts you.** Memory that only granted bonuses
+would just be a second perk ladder.
+
+| What you did | What it does to you |
+| --- | --- |
+| Delivered jobs on time, premium work | `bidEdge` — you win more work |
+| Blew deadlines, shipped below-standard | `bidEdge` negative — you win less |
+| Paid your supplier up front | `supplierGoodwill` — cheaper materials |
+| Took materials and never settled | `supplierGoodwill` negative — dearer materials |
+| Paid people properly when they asked | `crewLoyalty` — your crews stay |
+| Worked someone to burnout | `crewLoyalty` negative — they leave faster |
+| Bought a rival out of the market | `rivalGrudge` — survivors bid against you personally |
+
+Every effect is capped (+/-10% bids, +/-10% materials, +/-50% turnover, -12% from grudges) and
+**decays linearly to nothing over 120 days**, so a grudge from a year ago stops pricing your
+concrete while staying in the chronicle for the player to read.
+
+### A new decision whose price is not on the invoice
+
+The Supplier Deal event gained a third option: **"Take it, settle later"** — the materials
+arrive, nothing is paid, and your supplier remembers. It is the clearest demonstration of the
+system: a choice that is obviously correct today and quietly expensive for the next 120 days.
+
+### New — Company Story card on Empire
+
+Three things: what your record has left you standing as, **what your history is doing right now**
+(the live modifiers, read from the same resolver the bidding and pricing code reads, so the card
+cannot claim an effect the simulation is not applying), and the chronicle itself with each entry
+dimmed once it stops counting. Plus callbacks — the world referring back to a specific thing you
+did, by name and by date.
+
+### Equipment artwork reaches the decision
+
+Audit gap 5 noted 45 equipment renders shown in only two places. Phase 3 put them on site cards;
+the **assignment picker** — the screen where the player actually chooses which machine to send —
+was still a plain text list. That is the one place where knowing a grader from a paver changes
+the decision. It now carries the artwork, a condition-toned readout, a 44pt tap target and an
+accessibility label.
+
+### Fixed — a 1-in-20 flake, and what it was really reporting
+
+The long-run economy test failed roughly 1 run in 20: progress claims exceeding half the
+contract value. Build 3 corrected this assertion once already, from the value a site STARTED
+with to its current value. **That was still wrong**, and this run found the remaining hole:
+
+> A claim is validated against the contract value AT CLAIM TIME, and released cash is never
+> clawed back if the contract is later revalued DOWN.
+
+So $50,000 legitimately released against a $100,000 contract stays on the books after a payment
+hold cuts that contract to $93,002, and the naive ceiling of $46,501 is simply the wrong number
+to measure against. **The code was right both times.** The assertion now measures against the
+high-water mark, and a companion test pins the revalued-down behaviour deliberately so it cannot
+regress into an actual overpayment bug. Reproduced at attempt 22 of a loop, then 30 consecutive
+clean runs after the fix.
+
+### Found while chasing the flake: six modules were spending your money silently
+
+The 1-in-25 flake turned up something bigger than itself. **Six shared system modules moved the
+player's cash and wrote no ledger entry at all** — `randomEvents.js` (nine separate cash
+movements), `inventorySystem.js`, `staffPerformance.js`, `employeePersonalities.js` and
+`territorySystem.js`.
+
+The reconciler caught the money, because that is what it is for, but by the time it runs all it
+can see is that cash moved and no category claimed it. So it filed the lot as **"Financing or
+balance transfer"**. A failed health inspection, a theft, an emergency repair, a training
+programme and a territory unlock all appeared in Finance as a balance transfer.
+
+That is this effort's recurring defect in a new place: *the number the player reads is not the
+thing that happened.* Phase 5 found it in the office ladder's perks; Phase 6 found it in the
+ledger. Every one of those thirteen movements is now recorded with the category and the
+description of what actually occurred — "Failed health inspection", "Theft loss", "Emergency
+repair", "Medical costs", "Contract penalty", not a catch-all.
+
+`__tests__/ledgerInstrumentation.test.js` is the guard: a mechanical source scan that fails if
+any new `game.cash` movement in a shared module goes unrecorded, plus eight seeded runs holding
+uncategorised cash under **5%** — far tighter than the 25% the original test allowed for all
+reconciliation kinds combined. `aiCompetitors.js` is excluded deliberately: it moves
+`competitor.cash`, a rival's balance sheet, which correctly never enters the player's ledger.
+
+The flake was cured by instrumenting the money, not by loosening the threshold. 40 consecutive
+clean runs of the originally-failing test.
+
+### Save compatibility
+
+One additive field, `companyMemory`, defaulted to `[]` by the migration. **The migration does not
+invent a history the player never had** — a build-4 save with 40 completed jobs does not become 40
+remembered triumphs; the chronicle starts empty and fills from the day the build is installed. A
+corrupted chronicle (wrong type) is repaired rather than crashing the load. Covered by four tests.
+
+### Tests — 439 → 525
+
+- `__tests__/companyMemory.test.js` (37). Leads with **"every declared effect is consumed by the
+  game"**, and asserts every memory kind feeds at least one effect and every callback is
+  reachable by some history — so neither a dead kind nor dead prose can survive.
+- `__tests__/companyMemoryIntegration.test.js` (22). Each test names what the player would feel.
+  Includes 400 ticks with no NaN and a bounded chronicle, a job driven to completion through the
+  real tick to prove the record is written by the game rather than by the test, and four
+  save-compatibility cases.
+- `__tests__/ledgerInstrumentation.test.js` (24). The guard described above.
+- Two Empire render probes, including the no-history case.
+- One new economy test pinning the revalued-down contract behaviour.
+
+
 ### Release (1.0.0, build 4) — the first binary carrying any parity work
 
 - iOS `buildNumber` 3 -> 4. Version stays **1.0.0**: build 1 is what is on TestFlight and

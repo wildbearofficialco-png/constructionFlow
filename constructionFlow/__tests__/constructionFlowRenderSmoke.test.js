@@ -433,6 +433,41 @@ describe("the rewritten surfaces actually appear", () => {
     expect(json).toContain("No office rent");
   });
 
+  test("Empire tells you what your company has done and what it is costing you", async () => {
+    // Phase 6, audit row 23. Before this the world had no memory: the only event history was
+    // site.chaosHistory, capped at 10 and destroyed when the job finished.
+    const tree = await mountWith((g) => {
+      g.day = 150;
+      g.companyMemory = [
+        { tag: "delivered_a", kind: "triumph", valence: "good", day: 148, weight: 3,
+          label: "Delivered Harbor Tower on time", detail: "you delivered Harbor Tower on time", subject: "Harbor Trust" },
+        { tag: "supplier_stiffed_40", kind: "supplier", valence: "bad", day: 40, weight: 2,
+          label: "Took materials without paying", detail: "you took a bulk order on account and never settled it", subject: "" },
+      ];
+    });
+    const empire = tabButton(tree, "Empire");
+    await act(async () => { empire.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+
+    expect(json).toContain("Company Story");
+    expect(json).toContain("What this company has done");
+    expect(json).toContain("Delivered Harbor Tower on time");
+    // The live consequence, not just the anecdote.
+    expect(json).toContain("What your history is doing right now");
+    // And the world referring back to the thing the player actually did.
+    expect(json).toContain("you took a bulk order on account and never settled it");
+  });
+
+  test("a company with no past is told so, rather than shown an empty card", async () => {
+    const tree = await mountWith((g) => { g.companyMemory = []; });
+    const empire = tabButton(tree, "Empire");
+    await act(async () => { empire.props.onPress(); });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Company Story");
+    expect(json).toContain("Nothing on the record yet");
+    expect(json).not.toContain("What your history is doing right now");
+  });
+
   test("an empty Sites tab explains itself and offers a way out", async () => {
     const tree = await mountWith();
     const sites = tabButton(tree, "Sites");

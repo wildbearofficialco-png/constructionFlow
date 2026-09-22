@@ -4,6 +4,7 @@
 // the daily tick — reviews fire every 14 days, team morale updates weekly.
 
 import { clamp, rand, pick, addLog } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 // Review outcome thresholds (0–100 performance score)
 const REVIEW_OUTCOMES = [
@@ -141,6 +142,7 @@ export function applyRetentionBonus(game, workerId, bonusId) {
   if (bonus.cost > 0) {
     if ((game.cash || 0) < bonus.cost) return false;
     game.cash -= bonus.cost;
+    recordTransaction(game, "payroll", -bonus.cost, "Performance bonus");
   }
 
   worker.loyalty = clamp((worker.loyalty || 60) + bonus.loyaltyGain, 0, 100);

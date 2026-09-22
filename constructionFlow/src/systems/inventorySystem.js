@@ -4,6 +4,7 @@
 // Works with any game by operating on game.inventory and game.suppliers.
 
 import { uid, rand, pick, clamp, addLog } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 export const SUPPLIER_TIERS = [
   { id: "budget",    label: "Budget Supplier",    costMult: 0.82, reliability: 0.72, leadTimeDays: [3, 6] },
@@ -93,6 +94,7 @@ export function placeReorder(game, itemId) {
   }
 
   game.cash -= totalCost;
+  recordTransaction(game, "inventory", -totalCost, "Automatic inventory restock");
   item.pendingOrders.push({ id: uid(), qty: item.reorderQty, deliveryDay, supplierId: supplier.id, status: "Pending" });
   addLog(game, `Reordered ${item.reorderQty} ${item.unit} of ${item.name} — arrives day ${deliveryDay}.`);
   return true;

@@ -99,7 +99,12 @@ export function getBidCompetition(game = {}, contract = {}) {
 
   const officeBonus = Number.isFinite(game.bidBonus) ? Math.max(0, Math.min(0.15, game.bidBonus)) : 0;
 
-  return reputationFactor * contestedFactor * categoryFactor + officeBonus;
+  // Phase 6: what the company has DONE, net of what it has done TO people. Positive from a
+  // record of delivered work and pleased clients, negative from blown jobs and from rivals
+  // holding a grudge. Clamped both ways so history moves the odds without ever deciding them.
+  const memoryEdge = Number.isFinite(game.memoryEdge) ? Math.max(-0.12, Math.min(0.12, game.memoryEdge)) : 0;
+
+  return reputationFactor * contestedFactor * categoryFactor + officeBonus + memoryEdge;
 }
 
 // A player's very first contract is guaranteed. Without this, a brand-new company (0

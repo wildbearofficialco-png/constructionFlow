@@ -4,6 +4,7 @@
 // Generic: works with any business type via businessType checks.
 
 import { uid, rand, pick, clamp, addLog, money } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 const SEVERITY = { minor: "minor", moderate: "moderate", major: "major", critical: "critical" };
 
@@ -22,6 +23,7 @@ export const EVENT_POOL = [
       } else {
         const fine = rand(800, 2800);
         game.cash -= fine;
+        recordTransaction(game, "fines", -fine, "Failed health inspection");
         game.reputation = clamp((game.reputation || 50) - 8, 0, 100);
         addLog(game, `Failed health inspection — ${money(fine)} fine and reputation hit.`);
       }
@@ -42,6 +44,7 @@ export const EVENT_POOL = [
       } else {
         const fine = rand(500, 2200);
         game.cash -= fine;
+        recordTransaction(game, "fines", -fine, "Failed safety inspection");
         if (vehicles.length > 0) pick(vehicles).status = "In Repair";
         addLog(game, `DOT inspection failed — ${money(fine)} fine, vehicle grounded.`);
       }
@@ -56,6 +59,7 @@ export const EVENT_POOL = [
     resolve: (game) => {
       const settlement = rand(3000, 12000);
       game.cash -= settlement;
+      recordTransaction(game, "fines", -settlement, "Legal settlement");
       game.reputation = clamp((game.reputation || 50) - 12, 0, 100);
       addLog(game, `Customer lawsuit settled for ${money(settlement)} — reputation damaged.`);
     },
@@ -76,6 +80,7 @@ export const EVENT_POOL = [
         addLog(game, `Theft: ${qtyStolen} ${item.unit} of ${item.name} stolen.`);
       }
       game.cash -= stolen;
+      recordTransaction(game, "misc", -stolen, "Theft loss");
       addLog(game, `Theft incident — ${money(stolen)} in losses.`);
     },
   },
@@ -88,6 +93,7 @@ export const EVENT_POOL = [
     resolve: (game) => {
       const repairCost = rand(300, 1200);
       game.cash -= repairCost;
+      recordTransaction(game, "maintenance", -repairCost, "Emergency repair");
       const vehicles = (game.vehicles || []).filter((v) => v.status === "Idle");
       if (vehicles.length > 0) {
         const v = pick(vehicles);
@@ -123,6 +129,7 @@ export const EVENT_POOL = [
     resolve: (game) => {
       const lostRevenue = rand(500, 2500);
       game.cash -= lostRevenue;
+      recordTransaction(game, "misc", -lostRevenue, "Lost revenue");
       const inventory = (game.inventory || []).filter((i) => i.spoilable);
       inventory.forEach((item) => {
         const spoiled = Math.floor(item.quantity * 0.15);
@@ -217,6 +224,7 @@ export const EVENT_POOL = [
       recalled.repairMinsLeft = rand(480, 1440);
       const cost = rand(1500, 5000);
       game.cash -= cost;
+      recordTransaction(game, "misc", -cost, "Incident cost");
       addLog(game, `Equipment recall: ${recalled.name} grounded for ${Math.round(recalled.repairMinsLeft / 60)}h — ${money(cost)} cost.`);
     },
   },
@@ -235,6 +243,7 @@ export const EVENT_POOL = [
       worker.mood = clamp((worker.mood || 65) - 20, 0, 100);
       const medCost = rand(1000, 4500);
       game.cash -= medCost;
+      recordTransaction(game, "insurance", -medCost, "Medical costs");
       game.reputation = clamp((game.reputation || 50) - 5, 0, 100);
       addLog(game, `Workplace accident involving ${worker.name} — ${money(medCost)} medical costs.`);
     },
@@ -248,6 +257,7 @@ export const EVENT_POOL = [
     resolve: (game) => {
       const penalty = rand(1000, 3500);
       game.cash -= penalty;
+      recordTransaction(game, "fines", -penalty, "Contract penalty");
       addLog(game, `Financial audit — ${money(penalty)} in penalties.`);
     },
   },
