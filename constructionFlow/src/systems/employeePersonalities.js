@@ -4,6 +4,7 @@
 // Works with any game's workers array on game state.
 
 import { uid, rand, pick, clamp, addLog } from "./utils.js";
+import { recordTransaction } from "./financialLedger.js";
 
 export const PERSONALITY_TRAITS = [
   { id: "driven",        label: "Driven",        stressMod: 1.1,  ambitionBase: 75, loyaltyMod: -5  },
@@ -82,6 +83,7 @@ export function sendToTraining(game, workerId, programId) {
   if (w.trainingCompleteDay) return false;
   if ((game.cash || 0) < program.cost) return false;
   game.cash -= program.cost;
+  recordTransaction(game, "payroll", -program.cost, "Training programme");
   w.trainingCompleteDay = (game.day || 1) + program.durationDays;
   w.trainingProgramId = program.id;
   if (w.status === "Idle") w.status = "Training";

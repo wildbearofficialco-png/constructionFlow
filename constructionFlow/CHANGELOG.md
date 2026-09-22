@@ -7,6 +7,18 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Phase 6 — A company with a memory, and the approved icon
 
+### Release (1.0.0, build 5)
+
+- iOS `buildNumber` 4 -> 5. Version stays **1.0.0**. Android `versionCode` untouched at 1.
+- Build 4 is on TestFlight and carried the five parity phases with a placeholder icon. Build 5
+  is the first to carry the approved artwork, and the first with a world that remembers.
+- Release gate: lint 0 errors (34 pre-existing warnings), typecheck clean, **525/525 tests
+  across 26 suites run four consecutive times**, Expo config resolves to Construction Flow /
+  1.0.0 / 5 / `co.wildbear.constructionflow` / EAS project
+  `72e9062c-b382-478a-b226-b3ea5559e117`, `expo export --platform ios` bundles cleanly.
+- Identity preserved: bundle identifier, EAS project, App Store Connect app `6793354537`.
+
+
 ### The app icon was a placeholder, and had been since build 1
 
 Builds 1 through 4 all shipped a generated placeholder: a flat orange crane glyph on near-black,
@@ -99,6 +111,33 @@ high-water mark, and a companion test pins the revalued-down behaviour deliberat
 regress into an actual overpayment bug. Reproduced at attempt 22 of a loop, then 30 consecutive
 clean runs after the fix.
 
+### Found while chasing the flake: six modules were spending your money silently
+
+The 1-in-25 flake turned up something bigger than itself. **Six shared system modules moved the
+player's cash and wrote no ledger entry at all** — `randomEvents.js` (nine separate cash
+movements), `inventorySystem.js`, `staffPerformance.js`, `employeePersonalities.js` and
+`territorySystem.js`.
+
+The reconciler caught the money, because that is what it is for, but by the time it runs all it
+can see is that cash moved and no category claimed it. So it filed the lot as **"Financing or
+balance transfer"**. A failed health inspection, a theft, an emergency repair, a training
+programme and a territory unlock all appeared in Finance as a balance transfer.
+
+That is this effort's recurring defect in a new place: *the number the player reads is not the
+thing that happened.* Phase 5 found it in the office ladder's perks; Phase 6 found it in the
+ledger. Every one of those thirteen movements is now recorded with the category and the
+description of what actually occurred — "Failed health inspection", "Theft loss", "Emergency
+repair", "Medical costs", "Contract penalty", not a catch-all.
+
+`__tests__/ledgerInstrumentation.test.js` is the guard: a mechanical source scan that fails if
+any new `game.cash` movement in a shared module goes unrecorded, plus eight seeded runs holding
+uncategorised cash under **5%** — far tighter than the 25% the original test allowed for all
+reconciliation kinds combined. `aiCompetitors.js` is excluded deliberately: it moves
+`competitor.cash`, a rival's balance sheet, which correctly never enters the player's ledger.
+
+The flake was cured by instrumenting the money, not by loosening the threshold. 40 consecutive
+clean runs of the originally-failing test.
+
 ### Save compatibility
 
 One additive field, `companyMemory`, defaulted to `[]` by the migration. **The migration does not
@@ -106,7 +145,7 @@ invent a history the player never had** — a build-4 save with 40 completed job
 remembered triumphs; the chronicle starts empty and fills from the day the build is installed. A
 corrupted chronicle (wrong type) is repaired rather than crashing the load. Covered by four tests.
 
-### Tests — 439 → 500
+### Tests — 439 → 525
 
 - `__tests__/companyMemory.test.js` (37). Leads with **"every declared effect is consumed by the
   game"**, and asserts every memory kind feeds at least one effect and every callback is
@@ -115,6 +154,7 @@ corrupted chronicle (wrong type) is repaired rather than crashing the load. Cove
   Includes 400 ticks with no NaN and a bounded chronicle, a job driven to completion through the
   real tick to prove the record is written by the game rather than by the test, and four
   save-compatibility cases.
+- `__tests__/ledgerInstrumentation.test.js` (24). The guard described above.
 - Two Empire render probes, including the no-history case.
 - One new economy test pinning the revalued-down contract behaviour.
 
