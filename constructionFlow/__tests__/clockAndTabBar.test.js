@@ -15,6 +15,8 @@ import path from "path";
 
 import { formatClock, freshState, gameTick, TABS } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -55,11 +57,11 @@ describe("the clock reads the way FleetFlow's does", () => {
     g.setupDone = true; g.tutorialDone = true;
     const startDay = g.day;
     const seen = new Set();
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < ticksPerDay("1x"); i++) {
       g = gameTick(g);
       seen.add(formatClock(g.gameMinutes));
     }
-    // 48 ticks of 30 minutes is exactly one day.
+    // One day's worth of ticks is exactly one day, whatever the pace is set to.
     expect(g.day).toBe(startDay + 1);
     // And the player would have seen the time move, not sit still.
     expect(seen.size).toBeGreaterThan(20);

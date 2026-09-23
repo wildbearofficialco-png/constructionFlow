@@ -23,6 +23,11 @@ import {
   KPI_DEFS,
 } from "../src/systems/constructionKPIs.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -73,7 +78,7 @@ describe("the counters the win-rate KPI needs are actually incremented", () => {
     // The invariant that makes the rate meaningful.
     const g = running({ bidsPlaced: 0, bidsWon: 0, bidsLost: 0 });
     let s = g;
-    for (let i = 0; i < 48 * 120; i++) s = gameTick(s);
+    for (let i = 0; i < TICKS_PER_DAY * 120; i++) s = gameTick(s);
     expect((s.bidsWon || 0) + (s.bidsLost || 0)).toBe(s.bidsPlaced || 0);
   });
 
@@ -108,7 +113,7 @@ describe("a job driven to completion through the real tick reaches the KPIs", ()
 describe("snapshots accumulate over a real game and stay bounded", () => {
   test("a long run builds history without ballooning the save", () => {
     let g = running();
-    for (let i = 0; i < 48 * 250; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * 250; i++) g = gameTick(g);
     const snaps = g.kpiHistory?.snapshots || [];
     expect(snaps.length).toBeGreaterThan(1);
     expect(snaps.length).toBeLessThanOrEqual(MAX_KPI_SNAPSHOTS);
@@ -130,7 +135,7 @@ describe("snapshots accumulate over a real game and stay bounded", () => {
 
   test("the first snapshot is not taken before the interval has elapsed", () => {
     let g = running({ day: 1, kpiHistory: { snapshots: [], lastSnapshotDay: 0 } });
-    for (let i = 0; i < 48 * (KPI_SNAPSHOT_INTERVAL - 2); i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * (KPI_SNAPSHOT_INTERVAL - 2); i++) g = gameTick(g);
     expect((g.kpiHistory?.snapshots || []).length).toBe(0);
   });
 });

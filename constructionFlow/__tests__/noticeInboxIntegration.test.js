@@ -9,6 +9,11 @@ import path from "path";
 import { freshState, migrateState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 import { sortedNotices, topNotice, INBOX_CAP } from "../src/systems/noticeInbox.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -97,11 +102,11 @@ describe("the daily ageing runs inside the tick", () => {
     g._noticeSeq = 1;
     const startDay = g.day;
     // One day on: still present.
-    for (let i = 0; i < 48; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY; i++) g = gameTick(g);
     expect(g.day).toBe(startDay + 1);
     expect((g.inbox || []).some((n) => n.message === "Old news")).toBe(true);
     // Several days on: aged out.
-    for (let i = 0; i < 48 * 4; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * 4; i++) g = gameTick(g);
     expect((g.inbox || []).some((n) => n.message === "Old news")).toBe(false);
   });
 });

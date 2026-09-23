@@ -10,6 +10,11 @@ import path from "path";
 import { freshState, migrateState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 import { taxRateFor, PENALTY_GRACE_DAYS, LATE_PENALTY_RATE } from "../src/systems/taxOffice.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const RAW = fs.readFileSync(SCREEN_PATH, "utf8");
 const SCREEN_CODE = RAW.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -85,7 +90,7 @@ describe("economy integrity across a real run", () => {
     let charged = 0;
     let lastRevenue = 0;
 
-    for (let i = 0; i < 48 * 140; i++) {
+    for (let i = 0; i < TICKS_PER_DAY * 140; i++) {
       const before = g;
       const revBefore = g.weeklyStats?.revenue || 0;
       g = gameTick(g);
@@ -116,7 +121,7 @@ describe("economy integrity across a real run", () => {
     // It is an estimate, not an escrow. If this fails the change has rebalanced the game.
     let g = running({ cash: 500000 });
     let prev = g.cash;
-    for (let i = 0; i < 48 * 30; i++) {
+    for (let i = 0; i < TICKS_PER_DAY * 30; i++) {
       const beforeReserve = g.taxReserve || 0;
       g = gameTick(g);
       const grew = (g.taxReserve || 0) - beforeReserve;
@@ -134,13 +139,13 @@ describe("falling behind compounds in the real loop", () => {
   test("an ignored bill grows instead of sitting still", () => {
     let g = running({ cash: 0, taxDue: 40000, taxOverdueDays: PENALTY_GRACE_DAYS });
     const start = g.taxDue;
-    for (let i = 0; i < 48 * 10; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * 10; i++) g = gameTick(g);
     expect(g.taxDue).toBeGreaterThan(start);
   });
 
   test("the penalty is weekly, so ten days cannot multiply the debt", () => {
     let g = running({ cash: 0, taxDue: 40000, taxOverdueDays: PENALTY_GRACE_DAYS });
-    for (let i = 0; i < 48 * 10; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * 10; i++) g = gameTick(g);
     // Two charges at most over ten days; a daily charge would be ~2.2x.
     expect(g.taxDue).toBeLessThan(40000 * (1 + LATE_PENALTY_RATE) ** 3);
   });

@@ -20,6 +20,12 @@ import { PROPERTY_TYPES, REGIONAL_OFFICE_TYPES } from "../src/systems/companyPer
 import { resolveCompanyPerks, dailyOfficeRent, BASE_CONTRACT_CAP } from "../src/systems/companyPerks.js";
 import { planBid } from "../src/systems/constructionLoop.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// A literal tick count meant "this many game days" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so every such literal silently became a third of
+// what it said. Derived from the clock now, so the next pace change cannot lie to it.
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -46,7 +52,7 @@ describe("$120,000 for no office rent — the promise that was never kept", () =
 
     // Run both a full game day (48 ticks) and compare the spend.
     let a = withRent, b = owned;
-    for (let i = 0; i < 48; i++) { a = gameTick(a); b = gameTick(b); }
+    for (let i = 0; i < TICKS_PER_DAY; i++) { a = gameTick(a); b = gameTick(b); }
 
     const rentedSpend = withRent.cash - a.cash;
     const ownedSpend = owned.cash - b.cash;

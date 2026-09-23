@@ -4,6 +4,12 @@ import {
   pruneContractHistory,
 } from "../src/games/constructionflow/ConstructionFlowScreen";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// A literal tick count meant "this many game days" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so every such literal silently became a third of
+// what it said. Derived from the clock now, so the next pace change cannot lie to it.
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 // Contracts were the one collection in the save with no upper bound: every contract the
 // player won and every contract a rival took stayed forever. Measured before the fix, a
 // day-300 save carried 745 contracts and weighed 446 KB — and clone() deep-copies the whole
@@ -11,7 +17,7 @@ import {
 describe("Construction Flow save scale", () => {
   test("closed-contract history stays bounded over a long run", () => {
     let g = freshState();
-    for (let i = 0; i < 9600; i++) g = gameTick(g); // ~200 game days
+    for (let i = 0; i < TICKS_PER_DAY * 200; i++) g = gameTick(g); // 200 game days
     expect(g.day).toBeGreaterThan(150);
     expect(g.contracts.length).toBeLessThanOrEqual(60);
     expect(JSON.stringify(g).length).toBeLessThan(200 * 1024);
