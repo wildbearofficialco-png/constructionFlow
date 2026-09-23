@@ -8,7 +8,10 @@ import fs from "fs";
 import path from "path";
 
 import { freshState, migrateState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
-import { canTakeNewWork, assessWeeklyTax, applyTaxPayment, TAX_RATE } from "../src/systems/taxOffice.js";
+import { canTakeNewWork, assessWeeklyTax, applyTaxPayment, TAX_RATE,
+  accrueTaxReserve,
+  issueWeeklyTaxBill,
+} from "../src/systems/taxOffice.js";
 
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
@@ -61,8 +64,26 @@ describe("the freeze is enforced, not just displayed", () => {
 
 describe("a young company gets relief", () => {
   test("the assessment path uses the relief helper, not a bare 12%", () => {
-    expect(SCREEN_CODE).toContain("assessWeeklyTax(g, weeklyRevenue)");
+    // Sprint 9 moved the assessment behind the reserve: the week now bills from what was
+    // accrued daily rather than multiplying revenue at week end. The relief still applies —
+    // accrueTaxReserve derives the reserve through taxRateFor — so the claim this test was
+    // written to protect is unchanged, but the call site it pinned is gone.
+    expect(SCREEN_CODE).toContain("accrueTaxReserve(g)");
+    expect(SCREEN_CODE).toContain("issueWeeklyTaxBill(g)");
     expect(SCREEN_CODE).not.toContain("Math.round(weeklyRevenue * 0.12)");
+    expect(SCREEN_CODE).not.toContain("weeklyRevenue * TAX_RATE");
+  });
+
+  test("the relief still reaches the bill through the reserve", () => {
+    // Behavioural rather than textual, so this one survives the next refactor.
+    const rev = 120000;
+    const bill = (level) => {
+      const g = { companyLevel: level, officeStaff: [], weeklyStats: { revenue: rev }, taxDue: 0, taxReserve: 0 };
+      accrueTaxReserve(g);
+      return issueWeeklyTaxBill(g);
+    };
+    expect(bill(1)).toBeLessThan(bill(6));
+    expect(bill(6)).toBe(Math.round(rev * TAX_RATE));
   });
 
   test("a level-1 company is billed less than a level-6 one on the same revenue", () => {
