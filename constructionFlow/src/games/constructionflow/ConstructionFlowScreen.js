@@ -60,8 +60,15 @@ import {
 import {
   TAX_RATE,
   FREEZE_DAYS,
+  PENALTY_GRACE_DAYS,
+  LATE_PENALTY_RATE,
   taxRateFor,
-  assessWeeklyTax,
+  hasEstimator,
+  accrueTaxReserve,
+  taxEstimate,
+  issueWeeklyTaxBill,
+  applyLatePenalty,
+  applyOverdueCreditHit,
   canTakeNewWork,
   blockedReason,
   minPartialPayment,
@@ -72,6 +79,7 @@ import {
   applyTaxPayment,
   describeTaxStatus,
 } from "../../systems/taxOffice.js";
+import { fireHaptic } from "../../utils/constructionHaptics.js";
 import {
   pushNotice,
   expireNotices,
@@ -2348,6 +2356,8 @@ function createLoanFromProduct(product, state) {
 // to this company right now. Every affordability check in the game funnels through here so
 // the advice can never drift between screens.
 function alertInsufficientFunds(state, cost, purchase) {
+  // The press already fired a neutral tap. This says it did not go through.
+  fireHaptic("error");
   const { title, body } = buildInsufficientFundsAlert({
     cost,
     purchase,
@@ -3307,7 +3317,7 @@ export function freshState() {
     theme: "dark",
     marketState: "Normal",
     businessFrozen: false,
-    taxDue: 0, taxOverdueDays: 0,
+    taxDue: 0, taxOverdueDays: 0, taxReserve: 0,
     revenue: 0, expenses: 0,
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
     savings: 0,
@@ -3486,6 +3496,15 @@ export function migrateState(saved) {
   // Phase 6. A build-4 save has no chronicle; it starts one from the day it is loaded rather
   // than inventing a history it never had.
   if (!Array.isArray(g.companyMemory))    g.companyMemory = [];
+  // Sprint 9. A pre-reserve save has no taxReserve. It is recomputed from the revenue already
+  // booked this week rather than defaulted to zero, so a returning player's first estimate is
+  // the truth about the week they are in and their first bill is not silently reduced.
+  // NOTE the `saved.taxReserve` rather than `g.taxReserve`. migrateState opens with
+  // `{ ...freshState(), ...saved }`, so g.taxReserve is ALWAYS the fresh 0 on a save that
+  // lacks the field — checking g here can never detect a legacy save and the accrual would
+  // never run. This is the same trap the Sprint 8 inbox migration fell into.
+  if (!Number.isFinite(saved?.taxReserve)) accrueTaxReserve(g);
+  if (!Number.isFinite(g.creditScore))     g.creditScore = 600;
   // Sprint 8. A pre-inbox save carries at most one notice in the old single slot; it is moved
   // into the queue rather than dropped, so nothing the player had on screen disappears on
   // upgrade.
@@ -4607,6 +4626,10 @@ export function gameTick(prev) {
     // flat low-condition charge and idle-condition decay, avoiding double wear and double cost.
     tickEquipmentWear(g);
 
+    // Keep the running tax estimate current every day, so the figure grows as payments land
+    // instead of the whole bill appearing at week end. This is the fix for the ambush.
+    accrueTaxReserve(g);
+
     // Weekly tax (every 7 days)
     if (g.day % 7 === 0) {
       // Property passive income
@@ -4625,16 +4648,13 @@ export function gameTick(prev) {
         }
       }
       const weeklyRevenue = g.weeklyStats.revenue || 0;
-      if (weeklyRevenue > 0) {
-        // assessWeeklyTax applies FleetFlow's early-game relief (0.75x below company level 5).
-        // A young company has the thinnest margins it will ever have and the fewest tools to
-        // fix them; charging it the full headline rate from day one is what made tax feel
-        // punitive rather than difficult.
-        const _bill = assessWeeklyTax(g, weeklyRevenue);
-        g.taxDue = (g.taxDue || 0) + _bill;
-        if (_bill > 0) {
-          addLog(g, `🧾 Tax assessed: ${money(_bill)} on ${money(weeklyRevenue)} of revenue.`);
-        }
+      // Accrue one last time so revenue booked earlier in THIS block (property income, above)
+      // is captured, then bill from the reserve. The reserve has been visible to the player all
+      // week, so the amount here is a number they have already seen rather than a surprise.
+      accrueTaxReserve(g);
+      const _bill = issueWeeklyTaxBill(g);
+      if (_bill > 0) {
+        addLog(g, `🧾 Tax assessed: ${money(_bill)} on ${money(weeklyRevenue)} of revenue — the amount set aside this week.`);
       }
       // Weekly summary log
       const weekRev = g.weeklyStats.revenue || 0;
@@ -4682,6 +4702,18 @@ export function gameTick(prev) {
 
     if ((g.taxDue || 0) > 0) {
       g.taxOverdueDays = (g.taxOverdueDays || 0) + 1;
+      // Debt that never grows is furniture: ignoring it costs nothing and the 14-day freeze
+      // arrives out of a clear sky. FleetFlow charges 8%/week past the first week overdue and
+      // docks credit the day the debt turns a week old.
+      const _creditHit = applyOverdueCreditHit(g);
+      if (_creditHit > 0) {
+        addLog(g, `📉 Tax debt is a week overdue — credit score down ${_creditHit} points.`);
+      }
+      const _penalty = applyLatePenalty(g);
+      if (_penalty > 0) {
+        addLog(g, `⚠ Late-payment penalty of ${money(_penalty)} added to the tax bill (${Math.round(LATE_PENALTY_RATE * 100)}%/week). Now owing ${money(g.taxDue)}.`);
+        addImportantNotice(g, `Tax debt grew by ${money(_penalty)} in penalties. Unpaid tax compounds every week — pay it down.`, "red", { actionLabel: "Pay in Finance", actionTab: "Finance" });
+      }
       if (g.taxOverdueDays >= FREEZE_DAYS && !g.businessFrozen) {
         g.businessFrozen = true;
         addImportantNotice(g, `Operations frozen — ${money(g.taxDue || 0)} of tax is ${g.taxOverdueDays} days overdue. You cannot take new work until it is paid down.`, "red", { actionLabel: "Pay in Finance", actionTab: "Finance" });
@@ -5503,6 +5535,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, []);
 
   const handleBuyEquipment = useCallback((item, isUsed = false) => {
+    fireHaptic("light");
     update((g) => {
       const discount = (g._equipDiscount || 0);
       const basePrice = Math.round(item.price * (1 - discount));
@@ -5565,6 +5598,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [saveGame]);
 
   const handleRepairEquipment = useCallback((equipId) => {
+    fireHaptic("light");
     update((g) => {
       const e = g.equipment.find((eq) => eq.id === equipId);
       if (!e) return;
@@ -5582,6 +5616,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleSellEquipment = useCallback((equipId) => {
+    fireHaptic("light");
     update((g) => {
       const e = g.equipment.find((eq) => eq.id === equipId);
       if (!e) return;
@@ -5596,6 +5631,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleHireCrew = useCallback((applicant) => {
+    fireHaptic("light");
     update((g) => {
       const totalCrewCap = getTotalCrewCap(g);
       if (g.crew.length >= totalCrewCap) { const a = buildCapacityAlert({ kind: "crew", current: g.crew.length, cap: totalCrewCap }); Alert.alert(a.title, a.body); return; }
@@ -5624,6 +5660,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleFireCrew = useCallback((workerId) => {
+    fireHaptic("light");
     update((g) => {
       const w = g.crew.find((w) => w.id === workerId);
       if (!w) return;
@@ -5638,6 +5675,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handlePromoteCrew = useCallback((workerId) => {
+    fireHaptic("light");
     update((g) => {
       const w = g.crew.find(w => w.id === workerId);
       if (!w) return;
@@ -5668,6 +5706,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleBuyMaterials = useCallback((matId, qty) => {
+    fireHaptic("light");
     update((g) => {
       if (!qty || qty < 1) return;
       const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
@@ -5787,6 +5826,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleStartSite = useCallback((contract, crewIds, equipIds) => {
+    fireHaptic("light");
     update((g) => {
       const c = g.contracts.find((c) => c.id === contract.id);
       if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
@@ -5921,6 +5961,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleBuyInsurance = useCallback((planId) => {
+    fireHaptic("light");
     update((g) => {
       const plan = INSURANCE_PLANS.find(p => p.id === planId);
       if (!plan) return;
@@ -5941,6 +5982,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleTakeLoan = useCallback((product) => {
+    fireHaptic("light");
     update((g) => {
       if ((g.loans || []).length >= 3) {
         Alert.alert("Loan Limit", "You already have 3 active loans. Pay off a loan before taking another.");
@@ -5966,11 +6008,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         productId: offer.productId,
         apr: offer.apr,
       });
+      fireHaptic("success");
       addLog(g, `💳 Loan approved: ${money(offer.principal)} (${offer.apr}% APR, ${offer.termWeeks} weeks, ${money(offer.weeklyPayment)}/week).`);
     });
   }, [update]);
 
   const handlePayTax = useCallback(() => {
+    fireHaptic("light");
     update((g) => {
       if ((g.taxDue || 0) <= 0) return;
       // Pay what you can. The old handler did `if (g.cash < g.taxDue) return`, so a bill
@@ -5980,11 +6024,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < _want) { alertInsufficientFunds(g, _want, "A part payment on this tax bill"); return; }
       const _res = applyTaxPayment(g, _want);
       if (_res.paid <= 0) return;
+      fireHaptic(_res.cleared ? "milestone" : "success");
       recordTransaction(g, "taxes", -_res.paid, _res.cleared ? "Tax bill paid" : "Tax bill part payment");
       addLog(g, _res.cleared
         ? `✅ Tax bill of ${money(_res.paid)} paid in full.`
         : `🧾 Part payment of ${money(_res.paid)} — ${money(_res.remaining)} still owed.`);
       if (_res.unfrozen) {
+        fireHaptic("milestone");
         addImportantNotice(g, "Operations resumed — the tax freeze has been lifted.", "green");
       }
     });
@@ -6117,6 +6163,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleUpgradeOffice = useCallback(() => {
+    fireHaptic("light");
     update((g) => {
       const next = OFFICES[g.officeIndex + 1];
       if (!next) { Alert.alert("Max Office", "You're at the top tier already."); return; }
@@ -6144,6 +6191,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, []);
 
   const handleOpenOffice = useCallback((cityId, officeTypeId) => {
+    fireHaptic("light");
     update((g) => {
       const city = CITIES.find(c => c.id === cityId);
       const def  = REGIONAL_OFFICE_TYPES.find(t => t.id === officeTypeId);
@@ -6161,6 +6209,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleBuyProperty = useCallback((typeId) => {
+    fireHaptic("light");
     update((g) => {
       const def = PROPERTY_TYPES.find(t => t.id === typeId);
       if (!def) return;
@@ -6210,6 +6259,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleTrainCrew = useCallback((workerId, programId) => {
+    fireHaptic("light");
     update((g) => {
       const w = g.crew.find((w) => w.id === workerId);
       const prog = TRAINING_PROGRAMS.find((p) => p.id === programId);
@@ -6228,6 +6278,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleAcquireRival = useCallback((rivalId) => {
+    fireHaptic("light");
     update((g) => {
       const rival = (g.rivals||[]).find(r => r.id === rivalId);
       const blocked = acquisitionBlockReason(rival, g);
@@ -6367,6 +6418,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleGiveBonus = useCallback((workerId) => {
+    fireHaptic("light");
     update((g) => {
       const _w = (g.crew||[]).find(w => w.id === workerId);
       if (!_w) return;
@@ -6381,6 +6433,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleRestWorker = useCallback((workerId) => {
+    fireHaptic("light");
     update((g) => {
       const _w = (g.crew||[]).find(w => w.id === workerId);
       if (!_w) return;
@@ -6411,6 +6464,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleBuyLunch = useCallback((workerId) => {
+    fireHaptic("light");
     update((g) => {
       const _w = (g.crew||[]).find(w => w.id === workerId);
       if (!_w) return;
@@ -6445,6 +6499,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleAbandonSite = useCallback((siteId) => {
+    fireHaptic("light");
     update((g) => {
       const _s = (g.activeSites||[]).find(s => s.id === siteId);
       if (!_s) return;
@@ -6463,6 +6518,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleSettleSite = useCallback((siteId) => {
+    fireHaptic("light");
     update((g) => {
       const _s = (g.activeSites||[]).find(s => s.id === siteId);
       if (!_s) return;
@@ -6507,6 +6563,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleAssignCrewToSite = useCallback((workerId, siteId) => {
+    fireHaptic("light");
     update((g) => {
       const w = (g.crew||[]).find(c => c.id === workerId);
       const site = (g.activeSites||[]).find(s => s.id === siteId);
@@ -6531,6 +6588,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleAssignEquipToSite = useCallback((equipId, siteId) => {
+    fireHaptic("light");
     update((g) => {
       const eq = (g.equipment||[]).find(e => e.id === equipId);
       const site = (g.activeSites||[]).find(s => s.id === siteId);
@@ -6555,6 +6613,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleScheduleMaintenance = useCallback((equipId) => {
+    fireHaptic("light");
     update((g) => {
       const eq = (g.equipment || []).find(e => e.id === equipId);
       if (!eq) return;
@@ -10054,7 +10113,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     const dailyEquipCost = game.equipment.reduce((s, e) => s + e.dailyCost, 0);
     const dailyLoanInterest = game.loans.reduce((s, l) => s + (l.weeklyPayment || 0) / 7, 0);
     const dailyIncome = (game.weeklyStats?.revenue || 0) / 7;
-    const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - dailyOfficeRent(game) - dailyLoanInterest;
+    // Tax accrues against every dollar of revenue, so a cash-flow figure that ignores it
+    // overstates the business by the tax rate and the runway estimate below inherits the lie.
+    // FleetFlow includes taxEstimate in its daily expenses for exactly this reason.
+    const dailyTaxAccrual = dailyIncome * taxRateFor(game);
+    const netDailyCashFlow = dailyIncome - dailyPayroll - dailyEquipCost - dailyOfficeRent(game) - dailyLoanInterest - dailyTaxAccrual;
     const regionalEconomy = getConstructionRegionalSnapshot(game);
     const loanOffers = LOAN_PRODUCTS.map((product) => {
       const offer = computeLoanOffer(product.id, buildBorrowerProfile(game, product));
@@ -10190,6 +10253,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             { label: "Credit Score",       val: `${game.creditScore} (${creditInfo.label})`,    color: T[creditInfo.color], bar: { value: Math.round(Math.max(0, Math.min(100, ((game.creditScore - 300) / 550) * 100))), color: T[creditInfo.color] } },
             { label: "Total Debt",         val: money(totalDebt),                                color: totalDebt > 0 ? T.orange : T.green },
             { label: "Daily Loan Interest",val: money(Math.round(dailyLoanInterest)),            color: dailyLoanInterest > 0 ? T.orange : T.sub },
+            { label: "Daily Tax Accrual",  val: money(Math.round(dailyTaxAccrual)),              color: dailyTaxAccrual > 0 ? T.orange : T.sub,
+              note: taxEstimate(game) > 0 ? `${money(taxEstimate(game))} set aside so far this week` : null },
             { label: "Weekly Payroll",     val: money(weeklyPayroll),                            color: T.text },
             { label: "Weekly Equip Cost",  val: money(weeklyEquipCost),                          color: T.text },
             { label: "Weekly Rent",        val: money(weeklyRent),                               color: T.text },
@@ -10340,6 +10405,24 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           </View>
         </View>
 
+        {/* Tax being set aside. THE FIX FOR THE AMBUSH: the old card was gated entirely on
+            `taxDue > 0`, so during the week a bill was building there was no tax card on the
+            screen at all — nothing said a bill was coming until it landed. FleetFlow shows the
+            running figure as `taxEstimate` in its daily expenses all week long. */}
+        {(game.taxDue || 0) <= 0 && taxEstimate(game) > 0 && (
+          <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.orange, borderWidth: 1 }]}>
+            <Text style={[styles.label, { color: T.orange }]}>🧾 Tax Set Aside: {money(taxEstimate(game))}</Text>
+            <Text style={[styles.sub, subCol]}>
+              Accruing at {Math.round(taxRateFor(game) * 100)}% on {money(game.weeklyStats?.revenue || 0)} of revenue this week. This becomes your bill on day {Math.ceil((game.day + 1) / 7) * 7}.
+            </Text>
+            <Text style={[styles.sub, subCol, { marginTop: 2 }]}>
+              {hasEstimator(game)
+                ? "Your Estimator's cost reporting is keeping the assessable base down."
+                : "Hire an Estimator in Crew to reduce what you are assessed."}
+            </Text>
+          </View>
+        )}
+
         {/* Tax */}
         {(game.taxDue || 0) > 0 && (
           <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.red, borderWidth: 1.5 }]}>
@@ -10353,8 +10436,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   </Text>
                   <Text style={[styles.sub, subCol, { marginTop: 2 }]}>
                     Charged at {Math.round(taxRateFor(game) * 100)}% of revenue
-                    {taxRateFor(game) < TAX_RATE ? " (reduced rate while your company is young)" : ""}.
+                    {taxRateFor(game) < TAX_RATE ? " (reduced rate while your company is young)" : ""}
+                    {hasEstimator(game) ? ", with your Estimator's relief applied" : ""}.
                   </Text>
+                  {taxEstimate(game) > 0 && (
+                    <Text style={[styles.sub, { color: T.orange, marginTop: 2 }]}>
+                      A further {money(taxEstimate(game))} is already set aside for next week's bill.
+                    </Text>
+                  )}
+                  {(game.taxOverdueDays || 0) > PENALTY_GRACE_DAYS && (
+                    <Text style={[styles.sub, { color: T.red, marginTop: 2, fontWeight: "600" }]}>
+                      This debt is compounding at {Math.round(LATE_PENALTY_RATE * 100)}% a week.
+                    </Text>
+                  )}
                 </>
               );
             })()}
@@ -11344,6 +11438,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
   }
 
   function handleConfirm() {
+    fireHaptic("light");
     if (!contract) return;
     if (blockReason) { Alert.alert("Cannot Start Site", blockReason); return; }
     // Material pre-check: warn if missing materials before starting

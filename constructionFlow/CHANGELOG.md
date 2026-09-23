@@ -5,6 +5,119 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 9 — the tax ambush, and a game you can feel
+
+Build **7**. The first sprint driven by a measured comparison against FleetFlow rather than a
+read-through of this codebase; see `docs/TEN_OUT_OF_TEN_PLAN.md` for the full gap list.
+
+Owner rating going in: **FleetFlow 10/10, Construction Flow 5/10.**
+
+### What the measurement found
+
+| | FleetFlow | Construction Flow |
+|---|---|---|
+| Main screen | 29,321 lines | 12,403 |
+| Helper modules | 50 | 1 |
+| Modals / overlays | 24 | 1 |
+| Simulation systems | 20 | **31** |
+
+Construction Flow has **more simulation than FleetFlow and 42% of the game**. The simulation was
+never the weak part. Everything between the simulation and the player is.
+
+### 1. The tax bill was an ambush
+
+Reported from a device as *"the taxes is still an issue"* — after the freeze fix. Two separate
+things were true and only one of them was known.
+
+**The freeze fix is in no build.** `9cea0d4` landed *after* the build-6 cut, so the fake freeze,
+the impossible full-only payment and the missing early relief are all still live on device. It
+ships here.
+
+**The second defect had never been found.** FleetFlow sets tax aside *as the player earns it*:
+
+```js
+game.taxReserve += finalPayout * 0.12 * earlyGameMod * taxMod;   // every completed route
+const taxBill = Math.round(game.taxReserve);                     // at week end
+```
+
+and surfaces the running figure as `taxEstimate` in its daily expenses, all week long. By the
+time the week closes, the player has watched the money being set aside. The bill is an expected
+event.
+
+Construction Flow had **zero** references to `taxReserve`. The bill was computed at week end from
+`weeklyStats.revenue` and simply appeared, against cash already committed to wages and materials.
+Worse, the entire tax card was gated on `taxDue > 0` — so during the week a bill was building
+there was **no tax card on the screen at all**. Nothing said a bill was coming until it landed.
+
+That is not a balance complaint, and no amount of rebalancing the rate fixes it: FleetFlow
+charges the same 12%.
+
+Now: the reserve accrues every day, the Finance tab shows *"Tax Set Aside: $X"* all week with the
+day the bill lands, and the week bills from the reserve.
+
+**The reserve is notional — it never moves cash**, exactly as FleetFlow's does not. That is what
+makes this economically neutral, and it is proved rather than asserted: a 140-day run reconstructs
+what each week *should* have been charged from the revenue actually booked and compares it to what
+the game charged. They match **exactly**, not within tolerance.
+
+### 2. Unpaid tax now compounds
+
+FleetFlow charges 8%/week past the first week overdue and docks credit the day the debt turns a
+week old. Construction Flow charged nothing, so tax debt was a static number that never got worse
+— ignoring it cost nothing and the 14-day freeze arrived out of a clear sky.
+
+Charged per **week**, not per day, and tested for it: `taxOverdueDays` ticks daily, so a daily
+charge would multiply the debt ~2.9x across the week before the freeze and turn a setback into a
+death spiral.
+
+### 3. The cash-flow readout was lying
+
+`netDailyCashFlow` ignored tax entirely, so the figure overstated the business by the whole tax
+rate and the runway estimate inherited it. Tax accrual is now deducted and shown as its own row.
+
+### 4. An Estimator is now the player's lever on tax
+
+FleetFlow's Analyst cuts the rate to 0.80x. Construction Flow had no lever at all, and a bill you
+can do nothing about is weather, not a decision. An Estimator on the office staff now applies
+0.85x relief, stacking with the early-game multiplier.
+
+### 5. The game can be felt
+
+FleetFlow fires tactile feedback at **25** sites. Construction Flow fired none anywhere in the
+game loop. Now 25 sites, plus the confirmed-success moments that deserve their own signature:
+clearing a tax bill, and lifting the freeze.
+
+Two rules, both guarded by tests that scan the source, because a haptic has no return value and
+no observable effect in a test environment:
+
+- **Never from the tick.** `gameTick` runs hundreds of times during offline catch-up; a buzz per
+  simulated day would vibrate the phone continuously when a player reopens the app after a night
+  away.
+- **A press never lies.** No handler opens by buzzing *success* — the top of a handler is before
+  the guards, and buzzing success there means a refused purchase feels exactly like a completed
+  one. A neutral tap on press; the outcome buzz only where the state actually changed. A refused
+  purchase buzzes an error.
+
+### Repeat defect, caught by its own test
+
+The migration guard was written as `if (!Number.isFinite(g.taxReserve))`. `migrateState` opens
+with `{ ...freshState(), ...saved }`, so `g.taxReserve` is **always** the fresh `0` on a save that
+lacks the field, and the accrual could never run — silently forgiving the tax already accrued in
+the week a returning player is standing in. This is the *same trap* the Sprint 8 inbox migration
+fell into. It now reads `saved.taxReserve`.
+
+### Tests
+
+**724 passing across 36 suites**, up from 655 across 33.
+
+New: `taxReserve.test.js` (37), `taxReserveIntegration.test.js` (18), `constructionHaptics.test.js` (13).
+
+One existing test was updated rather than deleted: `taxOfficeIntegration.test.js` pinned the
+`assessWeeklyTax(g, weeklyRevenue)` call site that the reserve replaced. The claim it protected —
+that young companies get relief — is now asserted behaviourally instead, so it survives the next
+refactor.
+
+
 ## Tax fix — the freeze that froze nothing
 
 Reported from a device as *"I feel like there is a bug with taxes."* There was. Three, and the

@@ -64,15 +64,37 @@ export const UNFREEZE_SHARE = 0.5;
 // Paying down the bill buys back time as well as money.
 export const PARTIAL_DAYS_FORGIVEN = 4;
 
+// An Estimator on the office staff keeps the assessable base tight — the same shape as
+// FleetFlow's Analyst, who cuts the rate to 0.80x. This is the player's LEVER on tax, and its
+// absence is half of why tax reads as punishment rather than a problem: a bill you can do
+// nothing about is weather, not a decision. Pitched milder than FleetFlow's 0.80 because
+// Construction Flow's relief already stacks with the early-game multiplier above.
+export const ESTIMATOR_RELIEF = 0.85;
+
+// Unpaid tax compounds, matching FleetFlow's 8%/week after the first week overdue. Without
+// this, tax debt is a static number that never gets worse, so ignoring it costs nothing and
+// the 14-day freeze arrives out of a clear sky.
+export const LATE_PENALTY_RATE = 0.08;
+export const PENALTY_GRACE_DAYS = 7;
+
+// The credit-score hit the day the debt turns a week old, as FleetFlow does it.
+export const OVERDUE_CREDIT_PENALTY = 15;
+export const CREDIT_FLOOR = 420;
+
 function num(v, fallback = 0) {
   return Number.isFinite(v) ? v : fallback;
 }
 
 // ─── Assessment ──────────────────────────────────────────────────────────────
 
+export function hasEstimator(gameState) {
+  return (gameState?.officeStaff || []).some((s) => s && s.role === "Estimator");
+}
+
 export function taxRateFor(gameState) {
   const level = num(gameState?.companyLevel, 1);
-  return level < EARLY_RELIEF_BELOW_LEVEL ? TAX_RATE * EARLY_RELIEF_MULTIPLIER : TAX_RATE;
+  const base = level < EARLY_RELIEF_BELOW_LEVEL ? TAX_RATE * EARLY_RELIEF_MULTIPLIER : TAX_RATE;
+  return hasEstimator(gameState) ? base * ESTIMATOR_RELIEF : base;
 }
 
 // The bill for a week's trading. Revenue is gross, as in FleetFlow — the relief above is what
@@ -191,6 +213,97 @@ export function applyTaxPayment(game, requestedAmount) {
   };
 }
 
+// ─── The reserve ─────────────────────────────────────────────────────────────
+//
+// THE DEFECT THIS FIXES, reported from a device as "taxes is still an issue" after the freeze
+// fix above was already written.
+//
+// FleetFlow sets tax aside as the player earns it:
+//
+//   game.taxReserve += finalPayout * 0.12 * earlyGameMod * taxMod;   // every completed route
+//   const taxBill = Math.round(game.taxReserve);                     // at week end
+//
+// and surfaces the running figure as `taxEstimate` inside getDailyExpenses, so the player
+// watches the money being set aside and knows the bill before it lands. It is an expected event.
+//
+// Construction Flow had ZERO references to taxReserve. The bill was computed at week end from
+// weeklyStats.revenue and simply appeared, against cash already committed to wages and
+// materials. That is an ambush, and no amount of rebalancing the RATE fixes it, because the
+// rate was never the problem — FleetFlow charges the same 12%.
+//
+// IMPORTANT: the reserve is NOTIONAL. It never moves cash, exactly as FleetFlow's does not.
+// It is a running estimate of what is being accrued, nothing more. That is what makes this
+// change economically neutral: the bill it issues is arithmetically identical to the old
+// `Math.round(weeklyRevenue * taxRateFor(g))`, and `taxReserveIntegrity.test.js` proves it
+// across the whole revenue range rather than asserting it here.
+
+// Recomputes the running estimate from the revenue booked so far this week. Called every day,
+// so the figure grows as payments land rather than appearing all at once.
+//
+// Derived rather than incremented on purpose. An incremental accrual would have to be added at
+// every site that books revenue — progress claims, job completion, property income, savings
+// interest, asset sales — and missing one under-taxes the player forever while double-counting
+// one over-taxes them. Deriving from the single field the bill was always based on cannot
+// drift from it.
+export function accrueTaxReserve(game) {
+  if (!game) return 0;
+  const weeklyRevenue = num(game.weeklyStats?.revenue, 0);
+  game.taxReserve = weeklyRevenue > 0 ? Math.round(weeklyRevenue * taxRateFor(game)) : 0;
+  return game.taxReserve;
+}
+
+// What the player is told they are heading for. Kept separate from the field so callers read an
+// intention rather than a mutable.
+export function taxEstimate(gameState) {
+  return Math.max(0, Math.round(num(gameState?.taxReserve, 0)));
+}
+
+// Issues the week's bill FROM the reserve and empties it, as FleetFlow does. Returns the amount
+// billed so the caller can log it honestly.
+//
+// Callers must accrue immediately before issuing, so revenue booked earlier in the same
+// week-end block (property income, for one) is captured. Doing it here would hide that ordering
+// requirement rather than remove it, so it stays explicit at the call site.
+export function issueWeeklyTaxBill(game) {
+  if (!game) return 0;
+  const bill = Math.max(0, Math.round(num(game.taxReserve, 0)));
+  game.taxReserve = 0;
+  if (bill <= 0) return 0;
+  game.taxDue = num(game.taxDue, 0) + bill;
+  return bill;
+}
+
+// ─── Falling behind ──────────────────────────────────────────────────────────
+
+// Compounds the debt once it is more than a week old, matching FleetFlow's 8%/week. Returns the
+// penalty added, or 0.
+//
+// Deliberately charged per WEEK, not per day: `taxOverdueDays` ticks daily, so charging 8% each
+// day would multiply the debt by ~2.9x over the seven days before the freeze and turn a setback
+// into a death spiral. FleetFlow charges it inside a weekly block; Construction Flow's overdue
+// counter lives in the daily rollover, so the week boundary has to be checked explicitly.
+export function applyLatePenalty(game) {
+  if (!game) return 0;
+  const due = num(game.taxDue, 0);
+  const overdue = num(game.taxOverdueDays, 0);
+  if (due <= 0 || overdue <= PENALTY_GRACE_DAYS) return 0;
+  if ((overdue - PENALTY_GRACE_DAYS) % 7 !== 0) return 0;
+
+  const penalty = Math.round(due * LATE_PENALTY_RATE);
+  if (penalty <= 0) return 0;
+  game.taxDue = due + penalty;
+  return penalty;
+}
+
+// The one-off credit hit the day the debt turns a week old. Returns the points lost, or 0.
+export function applyOverdueCreditHit(game) {
+  if (!game) return 0;
+  if (num(game.taxOverdueDays, 0) !== PENALTY_GRACE_DAYS) return 0;
+  const before = num(game.creditScore, CREDIT_FLOOR);
+  game.creditScore = Math.max(CREDIT_FLOOR, before - OVERDUE_CREDIT_PENALTY);
+  return before - game.creditScore;
+}
+
 // ─── Describing ──────────────────────────────────────────────────────────────
 
 export function describeTaxStatus(gameState) {
@@ -198,7 +311,16 @@ export function describeTaxStatus(gameState) {
   const overdue = num(gameState?.taxOverdueDays, 0);
 
   if (due <= 0) {
-    return { level: "clear", headline: "No tax outstanding", detail: "Your account with the tax office is clear." };
+    const setAside = taxEstimate(gameState);
+    // "No tax outstanding" on its own was part of the ambush: it read as "nothing is coming"
+    // on the exact screen where a bill was quietly building.
+    return {
+      level: "clear",
+      headline: "No tax outstanding",
+      detail: setAside > 0
+        ? `Nothing owed yet. $${setAside.toLocaleString()} is being set aside from this week's revenue.`
+        : "Your account with the tax office is clear.",
+    };
   }
   if (isFrozen(gameState)) {
     return {
