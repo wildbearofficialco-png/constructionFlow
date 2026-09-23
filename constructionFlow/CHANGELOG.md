@@ -5,6 +5,95 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 10 — the chronicle knocks on the door
+
+Rides on build **7** with Sprint 9.
+
+Tier 2 of `docs/TEN_OUT_OF_TEN_PLAN.md` said FleetFlow has 104 owner events across 1,796 lines
+and Construction Flow has none. That was half right, and the wrong half was the important one.
+
+Construction Flow already had **19 decision events and 6 employee events**, several of them
+genuinely construction-native — the inspector, the union rep, the client who wants corners cut,
+the foreman demanding a raise. What it did not have was any reason for them to land when they
+landed:
+
+```js
+const evt = pick(DECISION_EVENTS);
+```
+
+A uniform draw over the whole catalog, every time. Three consequences, all of which read as bugs
+from the player's seat:
+
+1. **No memory of itself.** The same scenario could fire twice running, and a long game was the
+   same nineteen situations on shuffle.
+2. **No awareness of the company.** The Angel Investor offered $120,000 against a $180,000
+   repayment whether you were down to your last $400 or sitting on five million. The rival poach
+   offered you a worker when your crew was already at capacity. A scenario that does not fit the
+   company it happens to is the clearest possible signal that nothing is really being simulated.
+3. **No weight.** A once-in-a-company windfall drew exactly as often as a routine supplier call,
+   so nothing felt rare and nothing felt routine.
+
+### The selection layer
+
+`src/systems/ownerEvents.js` — rarity weighting (common / uncommon / rare), a per-event
+`cooldownDays`, and an `eligible(game)` predicate on **all 21** scenarios. It deliberately does
+not own the event content: scenarios keep living next to the code they mutate, because splitting
+an event's text from its `apply` across two files is how the halves drift apart.
+
+A predicate that throws costs the player one scenario, not their run.
+
+### The chronicle finally pays off
+
+Phase 6 built a durable company memory — who you paid, who you stiffed, which crew you stood by —
+and wired it into bidding edges, material prices and crew turnover. What it never did was
+**confront** the player with it. `pickMemoryCallback` was called in exactly one place in the
+whole screen: inside the Company Story card's render, as display text.
+
+So the chronicle moved the numbers and narrated itself, and nothing ever knocked on the door.
+
+Four chain events are the knock, each eligible only when the memory it refers to actually exists:
+
+- **An Old Account** — the supplier you took materials from and never paid turns up wanting to
+  know what you intend to do about it.
+- **Word Gets Around** — standing by your crew brings you a referral hire with no signing bonus.
+- **They Remember You** — a rival you have history with starts bidding below cost on anything you
+  show interest in.
+- **A Client Came Back** — a client you delivered for comes to you before they go to market.
+
+A fresh grudge does not knock immediately; it has to become history first. That is what makes it
+a consequence rather than a coincidence.
+
+### Two of my own defects, caught by the tests
+
+**An impossible assertion.** The integration test demanded every event be eligible for one
+"established" company. That can never pass *by design* — `investor_offer` is deliberately gated
+to exclude rich companies, so any state rich enough for the late-game events fails that one. It
+now asserts **reachability** across three representative companies, plus the inverse: no single
+company may see the whole catalog, or the gates have stopped doing anything.
+
+**A ledger category that does not exist.** The rivalry chain event wrote `recordTransaction(g,
+"other", ...)`. There is no `other` category, so it would have rendered unlabelled in Finance
+forever. The Sprint 6 ledger guard caught it on the first full run. Settling a feud is now filed
+under Fines & Legal.
+
+Also fixed: `createWorker(null, { skillBoost: 18 })` — `overrides` spreads over the built worker
+rather than being a `{skillBoost}` shape, so that hire would have had default skill and the
+referral would have been worth nothing.
+
+### Tests
+
+**781 passing across 38 suites**, up from 724 across 36.
+
+New: `ownerEvents.test.js` (29), `ownerEventsIntegration.test.js` (28).
+
+The integration suite includes the guard this kind of system most needs: **no event may be gated
+into a state it can never reach.** An event nobody can ever see is indistinguishable from an
+event that was never written, and it fails silently forever. It is checked by name, so a typo in
+a predicate names the event it broke.
+
+`expo lint` 0 errors, `tsc --noEmit` clean, iOS bundle exports.
+
+
 ## Sprint 9 — the tax ambush, and a game you can feel
 
 Build **7**. The first sprint driven by a measured comparison against FleetFlow rather than a

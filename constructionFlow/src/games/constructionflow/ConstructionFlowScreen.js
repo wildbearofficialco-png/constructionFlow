@@ -81,6 +81,13 @@ import {
 } from "../../systems/taxOffice.js";
 import { fireHaptic } from "../../utils/constructionHaptics.js";
 import {
+  EVENT_CATEGORIES,
+  selectOwnerEvent,
+  recordEventFired,
+  eligibleEvents,
+  describeEventPool,
+} from "../../systems/ownerEvents.js";
+import {
   pushNotice,
   expireNotices,
   sortedNotices,
@@ -103,6 +110,7 @@ import {
 } from "../../systems/constructionKPIs.js";
 import {
   recordMemory,
+  recallMemory,
   resolveMemoryEffects,
   summarizeCompanyStory,
   describeStanding,
@@ -1395,9 +1403,15 @@ const CHAOS_EVENTS = [
 
 // ─── Decision Events ─────────────────────────────────────────────────────────────
 
-const DECISION_EVENTS = [
+// Exported so the integration tests can audit the catalog itself — an event gated into a
+// state it can never reach fails silently forever otherwise.
+export const DECISION_EVENTS = [
   {
-    id: "supplier_deal", title: "📦 Supplier Deal", tone: "cyan",
+    id: "supplier_deal",
+    category: EVENT_CATEGORIES.MONEY, rarity: "common", cooldownDays: 24,
+    // A bulk materials offer means nothing to a company that has never run a job.
+    eligible: (g) => (g.completedJobs || 0) >= 1 || (g.activeSites || []).length > 0,
+    title: "📦 Supplier Deal", tone: "cyan",
     desc: "Your materials supplier offers a one-time 30% discount on bulk lumber and concrete if you commit $8,000 today.",
     options: [
       { label: "Pay up front", sub: "Spend $8,000 → receive 40 lumber + 15 concrete", apply: (g) => { if (g.cash >= 8000) { g.cash -= 8000; g.expenses += 8000; g.materials.lumber = (g.materials.lumber||0)+40; g.materials.concrete = (g.materials.concrete||0)+15; addLog(g, "📦 Took supplier deal — 40 lumber + 15 concrete at 30% off!"); addImportantNotice(g, "Bulk deal: 40 lumber + 15 concrete purchased for $8,000.", "green"); recordMemory(g, { tag: `supplier_paid_${g.day}`, kind: "supplier", valence: "good", weight: 1.5, label: "Paid the supplier up front", detail: "you paid your materials supplier up front, in full" }); } } },
@@ -1407,7 +1421,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "investor_offer", title: "💼 Angel Investor", tone: "green",
+    id: "investor_offer",
+    category: EVENT_CATEGORIES.MONEY, rarity: "uncommon", cooldownDays: 60,
+    // $120,000 against a $180,000 repayment is a lifeline at $400 and an insult at $5M.
+    eligible: (g) => (g.cash || 0) < 250000 && (g.loans || []).length < 3,
+    title: "💼 Angel Investor", tone: "green",
     desc: "A local investor offers $120,000 cash today. In return, you agree to pay $1,200/week until $180,000 total is repaid.",
     options: [
       { label: "Accept investment", sub: "+$120,000 now, $1,200/week repayment", apply: (g) => { g.cash += 120000; g.loans = g.loans || []; g.loans.push({ id: uid(), label: "Angel Investment", weeklyPayment: 1200, weeksLeft: 150, remainingBalance: 180000, missedPayments: 0 }); addLog(g, "💼 Angel investor deal closed — $120,000 received."); addImportantNotice(g, "Angel investment: $120,000 received — loan created.", "green"); } },
@@ -1415,7 +1433,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "rival_poach", title: "📉 Rival Struggling", tone: "orange",
+    id: "rival_poach",
+    category: EVENT_CATEGORIES.RIVALS, rarity: "uncommon", cooldownDays: 40,
+    // Never offer a worker to a company with nowhere to put them or no way to pay the bonus.
+    eligible: (g) => (g.crew || []).length < getTotalCrewCap(g) && (g.cash || 0) >= 10000,
+    title: "📉 Rival Struggling", tone: "orange",
     desc: "A struggling rival's best worker is looking for a new employer. You can hire them for a $10,000 signing bonus.",
     options: [
       { label: "Poach them", sub: "Pay $10,000 — get a skilled Veteran worker", apply: (g) => { if (g.cash >= 10000) { g.cash -= 10000; g.expenses += 10000; const w = createWorker("Site Foreman"); w.skill = rand(100, 118); w.trait = CREW_TRAITS.find(t => t.label === "Veteran") || pick(CREW_TRAITS); w.wagePerDay = rand(220, 320); w.hireDay = g.day; g.crew.push(w); addLog(g, `👷 Poached ${w.name} from struggling rival — Veteran Foreman hired.`); addImportantNotice(g, `Veteran crew member poached from rival for $10,000.`, "green"); } } },
@@ -1423,7 +1445,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "rush_bid", title: "⚡ Emergency Contract", tone: "yellow",
+    id: "rush_bid",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "common", cooldownDays: 20,
+    // Someone has to be able to do the work.
+    eligible: (g) => (g.crew || []).length > 0,
+    title: "⚡ Emergency Contract", tone: "yellow",
     desc: "A client needs urgent repair work — double the going rate but the deadline is 4 days with heavy penalties.",
     options: [
       { label: "Take the rush job", sub: "2× value, 4-day deadline, 3× penalty/day", apply: (g) => { const base = CONTRACT_DEFS.find(d => d.category === "Commercial" && d.minTier <= 2); if (base) { const c = createContract(g); c.value = Math.round(c.value * 2.0); c.deadline = g.day + 5; c.expiresDay = g.day + 2; c.penaltyPerDay = (c.penaltyPerDay || 200) * 3; c.label = "⚡ " + c.label; g.contracts.push(c); addLog(g, `⚡ Emergency contract added — high value, tight window.`); addImportantNotice(g, "Rush contract added — tight deadline, 2× payout. Check Bids.", "orange"); } } },
@@ -1431,7 +1457,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "bulk_equipment_deal", title: "🚜 Fleet Discount", tone: "cyan",
+    id: "bulk_equipment_deal",
+    category: EVENT_CATEGORIES.PLANT, rarity: "uncommon", cooldownDays: 45,
+    // A yard already at capacity cannot take the discount.
+    eligible: (g) => (g.equipment || []).length < (OFFICES[g.officeIndex]?.equipCap || 0) + getEquipCapBonus(g),
+    title: "🚜 Fleet Discount", tone: "cyan",
     desc: "An equipment dealer offers 20% off any purchase today only. Valid for next machine you buy.",
     options: [
       { label: "Lock in the discount", sub: "Next equipment purchase: -20%", apply: (g) => { g._equipDiscount = 0.20; g._equipDiscountExpiry = (g.day||1) + 3; addLog(g, "🚜 Fleet discount locked — 20% off next machine for 3 days!"); addImportantNotice(g, "20% equipment discount active for 3 days — visit Vehicles.", "green"); } },
@@ -1439,7 +1469,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "govt_contract_tip", title: "🏛️ Gov't Insider", tone: "purple",
+    id: "govt_contract_tip",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "rare", cooldownDays: 70,
+    // Nobody slips inside information to an outfit with no track record.
+    eligible: (g) => (g.reputation || 0) >= 40 && (g.completedJobs || 0) >= 3,
+    title: "🏛️ Gov't Insider", tone: "purple",
     desc: "A contact tips you off: a major government contract is coming. Spend $3,000 on prep work to get priority bid access.",
     options: [
       { label: "Invest in prep", sub: "$3,000 → priority on next Government contract", apply: (g) => { if (g.cash >= 3000) { g.cash -= 3000; g.expenses += 3000; g._govtPriority = true; addLog(g, "🏛️ Invested in government prep — priority access on next Gov contract."); addImportantNotice(g, "Government contract tip: $3,000 invested — priority bid access unlocked.", "green"); } } },
@@ -1447,7 +1481,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "competitor_acquisition", title: "🤝 Acquisition Offer", tone: "orange",
+    id: "competitor_acquisition",
+    category: EVENT_CATEGORIES.RIVALS, rarity: "rare", cooldownDays: 90,
+    // Buying a rival is a late-game move, and offering it early just advertises that nothing is being tracked.
+    eligible: (g) => (g.cash || 0) >= 150000 && (g.companyLevel || 1) >= 4,
+    title: "🤝 Acquisition Offer", tone: "orange",
     desc: "Northwest Contractors is in financial trouble. You can acquire them for $160,000 — absorbing their 3 crew and 1 machine.",
     options: [
       { label: "Acquire them", sub: "$160,000 → 3 workers + 1 machine + rep boost", apply: (g) => { if (g.cash >= 160000) { g.cash -= 160000; g.expenses += 160000; for (let i=0;i<3;i++) { const w = createWorker(); w.skill = rand(90,110); w.hireDay = g.day; g.crew.push(w); } const acquiredMachine = createEquipment(EQUIPMENT_SHOP[1] || EQUIPMENT_SHOP[0]); acquiredMachine.condition = rand(60, 80); acquiredMachine.name = "Acquired " + acquiredMachine.name; g.equipment = g.equipment || []; g.equipment.push(acquiredMachine); g.reputation = Math.min(100,(g.reputation||0)+5); if (!(g.acquiredRivals||[]).includes("northwest")) g.acquiredRivals = [...(g.acquiredRivals||[]),"northwest"]; addLog(g, "🤝 Acquired Northwest Contractors — 3 crew, 1 machine absorbed!"); addImportantNotice(g, "Rival acquired! +3 crew, +1 equipment, +5 reputation.", "green"); } } },
@@ -1455,7 +1493,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "material_futures", title: "📊 Material Futures", tone: "yellow",
+    id: "material_futures",
+    category: EVENT_CATEGORIES.MONEY, rarity: "uncommon", cooldownDays: 40,
+    // You cannot take a position you cannot fund.
+    eligible: (g) => (g.cash || 0) >= 15000,
+    title: "📊 Material Futures", tone: "yellow",
     desc: "Lock in today's steel price for 30 days by pre-paying $8,000. Protects against market volatility.",
     options: [
       { label: "Lock in steel price", sub: "$8,000 → steel price frozen for 30 days", apply: (g) => { if (g.cash >= 8000) { g.cash -= 8000; g.expenses += 8000; g._steelPriceLock = (g.day||1) + 30; g._steelPriceLocked = g.materialPrices.steel || 950; addLog(g, "📊 Steel price locked for 30 days — protected from volatility."); addImportantNotice(g, "Steel price locked for 30 days — protected from market spikes.", "green"); } } },
@@ -1463,7 +1505,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "training_grant", title: "🎓 Government Grant", tone: "green",
+    id: "training_grant",
+    category: EVENT_CATEGORIES.PEOPLE, rarity: "uncommon", cooldownDays: 50,
+    // A training grant needs someone to train.
+    eligible: (g) => (g.crew || []).length >= 2,
+    title: "🎓 Government Grant", tone: "green",
     desc: "A regional skills grant offers to fund $10,000 worth of crew training. Accept or lose the allocation.",
     options: [
       { label: "Accept the grant", sub: "+$10,000 training credit", apply: (g) => { g.cash += 10000; addLog(g, "🎓 Government training grant accepted — $10,000 added to operating funds."); addImportantNotice(g, "Training grant received: $10,000 added to cash.", "green"); } },
@@ -1472,6 +1518,9 @@ const DECISION_EVENTS = [
   },
   {
     id: "insurance_payout",
+    category: EVENT_CATEGORIES.MONEY, rarity: "uncommon", cooldownDays: 50,
+    // Raising a deductible only means something if you own plant the policy covers.
+    eligible: (g) => (g.equipment || []).length >= 2,
     title: "Insurance Payout Offer",
     tone: "opportunity",
     desc: "Your insurer is offering a one-time payout of $40,000 in exchange for raising your deductible by 50%. Accept?",
@@ -1490,6 +1539,9 @@ const DECISION_EVENTS = [
   },
   {
     id: "local_government_grant",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "rare", cooldownDays: 65,
+    // A city does not hand infrastructure grants to a company with no delivery record.
+    eligible: (g) => (g.completedJobs || 0) >= 2 && (g.reputation || 0) >= 30,
     title: "Government Infrastructure Grant",
     tone: "opportunity",
     desc: "The city is offering a $50,000 construction grant for infrastructure work. Requires completing 1 road/bridge contract within 60 days.",
@@ -1506,7 +1558,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "corner_cut", title: "✂️ Client Wants to Cut Corners", tone: "red",
+    id: "corner_cut",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "common", cooldownDays: 30,
+    // A client can only ask you to cut corners on work that is actually under way.
+    eligible: (g) => (g.activeSites || []).length > 0,
+    title: "✂️ Client Wants to Cut Corners", tone: "red",
     desc: "Your client is asking you to skip a safety check to finish 2 days early. Saves time, but increases your liability.",
     options: [
       { label: "Agree — skip the check", sub: "Site +15% speed · safety -8 · risk of fine", apply: (g) => {
@@ -1531,7 +1587,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "foreman_ultimatum", title: "💼 Foreman Demands a Raise or Quits", tone: "orange",
+    id: "foreman_ultimatum",
+    category: EVENT_CATEGORIES.PEOPLE, rarity: "common", cooldownDays: 35,
+    // There has to be a crew worth running before someone demands to run it.
+    eligible: (g) => (g.crew || []).length >= 3 || (g.officeStaff || []).some((s) => s && s.role === "Site Foreman"),
+    title: "💼 Foreman Demands a Raise or Quits", tone: "orange",
     desc: "Your most experienced crew member issued an ultimatum: 20% raise or they're leaving for a competitor.",
     options: [
       { label: "Grant the 20% raise", sub: "Wage +20% · loyalty +10", apply: (g) => {
@@ -1549,7 +1609,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "inspector_violation", title: "🚨 Inspector Found a Violation", tone: "red",
+    id: "inspector_violation",
+    category: EVENT_CATEGORIES.REGULATOR, rarity: "common", cooldownDays: 30,
+    // There is nothing to inspect without an open site.
+    eligible: (g) => (g.activeSites || []).length > 0,
+    title: "🚨 Inspector Found a Violation", tone: "red",
     desc: "An inspector flagged a safety issue on your active site. You can fix it properly, pay a fine, or contest it.",
     options: [
       { label: "Fix it properly", sub: "-$1,500 · safety +5 · site paused 2 days", apply: (g) => {
@@ -1573,7 +1637,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "emergency_job", title: "🚨 Emergency Project Offer", tone: "green",
+    id: "emergency_job",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "common", cooldownDays: 22,
+    // An emergency you have nobody free to answer is not a decision, it is a notification.
+    eligible: (g) => (g.crew || []).some((w) => w && w.status !== "Working"),
+    title: "🚨 Emergency Project Offer", tone: "green",
     desc: "A developer just called — a competitor dropped out and they need someone to start a $45,000 job tomorrow. Tight 5-day deadline.",
     options: [
       { label: "Take the emergency job", sub: "~$45k contract added · 5-day deadline", apply: (g) => {
@@ -1589,7 +1657,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "union_rep", title: "🤝 Union Representative Visits", tone: "orange",
+    id: "union_rep",
+    category: EVENT_CATEGORIES.PEOPLE, rarity: "uncommon", cooldownDays: 55,
+    // A union rep visits a workforce, not a pair of labourers.
+    eligible: (g) => (g.crew || []).length >= 4,
+    title: "🤝 Union Representative Visits", tone: "orange",
     desc: "A labor organizer is on your site talking to crew. How you respond will shape morale and wages.",
     options: [
       { label: "Engage cooperatively", sub: "All wages +$15/day · loyalty +8 · mood +10", apply: (g) => {
@@ -1610,7 +1682,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "subcontractor_dispute", title: "⚠️ Subcontractor Dispute", tone: "orange",
+    id: "subcontractor_dispute",
+    category: EVENT_CATEGORIES.SITE, rarity: "common", cooldownDays: 28,
+    // A dispute needs a site to be disputed on.
+    eligible: (g) => (g.activeSites || []).length > 0,
+    title: "⚠️ Subcontractor Dispute", tone: "orange",
     desc: "Your subcontractor crew is threatening to walk off the job over a payment dispute.",
     options: [
       { label: "Pay dispute settlement", sub: "-$2,500 · subs stay on site", apply: (g) => {
@@ -1632,7 +1708,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "delay_regulatory", title: "📜 Regulatory Hold", tone: "yellow",
+    id: "delay_regulatory",
+    category: EVENT_CATEGORIES.REGULATOR, rarity: "rare", cooldownDays: 45,
+    // Rare in the random pool because this one has its own real trigger in the site code; the draw is the exception, not the source.
+    eligible: (g) => (g.activeSites || []).length > 0,
+    title: "📜 Regulatory Hold", tone: "yellow",
     desc: "Inspectors have flagged this site for a compliance review.",
     options: [
       { label: "Wait It Out", sub: "Pause and pay compliance fee", apply: (g) => {
@@ -1684,7 +1764,11 @@ const DECISION_EVENTS = [
     ],
   },
   {
-    id: "delay_permit", title: "📋 Permit Review Delay", tone: "yellow",
+    id: "delay_permit",
+    category: EVENT_CATEGORIES.REGULATOR, rarity: "rare", cooldownDays: 30,
+    // Same: the permit system raises this properly. The random draw is a backstop.
+    eligible: (g) => (g.activeSites || []).length > 0,
+    title: "📋 Permit Review Delay", tone: "yellow",
     desc: "The city requires additional paperwork before work can proceed.",
     options: [
       { label: "Accept the Delay", sub: "Lose progress and reputation", apply: (g) => {
@@ -1735,6 +1819,127 @@ const DECISION_EVENTS = [
       } },
     ],
   },
+  // ── Chain events: the chronicle comes back for you ────────────────────────
+  //
+  // Phase 6 built a durable company memory — who you paid, who you stiffed, which crew you
+  // stood by — and wired it into bidding edges, material prices and crew turnover. What it
+  // never did was CONFRONT the player with it. `pickMemoryCallback` was called in exactly one
+  // place in this file: inside the Company Story card's render, as display text.
+  //
+  // So the chronicle informed the numbers and narrated itself, and nothing ever knocked on the
+  // door. These are the knock. Each one is eligible only when the memory it refers to actually
+  // exists, which is what makes it a consequence rather than a coincidence.
+  {
+    id: "chain_supplier_reckoning",
+    category: EVENT_CATEGORIES.MONEY, rarity: "common", cooldownDays: 40,
+    // Only if you genuinely took materials and did not pay for them, and enough time has
+    // passed that it reads as history rather than as the same conversation continuing.
+    eligible: (g) => recallMemory(g, { kind: "supplier", valence: "bad", olderThanDays: 12 }).length > 0,
+    title: "📦 An Old Account", tone: "orange",
+    desc: "Your materials rep is at the gate with a folder. They have not forgotten the order you took on account and never settled — and they want to know what you intend to do about it before the next delivery goes out.",
+    options: [
+      { label: "Settle it in full", sub: "Pay $12,000 → the account is clean and they will remember that too",
+        apply: (g) => {
+          if (g.cash < 12000) { addImportantNotice(g, "Not enough cash to settle the supplier account.", "red"); return; }
+          g.cash -= 12000; g.expenses += 12000;
+          recordTransaction(g, "materials", -12000, "Settled overdue supplier account");
+          recordMemory(g, { tag: `supplier_settled_${g.day}`, kind: "supplier", valence: "good", weight: 2.5, label: "Settled an old debt", detail: "you came back and settled an account you could have walked away from" });
+          addLog(g, "📦 Old supplier account settled in full — $12,000.");
+          addImportantNotice(g, "Supplier account settled. Your rep noted that you came back for it.", "green");
+        } },
+      { label: "Pay half and promise the rest", sub: "Pay $6,000 → buys goodwill, but the history stands",
+        apply: (g) => {
+          if (g.cash < 6000) { addImportantNotice(g, "Not enough cash for even a part settlement.", "red"); return; }
+          g.cash -= 6000; g.expenses += 6000;
+          recordTransaction(g, "materials", -6000, "Part settlement of supplier account");
+          addLog(g, "📦 Part-settled the old supplier account — $6,000.");
+          addImportantNotice(g, "Half the old account paid. Your supplier is watching.", "orange");
+        } },
+      { label: "Tell them to take a number", sub: "Costs nothing today — your supplier goodwill gets worse",
+        apply: (g) => {
+          recordMemory(g, { tag: `supplier_refused_${g.day}`, kind: "supplier", valence: "bad", weight: 3, label: "Refused to settle", detail: "you were asked directly for an old debt and refused" });
+          addLog(g, "📦 Refused to settle the old supplier account.");
+          addImportantNotice(g, "You refused to settle. Materials will cost you more from here.", "red");
+        } },
+    ],
+  },
+  {
+    id: "chain_loyal_crew_opportunity",
+    category: EVENT_CATEGORIES.PEOPLE, rarity: "uncommon", cooldownDays: 45,
+    // The mirror image: standing by your crew is supposed to be worth something, and until now
+    // it was worth a number the player never saw.
+    eligible: (g) => recallMemory(g, { kind: "crew", valence: "good", olderThanDays: 12 }).length > 0 && (g.crew || []).length >= 2,
+    title: "👷 Word Gets Around", tone: "green",
+    desc: "One of your crew heard you looked after your people when it would have been cheaper not to. They have a cousin in the trade — a good one, currently underpaid somewhere worse — who would come to you for a handshake rather than a signing bonus.",
+    options: [
+      { label: "Bring them on", sub: "A skilled hire at no signing cost",
+        apply: (g) => {
+          if ((g.crew || []).length >= getTotalCrewCap(g)) { addImportantNotice(g, "No room on the crew for another hire — expand your office first.", "orange"); return; }
+          // A referral is someone vouched for: better than the open market on both counts.
+          const w = createWorker(null, { skill: rand(95, 118), loyalty: rand(78, 92), hireDay: g.day });
+          g.crew.push(w);
+          recordMemory(g, { tag: `crew_referral_${g.day}`, kind: "crew", valence: "good", weight: 1.5, label: "Hired on a crew referral", detail: "one of your own vouched for a hire and was right" });
+          addLog(g, `👷 ${w.name} joined on a crew referral — no signing bonus.`);
+          addImportantNotice(g, `${w.name} joined on a referral from your own crew. No signing bonus.`, "green");
+        } },
+      { label: "Not right now", sub: "Keep the payroll where it is",
+        apply: (g) => { addImportantNotice(g, "Referral declined — payroll held steady.", "neutral"); } },
+    ],
+  },
+  {
+    id: "chain_rival_grudge",
+    category: EVENT_CATEGORIES.RIVALS, rarity: "uncommon", cooldownDays: 50,
+    eligible: (g) => recallMemory(g, { kind: "rivalry", olderThanDays: 15 }).length > 0,
+    title: "📉 They Remember You", tone: "red",
+    desc: "A rival you have history with has started bidding against you on purpose — not to win the work, but to make sure you do not win it cheaply. Your estimator says they are pricing below cost on anything you show interest in.",
+    options: [
+      { label: "Bid through it", sub: "Absorb the pressure — reputation +2, tighter margins for a while",
+        apply: (g) => {
+          g.reputation = Math.min(100, (g.reputation || 0) + 2);
+          recordMemory(g, { tag: `rival_stood_${g.day}`, kind: "rivalry", valence: "good", weight: 2, label: "Stood your ground", detail: "a rival tried to price you out and you did not blink" });
+          addLog(g, "📉 Held your pricing against a rival bidding below cost.");
+          addImportantNotice(g, "You held your pricing. The market noticed — reputation +2.", "green");
+        } },
+      { label: "Quietly approach them", sub: "Pay $8,000 to settle the history",
+        apply: (g) => {
+          if (g.cash < 8000) { addImportantNotice(g, "Not enough cash to settle this.", "red"); return; }
+          g.cash -= 8000; g.expenses += 8000;
+          recordTransaction(g, "fines", -8000, "Settled a rivalry");
+          recordMemory(g, { tag: `rival_settled_${g.day}`, kind: "rivalry", valence: "good", weight: 2, label: "Settled a rivalry", detail: "you paid to end a feud rather than let it run" });
+          addLog(g, "📉 Settled the rivalry — $8,000.");
+          addImportantNotice(g, "The rivalry is settled. They will stop targeting your bids.", "green");
+        } },
+      { label: "Let it run", sub: "Costs nothing — the grudge deepens",
+        apply: (g) => {
+          recordMemory(g, { tag: `rival_escalated_${g.day}`, kind: "rivalry", valence: "bad", weight: 2, label: "Let a feud run", detail: "you let a rivalry escalate rather than end it" });
+          addImportantNotice(g, "You let it run. Expect them on every bid you want.", "orange");
+        } },
+    ],
+  },
+  {
+    id: "chain_client_returns",
+    category: EVENT_CATEGORIES.CLIENT, rarity: "uncommon", cooldownDays: 40,
+    eligible: (g) => recallMemory(g, { kind: "client", valence: "good", olderThanDays: 10 }).length > 0,
+    title: "🤝 A Client Came Back", tone: "green",
+    desc: "A client you delivered for is building again, and they have come to you before they went to market. The price is theirs to set, but the work is yours to take.",
+    options: [
+      { label: "Take it at their number", sub: "A contract added to Bids, reputation +3",
+        apply: (g) => {
+          const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore || 600, marketState: g.marketState || "Normal", equipment: g.equipment || [], contracts: g.contracts || [], _milestones: g._milestones || {}, cityOffices: g.cityOffices || [], properties: g.properties || [] });
+          if (ref) g.contracts.push(ref);
+          g.reputation = Math.min(100, (g.reputation || 0) + 3);
+          recordMemory(g, { tag: `client_repeat_${g.day}`, kind: "client", valence: "good", weight: 2, label: "A client came back", detail: "a client you delivered for came back to you before going to market" });
+          addLog(g, "🤝 Repeat client brought work straight to you.");
+          addImportantNotice(g, "A repeat client brought work straight to you — new contract in Bids.", "green");
+        } },
+      { label: "Hold out for a better price", sub: "Risk the relationship for margin",
+        apply: (g) => {
+          recordMemory(g, { tag: `client_pushed_${g.day}`, kind: "client", valence: "bad", weight: 1.5, label: "Pushed a loyal client on price", detail: "you pushed a returning client for more money" });
+          addImportantNotice(g, "You pushed for more. They said they would think about it.", "orange");
+        } },
+    ],
+  },
+
 ];
 
 // ─── Employee Events ─────────────────────────────────────────────────────────────
@@ -3318,6 +3523,7 @@ export function freshState() {
     marketState: "Normal",
     businessFrozen: false,
     taxDue: 0, taxOverdueDays: 0, taxReserve: 0,
+    eventHistory: {},
     revenue: 0, expenses: 0,
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
     savings: 0,
@@ -3503,6 +3709,12 @@ export function migrateState(saved) {
   // `{ ...freshState(), ...saved }`, so g.taxReserve is ALWAYS the fresh 0 on a save that
   // lacks the field — checking g here can never detect a legacy save and the accrual would
   // never run. This is the same trap the Sprint 8 inbox migration fell into.
+  // Sprint 10. A pre-cooldown save has no event history. Starting it empty is correct: it lets
+  // every scenario fire once more, which is generous rather than punishing, and the cooldowns
+  // take hold from the day of the upgrade onward.
+  if (!g.eventHistory || typeof g.eventHistory !== "object" || Array.isArray(g.eventHistory)) {
+    g.eventHistory = {};
+  }
   if (!Number.isFinite(saved?.taxReserve)) accrueTaxReserve(g);
   if (!Number.isFinite(g.creditScore))     g.creditScore = 600;
   // Sprint 8. A pre-inbox save carries at most one notice in the old single slot; it is moved
@@ -5004,12 +5216,20 @@ export function gameTick(prev) {
 
     // ── Decision events ────────────────────────────────────────────────────────
     if (!g.pendingDecision && ((g.day % 15 === 0 && Math.random() < 0.40) || (g.day % 7 === 0 && Math.random() < 0.12))) {
-      const evt = pick(DECISION_EVENTS);
-      // Only store serializable fields — apply() functions looked up from DECISION_EVENTS at render time
-      g.pendingDecision = {
-        id: evt.id, title: evt.title, tone: evt.tone, desc: evt.desc,
-        options: evt.options.map(o => ({ label: o.label, sub: o.sub })),
-      };
+      // Was `pick(DECISION_EVENTS)` — a uniform draw over the whole catalog every time, so the
+      // same scenario could land twice running, the Angel Investor offered $120,000 to a
+      // company sitting on five million, and a once-in-a-company windfall drew exactly as
+      // often as a routine supplier call. Now: only events this company can actually be in,
+      // weighted by rarity, each on its own cooldown.
+      const evt = selectOwnerEvent(g, DECISION_EVENTS);
+      if (evt) {
+        recordEventFired(g, evt.id);
+        // Only store serializable fields — apply() functions looked up from DECISION_EVENTS at render time
+        g.pendingDecision = {
+          id: evt.id, title: evt.title, tone: evt.tone, desc: evt.desc,
+          options: evt.options.map(o => ({ label: o.label, sub: o.sub })),
+        };
+      }
     }
 
     // ── Employee events (pop-up decisions from active crew) ────────────────────
