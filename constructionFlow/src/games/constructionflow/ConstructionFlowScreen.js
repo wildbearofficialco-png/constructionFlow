@@ -80,6 +80,7 @@ import {
   describeTaxStatus,
 } from "../../systems/taxOffice.js";
 import { fireHaptic } from "../../utils/constructionHaptics.js";
+import { repairState, snapshotGood, describeRepair, auditState } from "../../systems/saveHealth.js";
 import {
   missingPlantFor,
   canStartWithPlant,
@@ -2380,18 +2381,27 @@ function createEquipment(item) {
 
 function createWorker(role, overrides = {}) {
   const trait = pick(CREW_TRAITS);
+  const _role = role || pick(CREW_ROLES);
+  const _skill = rand(75, 105);
+  // Sprint 13 gave "below market" real teeth — underpayment accrues and people walk. A blind
+  // `rand(160, 260)` then meant a quarter of every new company's crew was ALREADY underpaid on
+  // the day the player first opened the game, through no decision of their own, and they
+  // started quitting. Deriving the wage from the same market rate the consequence is measured
+  // against makes that impossible by construction rather than by a table kept in sync by hand.
+  // The spread starts everyone fair-to-generous; going below market has to be a choice.
+  const _wage = Math.round(marketRateFor({ role: _role, skill: _skill, certifications: [] }) * (rand(100, 122) / 100));
   return {
     id: uid(),
     name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
-    role: role || pick(CREW_ROLES),
+    role: _role,
     specialty: pick(CREW_SPECIALTIES),
     age: rand(20, 56),
-    skill: rand(75, 105),
+    skill: _skill,
     mood: rand(60, 85),
     loyalty: rand(55, 80),
     stamina: rand(70, 95),
     trait,
-    wagePerDay: rand(160, 260),
+    wagePerDay: _wage,
     status: "Idle",
     onShift: true,
     assignedSiteId: null,
@@ -3779,6 +3789,9 @@ export function migrateState(saved) {
     g.eventHistory = {};
   }
   if (!Number.isFinite(saved?.taxReserve)) accrueTaxReserve(g);
+  // A save can arrive already corrupted — that is exactly the state the $NaN report described.
+  // Repair before the first tick rather than after.
+  repairState(g, null);
   if (!Number.isFinite(g.creditScore))     g.creditScore = 600;
   // Sprint 8. A pre-inbox save carries at most one notice in the old single slot; it is moved
   // into the queue rather than dropped, so nothing the player had on screen disappears on
@@ -4027,6 +4040,11 @@ function repairCrewAssignments(g) {
 
 export function gameTick(prev) {
   const g = clone(prev);
+  // Taken BEFORE anything runs, so a repair can restore the value the player actually had a
+  // moment ago rather than a constant. See systems/saveHealth.js for why this exists: a device
+  // screenshot showed the header reading $NaN, which makes every `cash >= cost` false and so
+  // makes the whole game unplayable while looking like bad luck.
+  const _lastGood = snapshotGood(prev);
   // MINS_PER_TICK now lives in systems/gameClock.js, alongside the tick interval and the
   // offline conversion, because those three used to agree only by coincidence.
   // `?? ` not `||` — gameMinutes legitimately hits exactly 0 once a day right after the
@@ -4087,7 +4105,17 @@ export function gameTick(prev) {
     // Only use equipment that is not broken/maintenance
     const assignedEquip = g.equipment.filter((e) => site.assignedEquipmentIds.includes(e.id) && e.status !== "Broken" && e.status !== "Maintenance");
 
-    if (!assignedCrew.length || !assignedEquip.length) continue;
+    // A site with no CREW genuinely cannot proceed — there is nobody there. But a site with no
+    // usable PLANT used to hit the same hard `continue`, which is how a single truck running
+    // dry froze an entire contract at 48% with no way back. It now crawls, exactly as a phase
+    // missing its required plant does, and says so rather than silently stopping.
+    if (!assignedCrew.length) continue;
+    const _noPlant = assignedEquip.length === 0;
+    if (_noPlant && !site._noPlantWarned) {
+      site._noPlantWarned = true;
+      addImportantNotice(g, `${site.label} has no working plant on site — the crew are down to hand tools. Assign a machine.`, "red", { actionLabel: "Assign plant", actionTab: "Sites" });
+    }
+    if (!_noPlant && site._noPlantWarned) site._noPlantWarned = false;
 
     // Stall progress while materials are missing — player must buy or emergency-purchase
     const _siteContract = g.contracts.find(c => c.id === site.contractId);
@@ -4165,10 +4193,23 @@ export function gameTick(prev) {
       const _pmd = PM_TIERS.find(t => t.id === pm.typeId);
       return Math.max(max, _pmd ? (1 + (_pmd.delayReduce || 0)) : 1.0);
     }, 1.0);
-    const progressRate = (2.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
+    // Reported from a device: "the jobs don't get done fast enough... I literally run out of
+    // money before a job is completed."
+    //
+    // Measured rather than argued. At base 2.0 a fully-crewed starting company advanced about
+    // 65% of a phase per day, so a FIVE-phase contract needed ~7.7 days of perfect conditions
+    // against a contracted SIX — before any material wait, fuel gap or weather. Real runs came
+    // in at 9 to 14 days, and the player pays crew, plant and overheads for every one of them
+    // while the payout waits at the end. Losing money on the starter contract is not a
+    // difficulty curve, it is a broken first impression.
+    //
+    // At 3.0 the same company clears ~97% of a phase per day: five phases in about five days
+    // of clean running, which leaves headroom for the friction the game then throws at it.
+    const progressRate = (3.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
       // Sprint 12: required plant missing mid-phase crawls rather than halting. A machine
       // breaking through no fault of the player must be a setback, never a dead save.
-      * plantProgressFactor(currentPhaseName, assignedEquip);
+      * plantProgressFactor(currentPhaseName, assignedEquip)
+      * (_noPlant ? STALL_FACTOR : 1);
     site._progressRate = progressRate;
 
     const _prevProgress = site.phaseProgress || 0;
@@ -4626,13 +4667,31 @@ export function gameTick(prev) {
       if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
         e.status = "Idle";
         e.assignedSiteId = null;
+        // THE GAME-KILLER. This used to drop the machine off the site and forget which site it
+        // came from. Nothing ever put it back. On a starting company — one pickup, 60 litres,
+        // 12 a day — the truck ran dry on day five and the job froze at whatever percentage it
+        // had reached, FOREVER, while wages kept going out every day. A six-day contract took
+        // more than a hundred and twenty days and never finished. The log line even promised
+        // "Refuel overnight", which was a return that never came.
+        e.awaitingFuelForSiteId = site.id;
         site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
-        addLog(g, `⛽ ${e.name} ran out of fuel — pulled from ${site.label}. Refuel overnight.`);
+        addLog(g, `⛽ ${e.name} ran out of fuel — pulled from ${site.label}. It returns once refuelled.`);
+        addImportantNotice(g, `${e.name} ran dry at ${site.label}. It goes back on as soon as it is refuelled.`, "orange", { actionTab: "Equipment" });
       }
     }
 
     // Crew stamina drain
-    const _seasonStamDrain = (g.seasonStaminaMult || 1.0) * 0.25;
+    // Reported from a device: "employees run out of stamina too fast."
+    //
+    // At 0.25 this cost 6 stamina per game DAY of work. A six-day contract therefore burned
+    // ~36 of a starting worker's 70-95, and anything longer pushed them under the exhaustion
+    // threshold — at which point they were pulled off the site, which slowed the job, which
+    // made it longer, which exhausted the next one. A death spiral dressed as a difficulty
+    // curve: measured runs of a SIX-day contract were finishing in 18 to 24 days, or never.
+    //
+    // At 0.12 a day's work costs ~2.9, so a normal contract is comfortable, a long one is
+    // genuinely tiring, and rest is a decision rather than a constant tax.
+    const _seasonStamDrain = (g.seasonStaminaMult || 1.0) * 0.12;
     for (const id of site.assignedCrewIds) {
       const w = g.crew.find((w) => w.id === id);
       if (!w) continue;
@@ -4641,8 +4700,13 @@ export function gameTick(prev) {
       if (w.stamina < 10 && w.status === "Active") {
         w.status = "Idle";
         w.assignedSiteId = null;
+        // Exactly the fuel bug wearing different clothes. A worker was dropped off the site and
+        // the site forgot where they came from, so once the whole crew had cycled through
+        // exhaustion the job had nobody on it and froze permanently — the player watching wages
+        // go out against a contract that could never finish.
+        w.awaitingRestForSiteId = site.id;
         site.assignedCrewIds = site.assignedCrewIds.filter((cid) => cid !== w.id);
-        addLog(g, `⚠ ${w.name} exhausted — pulled from ${site.label}.`);
+        addLog(g, `⚠ ${w.name} exhausted — pulled from ${site.label}. They return once rested.`);
       }
       // R15-1: Crew personality banter — once per worker per day, ~1.7% chance per tick
       if (w.status === "Active" && Math.random() < 0.017 && (w._lastBanter || 0) < g.day) {
@@ -4754,6 +4818,30 @@ export function gameTick(prev) {
         w.stamina = Math.min(100, w.stamina + rand(15, 25));
         w.mood = Math.min(100, w.mood + rand(2, 6));
       }
+      // Back to the job they were pulled off, once they can actually work it. Without this the
+      // crew recover to full in the yard while the site they left sits at 48% forever.
+      if (w.awaitingRestForSiteId && w.stamina >= 45) {
+        const _back = (g.activeSites || []).find((st) => st.id === w.awaitingRestForSiteId);
+        if (_back && (_back.status === "Active" || _back.status === "Paused")) {
+          _back.assignedCrewIds = [...(_back.assignedCrewIds || []), w.id];
+          w.status = "Working";
+          w.assignedSiteId = _back.id;
+          addLog(g, `💪 ${w.name} rested and back on ${_back.label}.`);
+        }
+        w.awaitingRestForSiteId = null;
+      }
+    }
+
+    // A site with nobody on it is the other half of the freeze. Say so, loudly, every time it
+    // happens — silence here is what let a contract die at 48% without the player knowing why.
+    for (const _s of (g.activeSites || [])) {
+      const _hasCrew = (_s.assignedCrewIds || []).length > 0;
+      if (!_hasCrew && _s.status === "Active" && !_s._noCrewWarned) {
+        _s._noCrewWarned = true;
+        addImportantNotice(g, `${_s.label} has nobody on site — work has stopped. Assign crew.`, "red", { actionLabel: "Assign crew", actionTab: "Sites" });
+      } else if (_hasCrew && _s._noCrewWarned) {
+        _s._noCrewWarned = false;
+      }
     }
 
     // Clear expired weather on sites
@@ -4770,7 +4858,20 @@ export function gameTick(prev) {
 
     // Equipment fuel refill (simulate overnight refuel)
     for (const e of g.equipment) {
-      if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.3);
+      if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.5);
+      // Send it back to the site it was pulled from, the moment it has enough in the tank to
+      // be useful. Without this the machine refuels forever in the yard while the job it left
+      // sits frozen.
+      if (e.awaitingFuelForSiteId && e.fuel >= e.fuelCap * 0.25) {
+        const _back = (g.activeSites || []).find((st) => st.id === e.awaitingFuelForSiteId);
+        if (_back && (_back.status === "Active" || _back.status === "Paused")) {
+          _back.assignedEquipmentIds = [...(_back.assignedEquipmentIds || []), e.id];
+          e.status = "Active";
+          e.assignedSiteId = _back.id;
+          addLog(g, `⛽ ${e.name} refuelled and back on ${_back.label}.`);
+        }
+        e.awaitingFuelForSiteId = null;
+      }
     }
 
     // Expire stale bids (preserve bids that have been accepted/active)
@@ -4982,6 +5083,19 @@ export function gameTick(prev) {
         }
       }
     }
+
+    // The company level is DERIVED by getCompanyLevel(), and nothing ever wrote it onto the
+    // state — so every consumer reading `g.companyLevel` got undefined. Two shipped bugs came
+    // out of that, both found by the save-health audit rather than by review:
+    //
+    //   * taxRateFor() fell back to level 1, so EVERY company got the young-company tax
+    //     discount forever and the relief never expired.
+    //   * the `competitor_acquisition` owner event requires level >= 4, so it could never fire
+    //     at all. Sprint 10's "no event is unreachable" test missed it because the fixture set
+    //     companyLevel explicitly — inventing a field the real game does not have.
+    //
+    // Publishing it here makes the field real for everyone who reads it.
+    g.companyLevel = getCompanyLevel(g).level;
 
     // Keep the running tax estimate current every day, so the figure grows as payments land
     // instead of the whole bill appearing at week end. This is the fix for the ambush.
@@ -5566,6 +5680,13 @@ export function gameTick(prev) {
     checkEmpireGoals(g);
   }
 
+  // Last line of defence. If any critical number has gone non-finite during this tick, put it
+  // back and tell the player honestly rather than handing them a dead company.
+  const _health = repairState(g, _lastGood);
+  if (_health.repaired) {
+    addLog(g, `🩺 Recovered a corrupted value: ${_health.fields.map((f) => f.key).join(", ")}.`);
+    addImportantNotice(g, describeRepair(_health), "orange");
+  }
   return g;
 }
 

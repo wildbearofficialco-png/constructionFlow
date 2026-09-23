@@ -5,6 +5,122 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Hotfix (build 9) — the job that could never finish
+
+Reported from a device, and it was the worst defect this project has produced:
+
+> *"Employees run out of stamina too fast. I accept a job and before it's finished I run out of
+> money. The jobs don't get done fast enough. Players will hate this."*
+
+Measured, and the report was an understatement. A **six-day starter contract**, fully crewed and
+fully supplied, took **more than 120 days** — and in six runs out of six it **never finished at
+all**. Every run lost money.
+
+### The mechanism
+
+A starting company owns one pickup: 60 litres, burning 12 a day. On day five it ran dry:
+
+```js
+e.status = "Idle";
+site.assignedEquipmentIds = site.assignedEquipmentIds.filter((eid) => eid !== e.id);
+addLog(g, `⛽ ${e.name} ran out of fuel — pulled from ${site.label}. Refuel overnight.`);
+```
+
+It refuelled in the yard. **Nothing ever put it back.** And above the progress maths sat:
+
+```js
+if (!assignedCrew.length || !assignedEquip.length) continue;
+```
+
+So the contract froze at whatever percentage it had reached — permanently — while crew wages,
+plant costs and office rent went out every single day. The log line promised *"Refuel
+overnight"*, a return that never came. The screenshot that came with the report showed a site
+stuck at 48%; a trace reproduced it stuck at exactly 48%.
+
+**Crew exhaustion was the identical bug in different clothes**: pulled off at stamina < 10,
+recovered in the yard, never reassigned. Once the crew had cycled through, the site had nobody
+on it and could never finish.
+
+This was **not** a regression from the clock work — per-day fuel burn is identical before and
+after Sprint 11. It has been there all along.
+
+### The fixes
+
+- **Plant that runs dry remembers its site** and returns automatically once refuelled. Idle
+  refuel raised 30% → 50% of tank per day.
+- **Exhausted crew remember their site** and return once rested past 45 stamina.
+- **A site with no plant crawls instead of halting**, matching the wrong-plant rule from Sprint
+  12, and raises an action item. Only *no crew* stops work outright — and that now says so.
+- **Stamina drain 0.25 → 0.12** (6.0/day → 2.9/day). At the old rate a six-day contract burned
+  ~36 of a starting worker's 70–95, and anything longer pushed them under the exhaustion
+  threshold — which slowed the job, which made it longer, which exhausted the next one. A death
+  spiral dressed as a difficulty curve.
+- **Base progress 2.0 → 3.0.** At 2.0 a fully-crewed starting company cleared ~65% of a phase
+  per day, so a five-phase contract needed ~7.7 days of perfect conditions against a contracted
+  six, before any friction. At 3.0 it clears ~97%.
+
+### Measured, before and after
+
+| | before | after |
+|---|---|---|
+| starter contract completes | **0 of 6** | **7 of 8** |
+| time for a 6-day contract | **>120 days** | 4–12 days |
+| profit on the first job | −$6k to −$38k | mostly positive |
+| crew lost to quitting | 1–3 of 3 | 0 |
+
+### My own bug: a crew that started the game already quitting
+
+Sprint 13's market-rate table was written from what the trades pay in the real world and never
+checked against what **this game** pays. `createWorker` deals out `rand(160, 260)`, so roughly a
+**quarter of every new company's crew was below market on the day the player first opened the
+game** — and Sprint 13 had just given "below market" teeth. They accrued, and they walked out.
+
+The test meant to catch this only checked the worst band, caught 1 of 120, and passed on luck.
+
+Starting wages are now **derived from the same market rate the consequence is measured against**,
+so inherited underpayment is impossible by construction rather than by a hand-kept table.
+
+### $NaN — not reproduced, no longer fatal
+
+The screenshot's header read **$NaN**. Every affordability check is `cash >= cost`, and every
+comparison against NaN is false — so cash going NaN means nothing can be bought, nobody hired,
+no bill paid, and a loan adds to NaN and stays NaN. Exactly *"even if I take out every loan I
+still run out."*
+
+It could not be reproduced: ~1,500 simulated days across seeded runs, migrated build-6 saves and
+deliberately hostile states produced no non-finite value anywhere in the state tree. That points
+at a handler, which the test harness cannot drive.
+
+`src/systems/saveHealth.js` therefore does the correct thing for a fatal defect that cannot be
+reproduced: it stops it being fatal, and leaves evidence. Critical numerics are audited every
+tick and on load; a corrupted value is restored **from the previous tick's real figure**, not a
+constant; the player is told rather than silently corrected; and a bounded `healthLog` records
+what went wrong so the next report names itself. FleetFlow has had this since its own crash
+work — Construction Flow had nothing, and it was item 8 on this project's own gap list.
+
+**Two shipped bugs the audit found immediately:** `companyLevel` is derived by
+`getCompanyLevel()` and was never written to the state, so every consumer reading
+`g.companyLevel` got `undefined`. That meant `taxRateFor()` fell back to level 1 and **every
+company received the young-company tax discount forever**, and the `competitor_acquisition`
+owner event — which requires level ≥ 4 — **could never fire at all**. Sprint 10's
+"no event is unreachable" test missed it because the fixture set `companyLevel` explicitly,
+inventing a field the real game does not have.
+
+### Tests
+
+**1004 across 47 suites**, up from 975 across 45. New: `siteNeverFreezes.test.js` (12),
+`saveHealth.test.js` (17).
+
+The load-bearing one asserts the starter contract **completes across many seeds** and does not
+take twenty times its contracted length, and that a company finishing it is not bankrupted by
+it. There is also a guard that the save-health repair **never fires on a normal run** — if it
+ever does, something in the tick is genuinely producing NaN and the repair is masking it.
+
+**Known, pre-existing:** `rivalMarketIntegration`'s entrant-bids test flakes roughly 1 run in 3
+now (it was ~1 in 20). It does not call `gameTick` and is unrelated to this hotfix, but it is
+getting worse and is the next thing to chase.
+
+
 ## Sprint 13 — a crew screen you can actually run a company from
 
 Three device notes: *"I should be able to determine how much people are paid"*, *"drop downs are
