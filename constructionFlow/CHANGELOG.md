@@ -5,6 +5,100 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 12 — the right machine, the right ticket, and a site worth watching
+
+Four device notes that turn out to be one mechanic.
+
+### 1. "You shouldn't be able to use any equipment for any job"
+
+The code agreed with the complaint. Equipment type was a **bonus**, never a requirement:
+
+```js
+const equipTypeBonus = assignedEquip.reduce((best, e) => {
+  const b = phaseAffinity[e.type] || 1.0;
+  return b > best ? b : best;
+}, 1.0);
+```
+
+The floor of that reduce is `1.0`, so bringing the **wrong** machine and bringing **no** machine
+were worth exactly the same, and the right machine was a mild speed-up you could ignore. Nothing
+in the game ever said *"you cannot do this without a crane."*
+
+`src/systems/sitePlant.js` adds the requirement the bonus table always implied. Piling needs
+foundation plant at tier 4 — a pickup will not do it. Excavation needs tier 2+ earthwork, so a
+mini excavator is not a commercial dig.
+
+**Block at the gate, stall in the middle.** A phase that has not started refuses to start
+without its plant, naming the machine. A phase already under way whose plant broke does **not**
+hard-stop — it crawls at 25%. A hard stop on a machine that broke through no fault of the player
+is a dead save, and that has been this project's standing rule since build 3.
+
+Finish, fit-out, MEP and commissioning require **nothing**, on purpose. People with hand tools
+do that work; demanding a machine for it would be theatre.
+
+Only the **first** phase gates the start. A contractor wins the job and then hires in — demanding
+a tower crane for a fit-out six months away would mean never being able to take the work. The bid
+card now shows what every phase will need, so nothing is a surprise at phase four either.
+
+### 2. "If they get caught without the certification, you get a penalty charge"
+
+`equipment_cert` had existed since the training system was written — $800, five days, a real
+certificate a player could earn — and **not one line of the simulation read it**. The only
+certificate the game looked at was `safety_cert`, for a flat +5% progress. So Construction Flow
+sold a licence to operate heavy plant, and then let anyone operate heavy plant.
+
+Unlicensed operation stays **allowed**, exactly as asked. It is not blocked, not prevented and
+not nagged about — it is a gamble the player is entitled to take, at ~3.5% per machine per day of
+being caught. One ticket covers one machine, because a ticket is a person and not a permit for
+the yard, which is what finally makes the second crane cost something beyond its price.
+
+### 3. OSHA inspections
+
+The thing that discovers the risk above, so the two ship together — building either alone would
+be half a mechanic.
+
+An inspection is **resolved against what is actually true of the site**, not rolled for. That is
+the difference between an inspector and a slot machine: a player who trained their operators,
+maintained their plant and hired a Safety Officer passes every time, and is told why. Three
+citable findings — unlicensed operation (severity 3), plant below safe condition (2), and no
+safety-trained crew on a site of three or more (1).
+
+The **Safety Officer** role already existed and, like the certificate, did almost nothing. It now
+cuts catch risk by 45% and argues fines down by 40% — it does not hide a violation.
+
+### 4. "If material is stolen you will need to replace it"
+
+Already true, and invisible. The event already decremented `site.materialsFulfilled`, so the
+player genuinely had to re-deliver — announced as *"inventory reduced"* in a scrolling log. Two
+units of an unnamed material in a feed nobody reads is indistinguishable from nothing happening.
+
+It now names the material, scales with site size, prices the replacement from `MATERIAL_DEFS`, and
+raises an action item pointing at the Sites tab.
+
+### Found while testing
+
+`if (!assignedCrew.length || !assignedEquip.length) continue;` sits above the progress maths: a
+site with **no** usable plant has made zero progress since long before this sprint. That is a
+harder stop than anything added here. It is recoverable (repair the machine) so it is not a dead
+save, but it is noted rather than quietly inherited — and the stall test was rewritten to cover
+the case this sprint actually introduced (wrong plant) rather than to claim credit for that one.
+
+Also caught: `plantPlanFor` was imported and never called — this project's single most repeated
+defect, after Phase 4's rival personalities, Phase 5's crew-cap resolver, Phase 6's chronicle
+callbacks and Sprint 7's KPI counters all shipped that way first. There is now a test that counts
+call sites.
+
+### Tests
+
+**902 passing across 43 suites**, up from 828 across 40. New: `sitePlant.test.js` (24),
+`siteCompliance.test.js` (31), `sitePlantIntegration.test.js` (19).
+
+The load-bearing guard: **no phase may demand plant the shop does not sell**, checked against
+`EQUIPMENT_SHOP` itself — a requirement nothing can satisfy would block that phase forever, for
+every player, silently. Plus: a starting company can still begin work, a compliant company is
+never fined, and an existing save whose sites predate the requirement keeps running.
+
+
 ## Sprint 11 — the clock was running 600x fast
 
 Reported from a device: *"I like how long deliveries take in FleetFlow... I feel like taxes are

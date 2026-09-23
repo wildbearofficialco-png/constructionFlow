@@ -81,6 +81,28 @@ import {
 } from "../../systems/taxOffice.js";
 import { fireHaptic } from "../../utils/constructionHaptics.js";
 import {
+  missingPlantFor,
+  canStartWithPlant,
+  plantPlanFor,
+  plantProgressFactor,
+  satisfies as plantSatisfies,
+  STALL_FACTOR,
+} from "../../systems/sitePlant.js";
+import {
+  isLicensedOperator,
+  unlicensedMachineCount,
+  isRunningUnlicensed,
+  catchRiskPerDay,
+  fineFor,
+  inspectSite,
+  describeInspection,
+  hasSafetyOfficer,
+  INSPECTION_CHANCE_PER_DAY,
+  OPERATOR_CERT,
+  THEFT_MIN_UNITS,
+  THEFT_MAX_UNITS,
+} from "../../systems/siteCompliance.js";
+import {
   MINS_PER_TICK,
   SPEEDS,
   DEFAULT_SPEED_ID,
@@ -1372,12 +1394,27 @@ const CHAOS_EVENTS = [
     apply: (site, game) => {
       const _def = CONTRACT_DEFS.find(c => c.id === (game.contracts.find(cc => cc.id === site.contractId)?.defId));
       const _matIds = Object.keys(_def?.materials || {});
+      // Sprint 12. This already worked: the decrement below genuinely forced a re-delivery,
+      // exactly as asked for. What it never did was TELL anyone. Two units of one material,
+      // announced in a scrolling log, is indistinguishable from nothing happening.
+      let _taken = 0, _matId = null;
       if (_matIds.length > 0) {
-        const _matId = _matIds[Math.floor(Math.random() * _matIds.length)];
-        if (site.materialsFulfilled) site.materialsFulfilled[_matId] = Math.max(0, (site.materialsFulfilled[_matId]||0) - 2);
+        _matId = _matIds[Math.floor(Math.random() * _matIds.length)];
+        _taken = Math.min(THEFT_MAX_UNITS, Math.max(THEFT_MIN_UNITS, Math.round((site.totalValue || 0) / 90000) + THEFT_MIN_UNITS));
+        if (site.materialsFulfilled) {
+          const _have = site.materialsFulfilled[_matId] || 0;
+          _taken = Math.min(_taken, _have);
+          site.materialsFulfilled[_matId] = Math.max(0, _have - _taken);
+        }
       }
-      addLog(game, `🔴 Material theft at ${site.label} — inventory reduced.`);
-      return { text: `Material theft — on-site materials reduced.`, type: "material_theft" };
+      const _cost = _taken * (MATERIAL_DEFS.find((m) => m.id === _matId)?.basePrice || 0);
+      addLog(game, `🔴 Material theft at ${site.label} — ${_taken} ${_matId || "units"} gone.`);
+      addImportantNotice(game,
+        _cost > 0
+          ? `${_taken} ${_matId} stolen from ${site.label} overnight — about ${money(_cost)} to replace, and the phase cannot finish without it.`
+          : `${_taken} ${_matId || "units of material"} stolen from ${site.label} overnight — it has to be re-delivered before the phase can finish.`,
+        "red", { actionLabel: "Re-order materials", actionTab: "Sites" });
+      return { text: `Material theft — ${_taken} ${_matId || "units"} stolen.`, type: "material_theft" };
     }
   },
   { id: "productivity_surge", weight: 6, prob: 0.022, tone: "green", icon: "⚡", label: "Crew Productivity Surge",
@@ -4115,7 +4152,10 @@ export function gameTick(prev) {
       const _pmd = PM_TIERS.find(t => t.id === pm.typeId);
       return Math.max(max, _pmd ? (1 + (_pmd.delayReduce || 0)) : 1.0);
     }, 1.0);
-    const progressRate = (2.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus;
+    const progressRate = (2.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
+      // Sprint 12: required plant missing mid-phase crawls rather than halting. A machine
+      // breaking through no fault of the player must be a setback, never a dead save.
+      * plantProgressFactor(currentPhaseName, assignedEquip);
     site._progressRate = progressRate;
 
     const _prevProgress = site.phaseProgress || 0;
@@ -4854,6 +4894,56 @@ export function gameTick(prev) {
     // Equipment wear/maintenance is centralized in equipmentWear.js. This replaces the old
     // flat low-condition charge and idle-condition decay, avoiding double wear and double cost.
     tickEquipmentWear(g);
+
+    // ── Compliance: licences and inspectors ───────────────────────────────────
+    //
+    // Sprint 12. `equipment_cert` had existed since the training system was written — a player
+    // could pay $800 and wait five days for it — and NOTHING in the game read it. The game sold
+    // a licence to operate heavy plant and then let anyone operate heavy plant.
+    //
+    // Unlicensed operation stays ALLOWED, deliberately: "you can accept the jobs and have your
+    // employees operate the equipment, but if they get caught you get a penalty charge." It is
+    // a gamble the player is entitled to take, which is a better mechanic than a gate.
+    for (const _site of (g.activeSites || [])) {
+      if ((_site.status || "") !== "Active") continue;
+
+      // Caught running unlicensed.
+      const _risk = catchRiskPerDay(_site, g);
+      if (_risk > 0 && Math.random() < _risk) {
+        const _n = unlicensedMachineCount(_site, g.crew, g.equipment);
+        const _fine = fineFor(_site, 1);
+        g.cash -= _fine;
+        g.expenses += _fine;
+        recordTransaction(g, "fines", -_fine, `Unlicensed operation — ${_site.label}`);
+        g.reputation = Math.max(0, (g.reputation || 0) - 2);
+        addLog(g, `🚨 Caught operating ${_n} machine${_n === 1 ? "" : "s"} unlicensed at ${_site.label} — ${money(_fine)} fine.`);
+        addImportantNotice(g,
+          `Unlicensed operation at ${_site.label}: ${money(_fine)} fine and reputation down. Put a crew member through Equipment Certification.`,
+          "red", { actionLabel: "Train crew", actionTab: "Crew" });
+        recordMemory(g, { tag: `unlicensed_${g.day}`, kind: "setback", valence: "bad", weight: 1.5,
+          label: "Caught operating unlicensed", detail: "an inspector caught your crew running heavy plant without tickets" });
+      }
+
+      // A full inspection, resolved against what is actually true of the site rather than
+      // rolled for — a player who trained their operators and maintained their plant passes.
+      if (Math.random() < INSPECTION_CHANCE_PER_DAY) {
+        const _res = inspectSite(_site, g);
+        if (_res.passed) {
+          g.reputation = Math.min(100, (g.reputation || 0) + _res.reputationGain);
+          addLog(g, `✅ Safety inspection at ${_site.label} — passed, no findings.`);
+          addImportantNotice(g, `Safety inspection at ${_site.label}: passed clean. Reputation up.`, "green");
+        } else {
+          g.cash -= _res.fine;
+          g.expenses += _res.fine;
+          recordTransaction(g, "fines", -_res.fine, `Safety inspection — ${_site.label}`);
+          g.reputation = Math.max(0, (g.reputation || 0) - _res.reputationHit);
+          addLog(g, `🚨 Safety inspection at ${_site.label} — ${_res.findings.length} finding(s), ${money(_res.fine)} in penalties.`);
+          addImportantNotice(g,
+            `${describeInspection(_res)}\n\nPenalties: ${money(_res.fine)}.${_res.mitigated ? " Your Safety Officer argued it down." : ""}`,
+            "red", { actionLabel: "Review crew", actionTab: "Crew" });
+        }
+      }
+    }
 
     // Keep the running tax estimate current every day, so the figure grows as payments land
     // instead of the whole bill appearing at week end. This is the fix for the ambush.
@@ -6085,6 +6175,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const c = g.contracts.find((c) => c.id === contract.id);
       if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
+
+      // Sprint 12: the right machine for the job. Equipment type used to be a BONUS with a
+      // floor of 1.0, so the wrong machine and NO machine were worth exactly the same and
+      // nothing ever said "you cannot do this without a crane".
+      const _plant = canStartWithPlant(c.phases || [], (g.equipment || []).filter((e) => equipIds.includes(e.id)));
+      if (!_plant.ok) {
+        fireHaptic("error");
+        Alert.alert("Wrong Plant For The Job", `${_plant.missing.summary}\n\n${_plant.missing.action}`);
+        return;
+      }
 
       // The freeze is real now. It was set at 14 days overdue and read by NOTHING — every
       // reference in this screen was status text, so "operations suspended" suspended nothing.
@@ -11809,6 +11909,24 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                       return <Text key={i} style={{ fontSize: 12 }}>{pv.emoji}</Text>;
                     })}
                   </View>
+                  {/* Sprint 12: what this job will actually need, BEFORE the player bids.
+                      The plant requirement is a gate, and a gate the player only discovers by
+                      hitting it is a trap. plantPlanFor covers every phase, not just the first
+                      one that blocks, so nothing is a surprise at phase four either. */}
+                  {(() => {
+                    const plan = plantPlanFor(c.phases || [], game.equipment || []);
+                    const needed = plan.filter((p) => p.required);
+                    if (needed.length === 0) return null;
+                    const short = needed.filter((p) => !p.satisfied);
+                    const types = [...new Set(needed.flatMap((p) => p.required.anyOf))];
+                    return (
+                      <Text style={[styles.sub, { color: short.length > 0 ? T.orange : T.sub, marginTop: 3, fontSize: 11 }]}>
+                        {short.length > 0
+                          ? `⚠ Needs ${[...new Set(short.flatMap((p) => p.required.anyOf))].join("/")} plant you do not have`
+                          : `🚜 Plant on hand for all ${needed.length} phase${needed.length === 1 ? "" : "s"} (${types.join("/")})`}
+                      </Text>
+                    );
+                  })()}
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
                   <Text style={[styles.label, { color: T.green }]}>{money(c.value)}</Text>
