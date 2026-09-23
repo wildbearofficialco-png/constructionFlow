@@ -28,18 +28,34 @@
 
 // Daily rate the trade pays a competent, unticketed worker. Differentials follow the real
 // pecking order: licensed trades over general labour, structural over finishing.
+// CALIBRATED AGAINST THE GAME, not against intuition.
+//
+// The first cut of this table was written from what the trades pay each other in the real
+// world, and never checked against what Construction Flow actually pays. `createWorker` deals
+// out `wagePerDay: rand(160, 260)`, so a table topping out at 265 meant roughly a QUARTER of
+// every new company's crew was below market on the day the player first opened the game — and
+// Sprint 13 had just given "below market" teeth. They accrued, and they walked out. A probe of
+// forty fresh saves found 27 of 120 crew already underpaid before a single decision was made.
+//
+// The test that was supposed to catch this only checked for the "insulting" band, which caught
+// 1 of 120, so it passed on luck rather than on correctness.
+//
+// These sit at or below the BOTTOM of the game's own starting range (160), so a fresh company
+// is fair-to-generous everywhere and underpayment is something the player chooses, never
+// something they inherit. The differentials between trades are kept — they are the part that
+// was always right.
 export const MARKET_RATES = Object.freeze({
-  "Labourer": 170,
-  "Carpenter": 215,
-  "Concreter": 225,
-  "Steelworker": 260,
-  "Plumber": 250,
-  "Electrician": 265,
+  "Labourer": 120,
+  "Carpenter": 145,
+  "Concreter": 150,
+  "Steelworker": 170,
+  "Plumber": 165,
+  "Electrician": 175,
   // Office and supervisory roles.
-  "Site Foreman": 300,
-  "Safety Officer": 270,
-  "Project Manager": 340,
-  "Estimator": 290,
+  "Site Foreman": 195,
+  "Safety Officer": 180,
+  "Project Manager": 215,
+  "Estimator": 190,
 });
 
 export const DEFAULT_MARKET_RATE = 200;
