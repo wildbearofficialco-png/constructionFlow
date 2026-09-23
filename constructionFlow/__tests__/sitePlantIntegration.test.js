@@ -113,12 +113,19 @@ describe("losing plant mid-job is a setback, never a dead end", () => {
         deadlineDay: 9999, startDay: 1, siteMode: "normal", chaosHistory: [],
       }];
       for (const w of g.crew) w.status = "Working";
-      for (let i = 0; i < TICKS_PER_DAY * 6; i++) g = gameTick(g);
+      // HALF a day, not six. The hotfix raised base progress from 2.0 to 3.0, so over six days
+      // BOTH the right plant and the wrong plant now finish the phase — and a comparison where
+      // both sides read 100% proves nothing. Measured over a window short enough that neither
+      // completes, the difference is the thing this test actually exists to check.
+      for (let i = 0; i < Math.floor(TICKS_PER_DAY / 2); i++) g = gameTick(g);
       const s = (g.activeSites || [])[0];
       return s ? s.phaseProgress : 100;
     }
     const wrong = runWith({ id: "w", type: "Utility", tier: 1 });
     const right = runWith({ id: "r", type: "Foundation", tier: 4 });
+    // Guard the guard: if either side completed, the window is too long and the comparison
+    // below would pass or fail for the wrong reason.
+    expect({ right: right < 100, wrong: wrong < 100 }).toEqual({ right: true, wrong: true });
     expect(right).toBeGreaterThan(wrong);
   });
 
