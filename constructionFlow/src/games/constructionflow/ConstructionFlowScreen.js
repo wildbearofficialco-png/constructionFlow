@@ -103,6 +103,19 @@ import {
   THEFT_MAX_UNITS,
 } from "../../systems/siteCompliance.js";
 import {
+  marketRateFor,
+  payPosition,
+  previewWage,
+  setWage,
+  accrueUnderpayment,
+  quitRisk,
+  payrollSummary,
+  planBulkHire,
+  planBulkFire,
+  WAGE_FLOOR,
+  WAGE_CEILING,
+} from "../../systems/crewPayroll.js";
+import {
   MINS_PER_TICK,
   SPEEDS,
   DEFAULT_SPEED_ID,
@@ -4895,6 +4908,31 @@ export function gameTick(prev) {
     // flat low-condition charge and idle-condition decay, avoiding double wear and double cost.
     tickEquipmentWear(g);
 
+    // ── Payroll: underpayment accrues, and people leave over it ───────────────
+    //
+    // Sprint 13. The old wage controls charged for a cut ONCE — 15 loyalty on the day it
+    // happened — and then forgot. Cutting everyone's pay, eating a single hit and banking the
+    // savings forever was therefore strictly optimal, and nobody ever left over it because
+    // nothing was still tracking it tomorrow. A wage you can set is only a decision if it has
+    // a cost that persists.
+    for (const _w of [...(g.crew || [])]) {
+      accrueUnderpayment(_w);
+      const _risk = quitRisk(_w);
+      if (_risk > 0 && Math.random() < _risk) {
+        const _pos = payPosition(_w);
+        for (const site of (g.activeSites || [])) {
+          site.assignedCrewIds = (site.assignedCrewIds || []).filter((id) => id !== _w.id);
+        }
+        g.crew = (g.crew || []).filter((x) => x.id !== _w.id);
+        addLog(g, `😤 ${_w.name} quit — ${money(_w.wagePerDay)}/day against a market rate of ${money(marketRateFor(_w))}.`);
+        addImportantNotice(g,
+          `${_w.name} handed in their boots. They were ${_pos.label.toLowerCase()} for ${Math.round(_w.underpaidDays || 0)} days.`,
+          "red", { actionLabel: "Review pay", actionTab: "Crew" });
+        recordMemory(g, { tag: `quit_pay_${g.day}`, kind: "crew", valence: "bad", weight: 1.5,
+          label: "Lost someone over pay", detail: `${_w.name} left because you were paying under the rate` });
+      }
+    }
+
     // ── Compliance: licences and inspectors ───────────────────────────────────
     //
     // Sprint 12. `equipment_cert` had existed since the training system was written — a player
@@ -6769,6 +6807,79 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       _w.loyalty = Math.max(0, (_w.loyalty ?? 0) - 15);
       _w.mood = Math.max(0, (_w.mood ?? 70) - 12);
       addLog(g, `🔴 ${_w.name} wage cut by ${money(_decrease)}/day — morale hit`);
+    });
+  }, [update]);
+
+  // Sprint 13. The whole wage control used to be the two ±10% nudges above. "I should be able
+  // to determine how much people are paid" — so here is the number.
+  const handleSetWage = useCallback((workerId, amount) => {
+    fireHaptic("light");
+    update((g) => {
+      const _w = (g.crew || []).find((x) => x.id === workerId) || (g.officeStaff || []).find((x) => x.id === workerId);
+      if (!_w) return;
+      const _before = _w.wagePerDay;
+      const _res = setWage(_w, amount);
+      if (!_res || _res.applied === _before) return;
+      const _pos = _res.positionAfter;
+      addLog(g, `💰 ${_w.name} now on ${money(_res.applied)}/day (${_pos.label}).`);
+      if (_pos.key === "insulting") {
+        addImportantNotice(g, `${_w.name} is on ${money(_res.applied)}/day against a market rate of ${money(_res.market)}. People do not stay on that.`, "orange");
+      }
+    });
+  }, [update]);
+
+  const handleBulkHire = useCallback((count) => {
+    fireHaptic("light");
+    update((g) => {
+      const _plan = planBulkHire(g.applicants || [], count, {
+        crewCap: getTotalCrewCap(g),
+        currentCrew: (g.crew || []).length,
+        cash: g.cash,
+        hireCostFor: (a) => Math.round((a.desiredWage || 200) * 5),
+      });
+      if (_plan.count === 0) {
+        fireHaptic("error");
+        Alert.alert("Cannot Hire", _plan.reason || "Nobody available to hire.");
+        return;
+      }
+      for (const a of _plan.hiring) {
+        const _w = createWorker(a.role, {
+          name: a.name, skill: a.skill, specialty: a.specialty,
+          wagePerDay: a.desiredWage || 200, hireDay: g.day,
+        });
+        g.crew.push(_w);
+      }
+      g.applicants = (g.applicants || []).filter((a) => !_plan.hiring.some((h) => h.id === a.id));
+      g.cash -= _plan.spend;
+      g.expenses += _plan.spend;
+      recordTransaction(g, "payroll", -_plan.spend, `Bulk hire — ${_plan.count} crew`);
+      addLog(g, `👷 Hired ${_plan.count} crew in one go for ${money(_plan.spend)}.`);
+      addImportantNotice(g, `${_plan.count} new crew started today.${_plan.reason ? ` ${_plan.reason}` : ""}`, "green");
+    });
+  }, [update]);
+
+  const handleFireMany = useCallback((workerIds) => {
+    // A neutral tap on press; the warning buzz fires below, once people have actually gone.
+    // The top of a handler is before the guards, and my own source-scanning test caught this.
+    fireHaptic("light");
+    update((g) => {
+      const _ids = Array.isArray(workerIds) ? workerIds : [];
+      const _going = (g.crew || []).filter((w) => _ids.includes(w.id));
+      if (_going.length === 0) return;
+      const _plan = planBulkFire(_going);
+      fireHaptic("warning");
+      g.cash -= _plan.severance;
+      g.expenses += _plan.severance;
+      recordTransaction(g, "payroll", -_plan.severance, `Severance — ${_plan.count} crew`);
+      // Anyone let go comes off the sites they were on, or the site keeps a ghost in its crew list.
+      for (const site of (g.activeSites || [])) {
+        site.assignedCrewIds = (site.assignedCrewIds || []).filter((id) => !_ids.includes(id));
+      }
+      g.crew = (g.crew || []).filter((w) => !_ids.includes(w.id));
+      addLog(g, `🔴 Let ${_plan.count} crew go — ${money(_plan.severance)} in severance, saving ${money(_plan.dailySaving)}/day.`);
+      addImportantNotice(g, `${_plan.count} crew dismissed. ${money(_plan.severance)} severance paid.`, "orange");
+      recordMemory(g, { tag: `mass_layoff_${g.day}`, kind: "crew", valence: "bad", weight: _plan.count >= 5 ? 2.5 : 1,
+        label: "Let people go", detail: `you dismissed ${_plan.count} people at once` });
     });
   }, [update]);
 
@@ -9270,6 +9381,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           onPromote={handlePromoteCrew}
           onRaiseWage={handleRaiseWage}
           onLowerWage={handleLowerWage}
+          onSetWage={handleSetWage}
+          onBulkHire={handleBulkHire}
+          onFireMany={handleFireMany}
           onGiveBonus={handleGiveBonus}
           onRest={handleRestWorker}
           onRestAllTired={handleRestAllTired}
@@ -12339,8 +12453,19 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
 
 // ─── Crew Screen ─────────────────────────────────────────────────────────────
 
-function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch }) {
+function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch, onSetWage, onBulkHire, onFireMany }) {
   const [specialtyFilter, setSpecialtyFilter] = useState("All");
+  // Sprint 13, from the device: "drop downs are needed to reduce the amount of scrolling".
+  // Every worker card rendered four stat bars, certificate badges and six buttons. At ten crew
+  // that is a screen you scroll past rather than read, and at twenty-five — which bulk hiring
+  // now makes reachable in one tap — it is unusable. Collapsed by default; one tap opens the
+  // person you actually care about.
+  const [expandedCrewId, setExpandedCrewId] = useState(null);
+  const [selectedCrewIds, setSelectedCrewIds] = useState([]);
+  const [bulkHireCount, setBulkHireCount] = useState("");
+  const [wageDrafts, setWageDrafts] = useState({});
+  const toggleSelected = (id) =>
+    setSelectedCrewIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   const office = OFFICES[game.officeIndex || 0];
   const moodColor = (v) => v >= 70 ? T.green : v >= 45 ? T.yellow : T.red;
 
@@ -12441,6 +12566,86 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
           onCta={onPostJob}
         />
       )}
+      {/* ── Payroll & bulk actions ────────────────────────────────────────────
+          Sprint 13, from the device: "if you want to hire 25 employees at once you can, if you
+          wanna fire all of them you can... but you can also individually click on each
+          employee's profile." FleetFlow has bulkHireApplicants(count) and fireAllDrivers();
+          Construction Flow had neither, so every hire and every dismissal was one tap at a
+          time down a list with no end. */}
+      {(game.crew || []).length > 0 && (() => {
+        const pay = payrollSummary(game);
+        return (
+          <View style={[styles.card, { backgroundColor: T.panel, borderColor: pay.atRisk > 0 ? T.orange : T.border, borderWidth: pay.atRisk > 0 ? 1.5 : 1 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={[styles.label, col]}>Payroll · {pay.headcount} on the books</Text>
+              <Text style={[styles.label, { color: T.orange }]}>{money(pay.daily)}/day</Text>
+            </View>
+            <Text style={[styles.sub, { color: pay.atRisk > 0 ? T.orange : T.sub, marginTop: 2 }]}>
+              {pay.headline} · {pay.versusMarket >= 0 ? "+" : ""}{money(pay.versusMarket)}/day vs market
+            </Text>
+
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 }}>
+              <TextInput
+                style={[styles.input, col, { flex: 1, marginBottom: 0 }]}
+                value={bulkHireCount}
+                onChangeText={(t) => setBulkHireCount(t.replace(/[^0-9]/g, ""))}
+                keyboardType="numeric"
+                placeholder="How many"
+                placeholderTextColor={T.sub}
+                accessibilityLabel="Number of crew to hire at once"
+              />
+              <TouchableOpacity
+                style={{ backgroundColor: bulkHireCount ? T.green + "22" : T.panel2, borderRadius: 7, borderWidth: 1, borderColor: bulkHireCount ? T.green : T.border, paddingVertical: 8, paddingHorizontal: 12 }}
+                disabled={!bulkHireCount}
+                onPress={() => { onBulkHire && onBulkHire(parseInt(bulkHireCount, 10)); setBulkHireCount(""); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Hire ${bulkHireCount || "several"} crew at once`}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: bulkHireCount ? T.green : T.sub }}>
+                  Hire {bulkHireCount || "N"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={[TYPE.caption, { color: T.dim, marginTop: 3 }]}>
+              {(game.applicants || []).length} applicant{(game.applicants || []).length === 1 ? "" : "s"} waiting · cap {getTotalCrewCap(game)}
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 10 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: T.panel2, borderRadius: 7, borderWidth: 1, borderColor: T.border, paddingVertical: 8, alignItems: "center" }}
+                onPress={() => { fireHaptic("light"); setSelectedCrewIds(selectedCrewIds.length === (game.crew || []).length ? [] : (game.crew || []).map((w) => w.id)); }}
+                accessibilityRole="button"
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: T.sub }}>
+                  {selectedCrewIds.length === (game.crew || []).length ? "Clear selection" : "Select all"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: selectedCrewIds.length > 0 ? T.red + "22" : T.panel2, borderRadius: 7, borderWidth: 1, borderColor: selectedCrewIds.length > 0 ? T.red : T.border, paddingVertical: 8, alignItems: "center" }}
+                disabled={selectedCrewIds.length === 0}
+                onPress={() => {
+                  const plan = planBulkFire((game.crew || []).filter((w) => selectedCrewIds.includes(w.id)));
+                  Alert.alert(
+                    `Let ${plan.count} go?`,
+                    `${money(plan.severance)} in severance, saving ${money(plan.dailySaving)}/day.\n\nThis cannot be undone.`,
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      { text: `Dismiss ${plan.count}`, style: "destructive", onPress: () => { onFireMany && onFireMany(selectedCrewIds); setSelectedCrewIds([]); } },
+                    ]
+                  );
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Dismiss ${selectedCrewIds.length} selected crew`}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: selectedCrewIds.length > 0 ? T.red : T.sub }}>
+                  Dismiss {selectedCrewIds.length || ""}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+      })()}
+
       {game.crew.map((w) => {
         // Trait effects now come from one shared helper, so the same trait can no longer be
         // described one way here and another way on the applicant card.
@@ -12466,6 +12671,18 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               {where.label}
             </Text>
             <Text style={[TYPE.caption, { color: T.sub }]}>{money(w.wagePerDay)}/day</Text>
+            <TouchableOpacity
+              onPress={() => { fireHaptic("light"); toggleSelected(w.id); }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ marginLeft: 8 }}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selectedCrewIds.includes(w.id) }}
+              accessibilityLabel={`Select ${w.name}`}
+            >
+              <Text style={{ fontSize: 15, color: selectedCrewIds.includes(w.id) ? T.red : T.dim }}>
+                {selectedCrewIds.includes(w.id) ? "☑" : "☐"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -12566,6 +12783,64 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
               ))}
             </View>
           )}
+          {/* Sprint 13: a compact line when collapsed, so the card still answers the two
+              questions an owner has — what are they costing me, and are they about to walk —
+              without four progress bars and six buttons for every person on the books. */}
+          <TouchableOpacity
+            onPress={() => { fireHaptic("light"); setExpandedCrewId((id) => (id === w.id ? null : w.id)); }}
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: SPACING.sm }}
+            accessibilityRole="button"
+            accessibilityLabel={`${expandedCrewId === w.id ? "Collapse" : "Expand"} ${w.name}`}
+          >
+            {(() => {
+              const pos = payPosition(w);
+              return (
+                <Text style={[TYPE.caption, { color: toneColor(pos.tone, T), fontWeight: "700" }]}>
+                  {pos.label} · market {money(marketRateFor(w))}
+                  {(w.underpaidDays || 0) > 5 ? ` · unhappy ${Math.round(w.underpaidDays)}d` : ""}
+                </Text>
+              );
+            })()}
+            <Text style={[TYPE.caption, { color: T.sub }]}>{expandedCrewId === w.id ? "Hide ▲" : "Details ▼"}</Text>
+          </TouchableOpacity>
+
+          {expandedCrewId === w.id && (
+          <>
+          {/* Set an exact wage. The whole control used to be two ±10% nudges. */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
+            <TextInput
+              style={[styles.input, col, { flex: 1, marginBottom: 0 }]}
+              value={wageDrafts[w.id] ?? String(w.wagePerDay)}
+              onChangeText={(t) => setWageDrafts((d) => ({ ...d, [w.id]: t.replace(/[^0-9]/g, "") }))}
+              keyboardType="numeric"
+              placeholder={`${WAGE_FLOOR}–${WAGE_CEILING}`}
+              placeholderTextColor={T.sub}
+              accessibilityLabel={`Daily wage for ${w.name}`}
+            />
+            <TouchableOpacity
+              style={{ backgroundColor: T.green + "22", borderRadius: 7, borderWidth: 1, borderColor: T.green, paddingVertical: 8, paddingHorizontal: 14 }}
+              onPress={() => {
+                const want = parseInt(wageDrafts[w.id] ?? String(w.wagePerDay), 10);
+                if (Number.isFinite(want)) onSetWage && onSetWage(w.id, want);
+                setWageDrafts((d) => ({ ...d, [w.id]: undefined }));
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Set ${w.name}'s wage`}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: T.green }}>Set Pay</Text>
+            </TouchableOpacity>
+          </View>
+          {(() => {
+            const draft = parseInt(wageDrafts[w.id] ?? "", 10);
+            if (!Number.isFinite(draft) || draft === w.wagePerDay) return null;
+            const pv = previewWage(w, draft);
+            return (
+              <Text style={[TYPE.caption, { color: toneColor(pv.positionAfter.tone, T), marginTop: 3 }]}>
+                {pv.clamped ? `Clamped to ${money(pv.applied)}. ` : ""}
+                {pv.positionAfter.label} · loyalty {pv.loyaltyDelta >= 0 ? "+" : ""}{pv.loyaltyDelta}, mood {pv.moodDelta >= 0 ? "+" : ""}{pv.moodDelta}
+              </Text>
+            );
+          })()}
           {/* Stats bars */}
           {[
             { label: "Mood",    val: w.mood,              color: moodColor(w.mood) },
@@ -12661,6 +12936,8 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
             <View style={{ marginTop: 6, backgroundColor: T.cyan + "18", borderRadius: 6, padding: 6, borderWidth: 1, borderColor: T.cyan }}>
               <Text style={[styles.sub, { color: T.cyan, fontSize: 12 }]}>😴 Resting — stamina recovering to {w.restUntilStamina || 80}</Text>
             </View>
+          )}
+          </>
           )}
         </View>
         );

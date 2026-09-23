@@ -5,6 +5,93 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 13 — a crew screen you can actually run a company from
+
+Three device notes: *"I should be able to determine how much people are paid"*, *"drop downs are
+needed to reduce the amount of scrolling"*, and *"if you want to hire 25 employees at once you
+can, if you wanna fire all of them you can... but you can also individually click on each
+employee's profile."*
+
+### 1. The wage control was two buttons
+
+```js
+onRaiseWage  -> wagePerDay += round(wagePerDay * 0.1); loyalty += 8;  mood += 10
+onLowerWage  -> wagePerDay -= round(wagePerDay * 0.1); loyalty -= 15; mood -= 12
+```
+
+Nudge up, nudge down, and that was the whole system.
+
+The deeper defect was not the missing number field — it was that **the consequence had no
+memory**. A wage cut cost 15 loyalty on the day it happened and then nothing, ever again. So the
+optimal play was to cut everyone's pay, eat the single hit, and bank the savings for the rest of
+the game. Nobody ever left over it, because nothing was still tracking it tomorrow.
+
+`src/systems/crewPayroll.js` adds the half that was missing:
+
+- **A market rate per trade**, moved by skill and tickets, so a wage can finally be read as
+  generous or insulting rather than just large or small. Licensed trades pay more than general
+  labour; structural pays more than finishing.
+- **Sustained consequences.** `underpaidDays` accrues day after day and does not clear because
+  the player looked away. Badly-underpaid crew visibly bleed morale first.
+- **A real exit.** People underpaid past a five-day grace period start to leave. The grace
+  period is deliberate: a brief squeeze during a cash crisis has to be survivable, because that
+  is the decision the player is supposed to get to make.
+
+The screen now takes an exact number, previews what it will do to loyalty and mood before you
+commit, and clamps to a floor and ceiling. The ±10% nudges stay for the fast path.
+
+### 2. Twenty-five at once, or all of them
+
+FleetFlow has `bulkHireApplicants(count)` and `fireAllDrivers()`. Construction Flow had neither —
+every hire and every dismissal was one tap at a time down a list with no end.
+
+Bulk hire plans against the crew cap **and** the cash and reports which one stopped it
+(*"only 4 of 25 — crew cap"*). Mass dismissal is select-all plus a confirmation that states the
+severance and the daily saving, because firing the whole crew should not be possible on a
+mis-tap. Severance is a day's pay each, which is what stops "fire everyone" being free.
+
+Dismissed crew are removed from the sites they were assigned to — otherwise the site keeps a
+ghost in `assignedCrewIds` and its progress maths counts a person who no longer exists.
+
+### 3. The scrolling
+
+Every worker card rendered four stat bars, certificate badges and six buttons. At ten crew that
+is a screen you scroll past rather than read; at twenty-five — which bulk hiring now makes
+reachable in one tap — it is unusable.
+
+Cards are collapsed by default. The collapsed line answers the two questions an owner actually
+has: what is this person costing me against the market, and are they about to walk. One tap
+opens the full profile.
+
+### Two defects caught by this project's own guards
+
+**`underpaidDays` could be NaN.** `accrueUnderpayment` only touched the field when it was already
+above zero, so a well-paid worker on an upgraded build-7 save kept `undefined` forever and
+anything doing arithmetic on it got NaN. Now normalised on first accrual.
+
+**My own haptics rule caught me.** `handleFireMany` opened with `fireHaptic("warning")` — before
+its guards had run, so a dismissal of nobody buzzed exactly like a dismissal of twelve. The
+Sprint 9 source-scanning test failed the build. The buzz moved to the confirmed path.
+
+Also fixed a process error: this sprint was branched off a **stale `origin/main`** and did not
+contain Sprint 12 at all — the same mistake Sprint 8 made. Caught when a code anchor that should
+have existed did not, and rebased before any work was lost.
+
+### Tests
+
+**975 passing across 45 suites**, up from 902 across 43. New: `crewPayroll.test.js` (46),
+`crewPayrollIntegration.test.js` (27).
+
+The load-bearing guard is aimed at this project's most repeated defect — something written,
+unit-tested and never connected. It is not enough that `handleSetWage` exists: the test asserts
+it is **passed as a prop**, that `CrewScreen` **accepts it in its signature**, and that the
+component **calls it**. All three, by name.
+
+Also proved: a company paying market rates never puts anyone at risk over pay, a company paying
+the floor eventually loses people, and a fresh save does not start with a crew already counting
+down to quitting.
+
+
 ## Sprint 12 — the right machine, the right ticket, and a site worth watching
 
 Four device notes that turn out to be one mechanic.
