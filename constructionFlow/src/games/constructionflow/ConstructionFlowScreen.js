@@ -81,6 +81,20 @@ import {
 } from "../../systems/taxOffice.js";
 import { fireHaptic } from "../../utils/constructionHaptics.js";
 import {
+  MINS_PER_TICK,
+  SPEEDS,
+  DEFAULT_SPEED_ID,
+  speedById,
+  multiplierFor,
+  isPaused,
+  minutesPerTick,
+  tickIntervalMs,
+  offlineFromElapsed,
+  chancePerTick,
+  describePace,
+  MAX_OFFLINE_TICKS,
+} from "../../systems/gameClock.js";
+import {
   EVENT_CATEGORIES,
   selectOwnerEvent,
   recordEventFired,
@@ -3635,7 +3649,6 @@ export function freshState() {
     homeCompetition: "Low",
     speedUpUses: 0,
     jobHistory: [],
-    speedMode: false,
     pendingRepeatClients: [],
     currentSeason: "Spring",
     seasonEmoji: "🌱",
@@ -3798,7 +3811,10 @@ export function migrateState(saved) {
   if (g.homeStateName  === undefined) g.homeStateName  = "";
   if (g.homeCompetition === undefined) g.homeCompetition = "Low";
   if (g.speedUpUses   === undefined) g.speedUpUses   = 0;
-  if (g.speedMode     === undefined) g.speedMode     = false;
+  // Sprint 11: speedMode is gone. It was a saved boolean for a control that is now a
+  // session preference (pause / 1x / 2x / 4x), and a stale field is copied by every
+  // clone() on every tick for the life of the save.
+  delete g.speedMode;
   if (!g.jobHistory)                 g.jobHistory    = [];
   if (!g.pendingRepeatClients)       g.pendingRepeatClients = [];
   // R16 banking fields
@@ -3961,7 +3977,8 @@ function repairCrewAssignments(g) {
 
 export function gameTick(prev) {
   const g = clone(prev);
-  const MINS_PER_TICK = 30;
+  // MINS_PER_TICK now lives in systems/gameClock.js, alongside the tick interval and the
+  // offline conversion, because those three used to agree only by coincidence.
   // `?? ` not `||` — gameMinutes legitimately hits exactly 0 once a day right after the
   // midnight wrap below, and `0 || 480` would treat that valid 0 as "missing" and jump the
   // clock forward by 8 in-game hours on the very next tick. That compressed every day from
@@ -5215,7 +5232,12 @@ export function gameTick(prev) {
     }
 
     // ── Decision events ────────────────────────────────────────────────────────
-    if (!g.pendingDecision && ((g.day % 15 === 0 && Math.random() < 0.40) || (g.day % 7 === 0 && Math.random() < 0.12))) {
+    //
+    // `newDay &&` is load-bearing. Without it this rolled on EVERY tick of a qualifying day,
+    // so "40% on day 15" was really 1 - 0.6^48 ≈ 1 — a certainty wearing a probability's
+    // clothes, and it would have become 1 - 0.6^144 after the pace change. Rolled once, on the
+    // day boundary, the number means what it says.
+    if (newDay && !g.pendingDecision && ((g.day % 15 === 0 && Math.random() < 0.40) || (g.day % 7 === 0 && Math.random() < 0.12))) {
       // Was `pick(DECISION_EVENTS)` — a uniform draw over the whole catalog every time, so the
       // same scenario could land twice running, the Angel Investor offered $120,000 to a
       // company sitting on five million, and a once-in-a-company windfall drew exactly as
@@ -5234,8 +5256,12 @@ export function gameTick(prev) {
 
     // ── Employee events (pop-up decisions from active crew) ────────────────────
     if (!g.pendingDecision && (g.activeSites||[]).some(s => (s.assignedCrewIds||[]).length > 0)) {
-      // ~8% chance per game day (every 48 ticks) if crew are on site
-      if (Math.random() < 0.0017) {
+      // 8% chance per game DAY if crew are on site. This used to read
+      // `Math.random() < 0.0017`, with a comment explaining that 0.0017 was 8% a day "every 48
+      // ticks" — true only while a tick moved 30 game minutes. Sprint 11 cut that to 10, which
+      // would have made it 21.7% a day and interrupted the player three times as often, with
+      // the comment still claiming 8%.
+      if (Math.random() < chancePerTick(0.08)) {
         const siteWithCrew = pick((g.activeSites||[]).filter(s => (s.assignedCrewIds||[]).length > 0));
         const workerId = siteWithCrew ? pick(siteWithCrew.assignedCrewIds) : null;
         const worker = workerId ? (g.crew||[]).find(c => c.id === workerId) : null;
@@ -5461,24 +5487,20 @@ function getLegacyScore(g) {
 
 // ─── Offline Progression ─────────────────────────────────────────────────────
 // 1 real second = 10 game minutes (so 1 real minute = 10 game hours, 1 real hour = ~2.5 game days)
-const REAL_SECONDS_PER_GAME_MINUTE = 0.1;
-const MAX_OFFLINE_REAL_SECONDS = 7 * 24 * 3600; // 7 days cap
-const OFFLINE_SUMMARY_THRESHOLD_GAME_MINUTES = 5; // show summary if > 5 game-min away
+// The offline conversion constants that used to live here are now in systems/gameClock.js,
+// derived from the same MINS_PER_TICK and TICK_MS the live tick uses.
 
 export function computeOfflineProgress(savedGame, nowTimestamp) {
   const lastTs = savedGame.lastRealTimestamp;
   if (!lastTs || !nowTimestamp) return null;
-  const elapsedRealSeconds = Math.min(MAX_OFFLINE_REAL_SECONDS, Math.max(0, (nowTimestamp - lastTs) / 1000));
-  if (elapsedRealSeconds < 1) return null;
-  const elapsedGameMinutes = Math.floor(elapsedRealSeconds / REAL_SECONDS_PER_GAME_MINUTE);
-  if (elapsedGameMinutes < OFFLINE_SUMMARY_THRESHOLD_GAME_MINUTES) return null;
-  const ticksToRun = Math.floor(elapsedGameMinutes / 30); // 30 game-min per tick
-  if (ticksToRun < 1) return null;
-  return { elapsedRealSeconds, elapsedGameMinutes, ticksToRun };
+  // Every rate here is derived in systems/gameClock.js. This function used to carry its own
+  // copy of the conversion AND a hard-coded `/ 30`, so changing the live clock would have
+  // silently paid out the wrong offline progress — a defect that never throws and never logs.
+  return offlineFromElapsed((nowTimestamp - lastTs) / 1000);
 }
 
 export function applyOfflineProgress(savedGame, ticksToRun) {
-  const MAX_TICKS = 480; // cap at 10 game days (48 ticks/day) for performance
+  const MAX_TICKS = MAX_OFFLINE_TICKS; // 10 game days, expressed in the CURRENT tick rate
   const clampedTicks = Math.min(ticksToRun, MAX_TICKS);
   let g = clone(savedGame);
 
@@ -5575,7 +5597,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const offlineEntrance = useEntranceAnimation(Boolean(game?.pendingOfflineSummary) && !reducedMotion);
 
   const tickRef = useRef(null);
-  const [speedMode, setSpeedMode] = useState(false);
+  // Was a boolean that doubled the tick RATE while leaving MINS_PER_TICK alone — so "2x" moved
+  // the same 30 game-minutes twice as often, and its own comment ("1.5s real = 15 min game")
+  // described something the code did not do.
+  const [speedId, setSpeedId] = useState(DEFAULT_SPEED_ID);
   // Sprint 8: whether the Site Office inbox is showing everything beneath the lead item.
   const [inboxOpen, setInboxOpen] = useState(false);
   const appStateRef = useRef(AppState.currentState);
@@ -5692,12 +5717,22 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // ── Game tick ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!loaded) return;
-    const tickMs = speedMode ? 1500 : 3000;
     tickRef.current = setInterval(() => {
+      // Speed runs the tick MORE TIMES rather than moving more minutes per tick.
+      //
+      // That distinction is the whole reason this is safe. Every per-tick rate in the
+      // simulation — site progress, fuel burn, stamina drain, paused-day countdown — is scaled
+      // by MINS_PER_TICK. Multiplying that constant would have meant threading a per-call
+      // value through every one of them, and missing one would silently change the economy at
+      // 2x but not at 1x: a bug that only exists at a setting, which is close to untestable.
+      // Running the same tick twice cannot desync anything, because it IS the same tick.
+      const steps = multiplierFor(speedId);
+      if (steps <= 0) return; // paused: stop TIME, not the timer
       setGame((prev) => {
         if (!prev) return prev;
         try {
-          let next = gameTick(prev);
+          let next = prev;
+          for (let i = 0; i < steps; i++) next = gameTick(next);
           if (next.cash < -50000) next.cash = -50000;
           next.lastRealTimestamp = Date.now();
           return next;
@@ -5706,9 +5741,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           return prev;
         }
       });
-    }, tickMs); // speedMode: 1.5s real = 15 min game; normal: 3s = 30 min game
+    }, tickIntervalMs());
     return () => clearInterval(tickRef.current);
-  }, [loaded, speedMode]);
+  }, [loaded, speedId]);
 
   // ── AppState (background / foreground) ────────────────────────────────────
   // Registered once (deps: [saveGame] only). gameRef.current always holds the
@@ -7198,7 +7233,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
             <View style={{ alignItems: "flex-end" }}>
               <Text style={[TYPE.eyebrow, { color: T.sub, marginBottom: 2 }]}>
-                {`Day ${game.day} · ${formatClock(game.gameMinutes)}`}
+                {`Day ${game.day} · ${formatClock(game.gameMinutes)}${isPaused(speedId) ? " · PAUSED" : ""}`}
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 {game.seasonEmoji ? (
@@ -7207,17 +7242,20 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <TouchableOpacity
                   style={{
                     paddingHorizontal: SPACING.sm + 2, paddingVertical: 5, borderRadius: RADIUS.pill,
-                    backgroundColor: speedMode ? alpha(T.caution, 0.2) : T.panel2,
-                    borderWidth: 1, borderColor: speedMode ? T.caution : T.border,
+                    backgroundColor: speedId === DEFAULT_SPEED_ID ? T.panel2 : alpha(T.caution, 0.2),
+                    borderWidth: 1, borderColor: speedId === DEFAULT_SPEED_ID ? T.border : T.caution,
                   }}
-                  onPress={() => setSpeedMode((v) => !v)}
+                  onPress={() => {
+                    fireHaptic("light");
+                    const i = SPEEDS.findIndex((sp) => sp.id === speedId);
+                    setSpeedId(SPEEDS[(i + 1) % SPEEDS.length].id);
+                  }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
-                  accessibilityLabel={speedMode ? "Switch to normal speed" : "Switch to double speed"}
-                  accessibilityState={{ selected: speedMode }}
+                  accessibilityLabel={`Game speed: ${speedById(speedId).description}. Tap to change.`}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: speedMode ? T.caution : T.sub }}>
-                    {speedMode ? "2×" : "1×"}
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: speedId === DEFAULT_SPEED_ID ? T.sub : T.caution }}>
+                    {speedById(speedId).label}
                   </Text>
                 </TouchableOpacity>
               </View>

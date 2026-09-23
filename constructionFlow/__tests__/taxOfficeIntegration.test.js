@@ -13,6 +13,11 @@ import { canTakeNewWork, assessWeeklyTax, applyTaxPayment, TAX_RATE,
   issueWeeklyTaxBill,
 } from "../src/systems/taxOffice.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -56,7 +61,7 @@ describe("the freeze is enforced, not just displayed", () => {
     };
     let frozen = build();
     frozen.businessFrozen = true; frozen.taxDue = 80000; frozen.taxOverdueDays = 30;
-    for (let i = 0; i < 48 * 30 && (frozen.activeSites || []).length > 0; i++) frozen = gameTick(frozen);
+    for (let i = 0; i < TICKS_PER_DAY * 30 && (frozen.activeSites || []).length > 0; i++) frozen = gameTick(frozen);
     // The job it already had still finished and still paid.
     expect(frozen.completedJobs).toBeGreaterThan(0);
   });

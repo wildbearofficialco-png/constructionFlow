@@ -5,6 +5,102 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 11 — the clock was running 600x fast
+
+Reported from a device: *"I like how long deliveries take in FleetFlow... I feel like taxes are
+due every five seconds and I'm constantly running out of money."*
+
+Measured, not guessed:
+
+| | tick | game minutes per tick | a game day is |
+|---|---|---|---|
+| FleetFlow | 1000 ms | **1 per 60 ticks** | **a real day** |
+| Construction Flow | 3000 ms | **30** | **144 real seconds** |
+
+Construction Flow was running its clock **600x faster than the game it is being measured
+against**. A full game week — payroll seven times, equipment wear seven times, and the tax bill
+— landed every **17 real minutes**, or every 8 with the 2x toggle on. The report was not an
+exaggeration, and "constantly running out of money" is exactly what it feels like when
+obligations arrive faster than you can act between them.
+
+### What was NOT done, deliberately
+
+FleetFlow's clock was not copied. The two games measure different things: FleetFlow's unit of
+work is a **delivery**, timed in real seconds (`route.elapsedSec`); Construction Flow's is a
+**project**, timed in game days — 45 to 300 of them for a mega contract. At FleetFlow's rate a
+single mega contract would take 300 real days. Copying the clock would not make this feel like
+FleetFlow; it would make it unplayable.
+
+### What was done
+
+A game day goes from **2.4 minutes to 7.2** (`MINS_PER_TICK` 30 → 10), and the hidden 2x
+boolean becomes a real control: **❚❚ / 1× / 2× / 4×**. 4× is 108s/day — faster than the game
+ever ran before — so nothing is taken from a player who liked the old pace. The pace is now
+theirs to pick, which also means it can be tuned without another build.
+
+Speed runs the tick **more times** rather than moving more minutes per tick. That distinction is
+why this is safe: every per-tick rate in the simulation — site progress, fuel burn, stamina
+drain, the paused-day countdown — is scaled by `MINS_PER_TICK`. Multiplying that constant would
+have meant threading a per-call value through every one of them, and missing one would change
+the economy at 2× but not at 1× — a bug that only exists at a setting.
+
+### The latent bug this also closes
+
+The time scale lived in four places that agreed only by coincidence:
+
+```js
+MINS_PER_TICK = 30                    // live, inside gameTick
+tickMs = speedMode ? 1500 : 3000      // live, inside a useEffect
+REAL_SECONDS_PER_GAME_MINUTE = 0.1    // offline
+Math.floor(elapsedGameMinutes / 30)   // offline, a hard-coded literal
+```
+
+Change any one and offline catch-up silently pays out the wrong progress — a defect that never
+throws and never logs. They now derive from one another in `src/systems/gameClock.js`, and the
+tests assert they cannot drift apart. The old `MAX_TICKS = 480` ("10 game days") was the same
+kind of literal; it is now derived, so it stayed ten days when a day became 144 ticks.
+
+Offline time is always converted at 1×, whatever speed is selected. Leaving the app on 4×
+overnight paying four times for the same night would be an exploit, not a setting.
+
+### The silent breakage slowing the clock WOULD have caused
+
+Tripling the ticks in a day tripled every `Math.random() < p` sitting in the per-tick path. The
+employee call-off gate carried its own documentation of the bug:
+
+```js
+// ~8% chance per game day (every 48 ticks)
+if (Math.random() < 0.0017) {
+```
+
+0.0017 per tick is 8% a day at 48 ticks. At 144 it is **21.7%**, with the comment still saying
+8%. `chancePerTick(dailyChance)` now converts a per-DAY rate — the number a designer actually
+reasons about — into the per-tick probability that produces it, so the intent survives any
+future pace change.
+
+The decision-event gate had a related defect that predates this sprint: it rolled on **every
+tick** of a qualifying day, so "40% on day 15" was really `1 - 0.6^48 ≈ 1` — a certainty wearing
+a probability's clothes. It now rolls once, on the day boundary.
+
+### Tests
+
+**828 passing across 40 suites**, up from 781 across 38. New: `gameClock.test.js` (27),
+`gameClockIntegration.test.js` (20).
+
+The load-bearing ones prove the pace changed and **nothing else did**: a passive company's
+spend per game day is unchanged, a fully-crewed job still completes in days rather than months,
+and a day offline still advances exactly as far as a day online.
+
+Seven existing suites hard-coded `48` as ticks-per-day. That literal was only ever correct while
+a tick moved 30 game minutes, and it had quietly become "a third of a day" — which is why the
+project-economics test suddenly attributed zero cost (its day-long loop no longer reached the
+daily sweep). All now derive from `ticksPerDay()`.
+
+**Known, not introduced here:** `rivalMarketIntegration`'s "AN ENTRANT ACTUALLY BIDS" test flakes
+at roughly 1 run in 20. It does not call `gameTick` and fails at the same rate on `main`; it is
+RNG in the entrant's bidding path and is logged for a later sprint rather than papered over.
+
+
 ## Sprint 10 — the chronicle knocks on the door
 
 Rides on build **7** with Sprint 9.

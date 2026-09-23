@@ -88,11 +88,14 @@ describe("rule 1: never from the tick", () => {
     const stray = [];
     lines.forEach((line, i) => {
       if (!/fireHaptic\(/.test(line)) return;
+      // An `onPress` closure is a live button press by definition — the speed control in the
+      // header is one — so it counts alongside the named handlers.
       const above = lines.slice(Math.max(0, i - 120), i + 1).join("\n");
       const lastHandler = Math.max(
         above.lastIndexOf("const handle"),
         above.lastIndexOf("function handle"),
-        above.lastIndexOf("function alertInsufficientFunds")
+        above.lastIndexOf("function alertInsufficientFunds"),
+        above.lastIndexOf("onPress={")
       );
       if (lastHandler === -1) stray.push(line.trim());
     });

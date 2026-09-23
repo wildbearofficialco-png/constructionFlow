@@ -5,6 +5,11 @@ import {
   getFinancialSummary,
 } from "../src/systems/financialLedger";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 // The reconciler is a safety net, not a filing system: anything it has to catch shows up in
 // Finance as "Uncategorized income" / "Uncategorized operating expense" / "Financing or
 // balance transfer". With the day-to-day flows instrumented, those lines should be the
@@ -47,7 +52,7 @@ describe("Construction Flow ledger labels", () => {
   test("a drawn credit line does not manufacture phantom ledger pairs", () => {
     let g = freshState();
     g.creditLine = { limit: 75000, drawn: 40000, apr: 14, opened: 1 };
-    for (let i = 0; i < 48 * 14; i++) g = gameTick(g);
+    for (let i = 0; i < TICKS_PER_DAY * 14; i++) g = gameTick(g);
     const phantomIn = g.ledger.filter((e) => e.description === "Financing or balance transfer in");
     // Interest capitalised into the drawn balance used to read as unexplained cash coming in
     // on every single day a balance was drawn.

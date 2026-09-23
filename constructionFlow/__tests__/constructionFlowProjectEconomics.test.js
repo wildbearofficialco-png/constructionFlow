@@ -19,6 +19,9 @@ import {
 
 import { freshState, migrateState, gameTick, clone } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 describe("project cost ledger", () => {
   test("starts empty and totals only real cost categories", () => {
     const ledger = createProjectCostLedger();
@@ -178,8 +181,10 @@ describe("cost attribution does not move cash", () => {
     // per-site attribution. If attribution ever deducted cash, expenses would exceed this.
     const expensesBefore = g.expenses;
 
-    // Run a full game day (48 half-hour ticks).
-    for (let i = 0; i < 48; i++) g = gameTick(g);
+    // Run a full game day. The literal 48 here meant "ticks in a day" only while a tick moved
+    // 30 game minutes; Sprint 11 cut that to 10, so it had quietly become a third of a day —
+    // short enough that the daily cost sweep never ran and nothing was attributed at all.
+    for (let i = 0; i < TICKS_PER_DAY; i++) g = gameTick(g);
 
     const site = g.activeSites.find((s) => s.id === "test-site");
     expect(site).toBeDefined();

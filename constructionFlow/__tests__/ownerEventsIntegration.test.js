@@ -26,6 +26,11 @@ import {
   DEFAULT_COOLDOWN_DAYS,
 } from "../src/systems/ownerEvents.js";
 
+import { ticksPerDay } from "../src/systems/gameClock.js";
+// Was a hard-coded 48, which meant "ticks per game day" only while a tick moved 30 game
+// minutes. Sprint 11 cut that to 10, so the literal silently became "a third of a day".
+const TICKS_PER_DAY = ticksPerDay("1x");
+
 const SCREEN_PATH = path.join(__dirname, "..", "src", "games", "constructionflow", "ConstructionFlowScreen.js");
 const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
@@ -258,7 +263,7 @@ describe("wired into the tick", () => {
   test("a long run fires events and never repeats one inside its cooldown", () => {
     let g = running(established());
     const fired = [];
-    for (let i = 0; i < 48 * 300; i++) {
+    for (let i = 0; i < TICKS_PER_DAY * 300; i++) {
       const before = g.pendingDecision?.id || null;
       g = gameTick(g);
       const after = g.pendingDecision?.id || null;
@@ -285,7 +290,7 @@ describe("wired into the tick", () => {
   test("a tick with nothing eligible simply raises no event rather than crashing", () => {
     // selectOwnerEvent returns null, and the caller must cope with that.
     const g = running({ crew: [], equipment: [], activeSites: [], cash: 0, companyMemory: [] });
-    expect(() => { let s = g; for (let i = 0; i < 48 * 40; i++) s = gameTick(s); }).not.toThrow();
+    expect(() => { let s = g; for (let i = 0; i < TICKS_PER_DAY * 40; i++) s = gameTick(s); }).not.toThrow();
   });
 });
 
