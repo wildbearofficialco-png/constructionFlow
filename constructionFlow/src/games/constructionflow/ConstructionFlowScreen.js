@@ -7,6 +7,8 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import CollapsibleSection from "../../components/CollapsibleSection.js";
+import SiteStatusBanner from "../../components/SiteStatusBanner.js";
+import { pctPerDay, daysRemaining } from "../../utils/sitePace.js";
 import {
   tickEmployeePersonalities,
   applyDailyPersonalityEvents,
@@ -23,7 +25,8 @@ import { tickContractRFPs } from "../../systems/contractBidding.js";
 import { initTerritories, tickTerritories } from "../../systems/territorySystem.js";
 import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
 import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
-import { recordTransaction } from "../../systems/financialLedger.js";
+import { recordTransaction, beginCashScope, closeCashScope } from "../../systems/financialLedger.js";
+import { pauseSite, returnRecoveredToSites } from "../../systems/siteDiagnostics.js";
 import {
   getConstructionRegionalSnapshot,
   applyRegionalContractValue,
@@ -90,6 +93,7 @@ import {
   plantPlanFor,
   plantProgressFactor,
   satisfies as plantSatisfies,
+  isUsable,
   STALL_FACTOR,
 } from "../../systems/sitePlant.js";
 import {
@@ -1188,7 +1192,15 @@ function checkEmpireGoals(g) {
 
 // ─── Chaos Events ───────────────────────────────────────────────────────────────
 
-const CHAOS_EVENTS = [
+// Which Finance line a site event's cash lands on. Anything unlisted is "Miscellaneous" — still
+// named after the event, never silent.
+const CHAOS_LEDGER_CATEGORY = {
+  safety: "fines", inspection: "fines", injury: "payroll", breakdown: "maintenance",
+  fuel_cost: "fuel", client_dispute: "contracts", equipment_recall: "maintenance",
+};
+
+// Exported so the recovery tests can inject a specific site event.
+export const CHAOS_EVENTS = [
   { id: "noshow",     label: "Worker No-Show",        prob: 0.04, tone: "orange", icon: "😤",
     apply: (site, game) => {
       const impact = rand(8, 18);
@@ -1250,9 +1262,8 @@ const CHAOS_EVENTS = [
   },
   { id: "permit",     label: "Permit Delay",          prob: 0.02, tone: "yellow", icon: "📋",
     apply: (site, game) => {
-      site.status = "Paused";
       const days = rand(2, 5);
-      site.pausedDays = (site.pausedDays || 0) + days;
+      pauseSite(site, days, "permit");
       addLog(game, `📋 ${site.label}: Permit issue — site paused for up to ${days} days.`);
       return { text: `Permit issue — site paused ${days} days.`, type: "permit" };
     }
@@ -1288,6 +1299,8 @@ const CHAOS_EVENTS = [
       injured.stamina = 10;
       injured.mood = Math.max(20, injured.mood - 20);
       site.assignedCrewIds = (site.assignedCrewIds || []).filter((id) => id !== injured.id);
+      // Off for a few days, not off the job: they return to this site once recovered.
+      injured.awaitingRestForSiteId = site.id;
       const baseVal = site.totalValue || 8000;
       const medCost = Math.max(400, Math.round(baseVal * rand(5, 12) / 100 / 100) * 100);
       game.cash -= medCost;
@@ -1308,8 +1321,8 @@ const CHAOS_EVENTS = [
         const baseVal = site.totalValue || 8000;
         const fine = Math.max(500, Math.round(baseVal * rand(8, 18) / 100 / 100) * 100);
         game.cash -= fine;
-        site.status = "Paused";
-        site.pausedDays = rand(2, 4);
+        site.pausedDays = 0;
+        pauseSite(site, rand(2, 4), "inspection", `${money(fine)} fine`);
         game.reputation = Math.max(0, game.reputation - 3);
         addLog(game, `❌ ${site.label}: Safety inspection FAILED — ${money(fine)} fine, work stopped.`);
         return { text: `Inspection failed. ${money(fine)} fine. Work paused.`, type: "inspect_fail" };
@@ -1360,6 +1373,8 @@ const CHAOS_EVENTS = [
       equip.status = "Maintenance";
       equip.condition = Math.max(10, equip.condition - 30);
       site.assignedEquipmentIds = (site.assignedEquipmentIds || []).filter(id => id !== equip.id);
+      // Once the player repairs it, it goes back to this site on its own.
+      equip.awaitingRepairForSiteId = site.id;
       addLog(game, `🔴 ${equip.name} subject to safety recall — pulled from ${site.label}.`);
       return { text: `${equip.name} recalled for safety. Pulled from site.`, type: "recall" };
     }
@@ -1788,7 +1803,7 @@ export const DECISION_EVENTS = [
       { label: "Wait It Out", sub: "Pause and pay compliance fee", apply: (g) => {
         const pd = g.pendingDecision;
         const site = (g.activeSites||[]).find(s => s.id === pd.siteId);
-        if (site) { site.status = "Paused"; site.pausedDays = (site.pausedDays||0) + (pd.delayDays||5); }
+        if (site) pauseSite(site, pd.delayDays||5, "regulatory");
         g.cash -= (pd.fine||1000); g.expenses = (g.expenses||0) + (pd.fine||1000);
         addLog(g, `📜 Regulatory hold accepted — ${money(pd.fine||1000)} paid, site paused ${pd.delayDays||5} days.`);
         addImportantNotice(g, `Site paused ${pd.delayDays||5} days for regulatory hold. ${money(pd.fine||1000)} paid.`, "orange");
@@ -1799,12 +1814,12 @@ export const DECISION_EVENTS = [
         const totalCost = (pd.fine||1000) + (pd.expediteCost||500);
         const reducedDays = Math.ceil((pd.delayDays||5) / 2);
         if (g.cash >= totalCost) {
-          if (site) { site.status = "Paused"; site.pausedDays = (site.pausedDays||0) + reducedDays; }
+          if (site) pauseSite(site, reducedDays, "regulatory");
           g.cash -= totalCost; g.expenses = (g.expenses||0) + totalCost;
           addLog(g, `📜 Expedited regulatory process — ${money(totalCost)} paid, only ${reducedDays} day pause.`);
           addImportantNotice(g, `Expedited review: ${money(totalCost)} paid, hold cut to ${reducedDays} days.`, "orange");
         } else {
-          if (site) { site.status = "Paused"; site.pausedDays = (site.pausedDays||0) + (pd.delayDays||5); }
+          if (site) pauseSite(site, pd.delayDays||5, "regulatory");
           g.cash -= (pd.fine||1000); g.expenses = (g.expenses||0) + (pd.fine||1000);
           addLog(g, `📜 Not enough cash to expedite — paid ${money(pd.fine||1000)}, full delay applied.`);
           addImportantNotice(g, `Not enough cash to expedite — full delay applied.`, "red");
@@ -1820,12 +1835,12 @@ export const DECISION_EVENTS = [
             addLog(g, `📜 Premium resolution succeeded — regulatory hold cleared! Cost: ${money(totalCost)}.`);
             addImportantNotice(g, `Premium push worked — hold cleared! ${money(totalCost)} paid.`, "green");
           } else {
-            if (site) { site.status = "Paused"; site.pausedDays = (site.pausedDays||0) + 1; }
+            if (site) pauseSite(site, 1, "regulatory");
             addLog(g, `📜 Premium resolution partially worked — ${money(totalCost)} paid, 1-day minimum hold.`);
             addImportantNotice(g, `Premium didn't fully clear — 1-day hold remains. ${money(totalCost)} paid.`, "orange");
           }
         } else {
-          if (site) { site.status = "Paused"; site.pausedDays = (site.pausedDays||0) + (pd.delayDays||5); }
+          if (site) pauseSite(site, pd.delayDays||5, "regulatory");
           g.cash -= (pd.fine||1000); g.expenses = (g.expenses||0) + (pd.fine||1000);
           addLog(g, `📜 Insufficient funds for premium — ${money(pd.fine||1000)} paid, full delay applied.`);
           addImportantNotice(g, `Insufficient funds for premium — full delay applied.`, "red");
@@ -2528,18 +2543,22 @@ function trackHire(g)        { if (!g.legacyStats) g.legacyStats = initLegacySta
 function trackEquipBuy(g)    { if (!g.legacyStats) g.legacyStats = initLegacyStats(); g.legacyStats.totalEquipmentBought++; }
 function trackContractWon(g) { if (!g.legacyStats) g.legacyStats = initLegacyStats(); g.legacyStats.totalContractsWon++; }
 
-export function createContract(state, forcedDefId) {
+// Which contract definitions can appear on this company's Bids board. Exported so the starter-
+// contract audit checks exactly the set a new player is shown.
+export function isContractEligible(d, state) {
   const bestTier = getBestEquipTier(state);
   const repRequired = { stadium: 80, wildbear_city: 95 };
-  const eligible = CONTRACT_DEFS.filter((d) => {
-    if (d.minTier >= 3 && (state.reputation || 0) < 25) return false;
-    if (d.minTier >= 4 && (state.reputation || 0) < 60) return false;
-    if (state.creditScore < d.creditReq) return false;
-    if (d.minTier > Math.max(1, bestTier)) return false;
-    if (repRequired[d.id] && (state.reputation || 0) < repRequired[d.id]) return false;
-    if (d.category === "Government" && d.complianceReq && (state.complianceScore ?? 60) < d.complianceReq) return false;
-    return true;
-  });
+  if (d.minTier >= 3 && (state.reputation || 0) < 25) return false;
+  if (d.minTier >= 4 && (state.reputation || 0) < 60) return false;
+  if (state.creditScore < d.creditReq) return false;
+  if (d.minTier > Math.max(1, bestTier)) return false;
+  if (repRequired[d.id] && (state.reputation || 0) < repRequired[d.id]) return false;
+  if (d.category === "Government" && d.complianceReq && (state.complianceScore ?? 60) < d.complianceReq) return false;
+  return true;
+}
+
+export function createContract(state, forcedDefId) {
+  const eligible = CONTRACT_DEFS.filter((d) => isContractEligible(d, state));
   const pool = eligible.length ? eligible : CONTRACT_DEFS.slice(0, 3);
   const forcedDef = forcedDefId ? CONTRACT_DEFS.find((d) => d.id === forcedDefId) : null;
   const def = forcedDef || pick(pool);
@@ -2731,6 +2750,275 @@ function getSiteMissingMaterials(site, contractDef, game) {
   }, []);
 }
 
+// Winning (or losing) a bid and putting a crew on the job. Lifted out of the Bids tap handler so
+// the playtest harness mobilises through the same code a player does: the old harness built its
+// own site object and so could never see a defect in the real start path. Mutates `g`; returns
+// a verdict the UI turns into an alert. `rng` is injectable so a seeded run is reproducible.
+export function mobilizeSite(g, contractId, crewIds, equipIds, rng = Math.random) {
+  const c = g.contracts.find((c) => c.id === contractId);
+  if (!c || c.status !== "Open") return { status: "unavailable" };
+
+  // Sprint 12: the right machine for the job. Equipment type used to be a BONUS with a
+  // floor of 1.0, so the wrong machine and NO machine were worth exactly the same and
+  // nothing ever said "you cannot do this without a crane".
+  // The contract's own minTier is the authority on how big a machine this job needs.
+  const _cDefStart = CONTRACT_DEFS.find((d) => d.id === c.defId);
+  const _plant = canStartWithPlant(c.phases || [], (g.equipment || []).filter((e) => equipIds.includes(e.id)), _cDefStart?.minTier);
+  if (!_plant.ok) return { status: "plant", missing: _plant.missing };
+
+  // The freeze is real now. It was set at 14 days overdue and read by NOTHING — every
+  // reference in this screen was status text, so "operations suspended" suspended nothing.
+  // Scoped to NEW work only: sites already running keep going and keep paying, so a frozen
+  // player can finish what they started and earn their way out instead of being stuck.
+  if (!canTakeNewWork(g)) return { status: "frozen", reason: blockedReason(g) };
+  const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
+  if (blockReason) return { status: "blocked", reason: blockReason, kind: getAssignBlockKind(c, crewIds, equipIds, g) };
+
+  // ── THE BID IS NOW AWARDED, NOT ASSUMED ────────────────────────────────
+  // Bid style used to move the payout and nothing else: Premium paid +28% at no cost,
+  // so it was free money and the "choice" was fake. It now moves the probability of
+  // being awarded the job. The player sees that probability on the card before
+  // committing, and `rollBidOutcome` rolls the same number the card showed, because
+  // both come from one `planBid` call.
+  const bidStyle = (g.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
+  // The office perk rides on the state handed to the roll, so the bid card and the award
+  // read one number. `withBidPerks` is used at every call site for exactly that reason.
+  const outcome = rollBidOutcome(c, bidStyle, withBidPerks(g), rng);
+  const effectiveValue = outcome.effectiveValue;
+
+  g.bidsPlaced = (g.bidsPlaced || 0) + 1;
+  if (outcome.won) g.bidsWon = (g.bidsWon || 0) + 1;
+  else g.bidsLost = (g.bidsLost || 0) + 1;
+
+  if (!outcome.won) {
+    // Losing costs the contract, not the crew. Nothing is consumed: no materials drawn,
+    // no crew or machines marked active, no cash moved. The board is the cost.
+    const winner = pickWinningRival(c, g, rng);
+    c.status = "Taken";
+    if (winner && winner.id) {
+      const rival = (g.rivals || []).find((r) => r.id === winner.id);
+      if (rival) {
+        rival.activeJobs = (rival.activeJobs || 0) + 1;
+        rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
+      }
+    }
+    const winnerName = winner?.name || "another contractor";
+    addLog(g, `📄 Bid lost: "${c.label}" went to ${winnerName}.`);
+    addImportantNotice(g, `${winnerName} won "${c.label}". A lower bid would have had a better chance.`, "orange");
+    return { status: "lost", winnerName, label: c.label, outcome };
+  }
+
+  // Consume materials — track exactly what was fulfilled, never go negative.
+  // Stock drawn from inventory was paid for earlier, at the supplier. Valuing it at
+  // today's price is what lets the completion P&L show a real margin instead of
+  // pretending warehoused material was free.
+  const materialsFulfilled = {};
+  let materialsFromStockCost = 0;
+  for (const matId of Object.keys(c.materials || {})) {
+    const needed = c.materials[matId];
+    const available = Math.max(0, g.materials[matId] || 0);
+    const consumed = Math.min(needed, available);
+    g.materials[matId] = available - consumed;
+    materialsFulfilled[matId] = consumed;
+    materialsFromStockCost += consumed * getMaterialUnitPrice(g, matId);
+  }
+
+  // Mark crew and equipment as active
+  for (const id of crewIds) {
+    const w = g.crew.find((w) => w.id === id);
+    if (w) { w.status = "Active"; w.assignedSiteId = contractId; }
+  }
+  for (const id of equipIds) {
+    const e = g.equipment.find((e) => e.id === id);
+    if (e) { e.status = "Active"; e.assignedSiteId = contractId; }
+  }
+
+  trackContractWon(g);
+
+  c.status = "Active";
+  g.activeSites.push({
+    id: uid(), contractId: c.id, label: c.label, client: c.client,
+    totalValue: effectiveValue, phases: [...c.phases],
+    currentPhaseIdx: 0, phaseProgress: 0,
+    assignedCrewIds: [...crewIds],
+    assignedEquipmentIds: [...equipIds],
+    crewMin: c.crewMin, equipMin: c.equipMin,
+    startDay: g.day, durationDays: c.durationDays,
+    deadlineDay: c.deadline, penaltyPerDay: c.penaltyPerDay,
+    status: "Active", chaosHistory: [], pausedDays: 0,
+    cityId: c.cityId || "salem", siteMode: "normal",
+    materialsFulfilled,
+    depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
+    // Phase 2: orders in transit, and what the client has certified so far.
+    pendingDeliveries: [], progressPaid: 0, phasesClaimed: 0,
+    costs: createProjectCostLedger(),
+  });
+
+  // R14-2: 25% deposit received on mobilise
+  const _deposit = Math.round(effectiveValue * 0.25);
+  g.cash += _deposit;
+  g.revenue += _deposit;
+  g.weeklyStats.revenue += _deposit;
+  recordTransaction(g, "contracts", _deposit, `${c.label}: 25% mobilisation deposit`);
+  const _newSite = g.activeSites[g.activeSites.length - 1];
+  _newSite.depositPaid = _deposit;
+  // Attribution only — this cash left the balance when the material was bought.
+  accrueProjectCost(_newSite, "materials", materialsFromStockCost);
+
+  const bidNote = bidStyle !== DEFAULT_BID_STYLE ? ` [${outcome.label.toLowerCase()} bid]` : "";
+  addLog(g, `🏗️ Bid won: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
+  return { status: "won", site: _newSite, outcome };
+}
+
+// Order exactly what a site is short of, at the quoted price, for normal delivery. Lifted out of
+// the Sites tap handler for the same reason as mobilizeSite(). Mutates `g`.
+export function orderSiteMaterials(g, siteId) {
+  const site = g.activeSites.find(s => s.id === siteId);
+  if (!site) return { status: "none" };
+  const contract = g.contracts.find(c => c.id === site.contractId);
+  const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
+  const missing = getSiteMissingMaterials(site, def, g);
+  if (!missing.length) return { status: "none" };
+  // ── ORDERS NOW TAKE TIME TO ARRIVE ────────────────────────────────────
+  // Materials used to appear the instant they were paid for, which made the emergency
+  // option — 1.5x price for the same instant delivery — strictly worse than this one,
+  // and therefore never the right call. A normal order is placed with a supplier and
+  // lands a couple of days later; work stalls until it does. That is what the emergency
+  // premium now buys.
+  //
+  // Cash still leaves the account at the moment of ordering, and the cost is still
+  // attributed to this project at that moment, so nothing about the books changes.
+  const totalCost = missing.reduce((s, m) => s + m.costNormal, 0);
+  if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
+
+  let ordered = missing;
+  let spend = totalCost;
+  if (g.cash < totalCost) {
+    // Short of cash: order as much as the balance covers, material by material.
+    let budget = g.cash;
+    ordered = [];
+    spend = 0;
+    for (const m of missing) {
+      if (budget <= 0) break;
+      const canBuy = Math.min(m.missing, Math.floor(budget / m.pricePerUnit));
+      if (canBuy <= 0) continue;
+      const cost = canBuy * m.pricePerUnit;
+      ordered.push({ ...m, missing: canBuy, costNormal: cost, costEmergency: Math.round(cost * 1.5) });
+      budget -= cost;
+      spend += cost;
+    }
+    if (ordered.length === 0) return { status: "unaffordable", unitPrice: missing[0].pricePerUnit };
+  }
+
+  g.cash -= spend;
+  g.expenses += spend;
+  accrueProjectCost(site, "materials", spend);
+  recordTransaction(g, "materials", -spend, `${site.label}: material order`);
+
+  const deliveries = planDeliveries(ordered, g.day);
+  site.pendingDeliveries.push(...deliveries);
+  const arrivesIn = Math.max(0, (deliveries[0]?.arrivesDay ?? g.day) - g.day);
+  const summary = ordered.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
+  addLog(g, `🚚 Ordered ${summary} for ${money(spend)} — arriving day ${deliveries[0]?.arrivesDay ?? g.day}.`);
+  addImportantNotice(
+    g,
+    `Materials ordered for ${site.label}: ${money(spend)}, arriving in ${arrivesIn} day${arrivesIn === 1 ? "" : "s"}. Work stalls until then — pay the emergency premium for same-day if you cannot wait.`,
+    "neutral"
+  );
+  return { status: "ordered", spend, arrivesIn };
+}
+
+// Answer the pending decision card with option `i`. Shared by the modal and the playtest harness,
+// so a harness player's choices cost exactly what a real player's do.
+export function resolveDecision(g, i) {
+  const evtDef = DECISION_EVENTS.find(e => e.id === g.pendingDecision?.id) || EMPLOYEE_EVENTS.find(e => e.id === g.pendingDecision?.id);
+  const opt = evtDef?.options?.[i];
+  if (opt?.apply) {
+    // Two dozen option handlers move cash directly. Rather than trust each to remember the
+    // ledger, whatever they moved is named here after the card that caused it — so "Where did
+    // my $10,000 go?" reads "Rival in trouble: Poach them", not nothing at all.
+    const scope = beginCashScope(g);
+    const loansBefore = (g.loans || []).length;
+    opt.apply(g);
+    const tookLoan = (g.loans || []).length > loansBefore;
+    closeCashScope(g, scope, tookLoan ? "financing" : "misc", `${g.pendingDecision?.title || evtDef.title || "Decision"}: ${opt.label}`);
+  }
+  g.pendingDecision = null;
+}
+
+// Buy stock into the yard at the quoted price (flash deals included). Shared by the Bids and
+// materials screens and the playtest harness. Mutates `g`.
+export function buyYardMaterials(g, matId, qty) {
+  if (!qty || qty < 1) return { status: "none" };
+  const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
+  const basePrice = applyRegionalMaterialPrice(rawBasePrice, g);
+  // R15-8: Apply flash deal price if active for this material
+  const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
+  const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
+  const totalCost = price * qty;
+  if (g.cash < totalCost) return { status: "unaffordable", cost: totalCost };
+  g.cash -= totalCost;
+  g.expenses += totalCost;
+  g.materials[matId] = (g.materials[matId] || 0) + qty;
+  const mat = MATERIAL_DEFS.find((m) => m.id === matId);
+  recordTransaction(g, "materials", -totalCost, `Bought ${qty} ${mat?.unit || "units"} of ${mat?.label || matId}`);
+  addLog(g, `📦 Purchased ${qty} ${mat?.unit || "units"} of ${mat?.label || matId} for ${money(totalCost)}.`);
+  return { status: "bought", cost: totalCost };
+}
+
+// Pay down the tax bill by the suggested amount. Shared by Finance and the playtest harness.
+export function payTaxBill(g) {
+  if ((g.taxDue || 0) <= 0) return { status: "none" };
+  // Pay what you can. The old handler did `if (g.cash < g.taxDue) return`, so a bill
+  // larger than the player's cash could never be reduced — only grown — while the overdue
+  // counter climbed forever. That was a permanent, unrecoverable state.
+  const _want = suggestedPayment(g);
+  if (g.cash < _want) return { status: "unaffordable", want: _want };
+  const _res = applyTaxPayment(g, _want);
+  if (_res.paid <= 0) return { status: "none" };
+  recordTransaction(g, "taxes", -_res.paid, _res.cleared ? "Tax bill paid" : "Tax bill part payment");
+  addLog(g, _res.cleared
+    ? `✅ Tax bill of ${money(_res.paid)} paid in full.`
+    : `🧾 Part payment of ${money(_res.paid)} — ${money(_res.remaining)} still owed.`);
+  if (_res.unfrozen) {
+    addImportantNotice(g, "Operations resumed — the tax freeze has been lifted.", "green");
+  }
+  return { status: "paid", ...(_res) };
+}
+
+// Workshop repair from the Equipment tab. Shared with the playtest harness. Mutates `g`.
+export function repairEquipment(g, equipId, isEmergency) {
+  const _eq = (g.equipment || []).find(e => e.id === equipId);
+  if (!_eq) return { status: "none" };
+  const _baseCost = Math.round((_eq.price || 5000) * (isEmergency ? 0.4 : 0.2));
+  if (g.cash < _baseCost) { addLog(g, `Not enough cash to repair ${_eq.name}.`); return { status: "unaffordable", cost: _baseCost }; }
+  g.cash -= _baseCost;
+  g.expenses += _baseCost;
+  recordTransaction(g, "maintenance", -_baseCost, `${_eq.name}: ${isEmergency ? "emergency " : ""}repair`);
+  _eq.condition = isEmergency ? 100 : Math.min(100, (_eq.condition || 0) + 60);
+  _eq.status = "Idle";
+  if (g.pendingBreakdown?.equipId === equipId) g.pendingBreakdown = null;
+  addLog(g, `🔧 ${_eq.name} repaired — condition ${Math.round(_eq.condition)}%`);
+  return { status: "repaired", cost: _baseCost };
+}
+
+// The Crew tab's Rest button. Shared with the recovery tests. Mutates `g`.
+export function restWorker(g, workerId) {
+  const _w = (g.crew||[]).find(w => w.id === workerId);
+  if (!_w) return false;
+  // Remember the job, so resting is a pause rather than a resignation from the site. The site
+  // card tells players to "rest them in the Crew tab"; doing exactly that used to strand them.
+  const _from = (g.activeSites||[]).find(site => (site.assignedCrewIds||[]).includes(workerId));
+  if (_from) _w.awaitingRestForSiteId = _from.id;
+  (g.activeSites||[]).forEach(site => {
+    site.assignedCrewIds = (site.assignedCrewIds||[]).filter(id => id !== workerId);
+  });
+  _w.status = "Resting";
+  _w.restUntilStamina = 80;
+  addLog(g, `💤 ${_w.name} is resting — will return when stamina reaches 80%.`);
+  return true;
+}
+
 // Which Getting Started step the player is on, derived purely from game state — there is no
 // stored tutorial cursor, so the card can never get out of step with what the player has
 // actually done. Extracted from renderHome so the bottom nav can mark the same tab the card
@@ -2829,7 +3117,7 @@ export function getNextBestAction(s) {
 
   // Subcontractor suggestion: slow site, no subs active, can afford
   const _activeSubs = (s.subcontractors||[]).filter(sc => (sc.daysLeft||0) > 0 && sc.status === "Active");
-  const _slowSite = _activeSites.find(site => site._progressRate && site._progressRate * 48 < 8 && site.status === "Active");
+  const _slowSite = _activeSites.find(site => site._progressRate && pctPerDay(site._progressRate) < 8 && site.status === "Active");
   if (_activeSubs.length === 0 && _slowSite && (s.cash||0) > 3000) {
     return { title: "Speed Up With Subcontractors", body: `"${_slowSite.label}" is progressing slowly. Hire a temp crew in the Crew tab to boost site speed by up to 30%.`, tone: "blue", tab: "Crew" };
   }
@@ -2860,6 +3148,7 @@ export function checkMilestones(state) {
           addImportantNotice(state, `🏆 "${m.label}" milestone reached!`, "green");
         } else if (m.reward > 0) {
           state.cash += m.reward;
+          recordTransaction(state, "bonuses", m.reward, `Milestone: ${m.label}`);
           addLog(state, `🏆 Milestone: "${m.label}" — Bonus ${money(m.reward)}!`);
           addImportantNotice(state, `🏆 "${m.label}" — ${money(m.reward)} bonus!`, "green");
         } else {
@@ -2875,6 +3164,7 @@ export function checkMilestones(state) {
   if (_cl10.level >= 10 && !state._level10Celebrated) {
     state._level10Celebrated = true;
     state.cash += 25000; state.revenue += 25000;
+    recordTransaction(state, "bonuses", 25000, "Level 10 celebration bonus");
     addImportantNotice(state, "👑 Construction Dynasty achieved! +$25,000 celebration bonus.", "green");
     addLog(state, "👑 Reached Level 10: Construction Dynasty — the pinnacle of the industry!");
   }
@@ -3077,6 +3367,8 @@ export function startNewGeneration(g, perkId) {
     if (p === "iron_foundation")   fresh.cash += 15000;
     if (p === "reputation_legacy") fresh.reputation = Math.min(fresh.reputation + 8, 35);
   }
+  // The new generation's opening balance is where its books start, perk capital included.
+  fresh._ledgerSnapshot = { cash: fresh.cash, revenue: fresh.revenue, expenses: fresh.expenses, day: fresh.day };
   return fresh;
 }
 
@@ -3428,8 +3720,7 @@ function applyWeatherEvent(site, game, region) {
     const progressLoss = Math.round(site.phaseProgress * 0.40);
     const pauseDays = rand(2, 5);
     site.phaseProgress = Math.max(0, site.phaseProgress - progressLoss);
-    site.status = "Paused";
-    site.pausedDays = (site.pausedDays || 0) + pauseDays;
+    pauseSite(site, pauseDays, "weather", "snow");
     site.currentWeather = { icon: "snow", label: "Snow Delay", endsDay: (game.day || 1) + pauseDays };
     addLog(game, `❄️ ${site.label}: Snow halted work — lost ${progressLoss}% progress, paused ${pauseDays} day(s).`);
     return { text: `Snow halted work — lost ${progressLoss}% progress. Paused ${pauseDays} day(s).`, type: "weather_snow" };
@@ -3475,8 +3766,7 @@ function checkChainEvents(site, game, lastEventType) {
       if (Math.random() < 0.50) {
         const fine = rand(1500, 5000);
         game.cash -= fine;
-        site.status = "Paused";
-        site.pausedDays = (site.pausedDays || 0) + rand(1, 3);
+        pauseSite(site, rand(1, 3), "inspection", `follow-up, ${money(fine)} fine`);
         addLog(game, `🔍 Chain: Follow-up inspection at ${site.label} — ${money(fine)} fine, work paused.`);
         return true;
       }
@@ -3604,6 +3894,11 @@ export function freshState() {
     taxDue: 0, taxOverdueDays: 0, taxReserve: 0, taxPeriodRevenue: 0,
     eventHistory: {},
     revenue: 0, expenses: 0,
+    // The ledger's reconciliation baseline exists from the first moment, so the very first day's
+    // entries are measured against the opening balance. Without it the first entry took its
+    // baseline from a balance other deductions had already hit, and the reconciler reported a
+    // phantom $160 "balance transfer" on day one of every new company.
+    _ledgerSnapshot: { cash: 75000, revenue: 0, expenses: 0, day: 1 },
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
     savings: 0,
     creditLine: null,
@@ -3664,7 +3959,7 @@ export function freshState() {
     legacyStats: initLegacyStats(),
     contractBidStyles: {},
 
-    logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and two crew. Start with the Fence job in Bids."],
+    logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and three crew. Start with the Fence job in Bids."],
     opsFeed: [],
     eventLog: [],
     _milestones: {},
@@ -3735,6 +4030,14 @@ export function freshState() {
 export function migrateState(saved) {
   const defaults = freshState();
   const g = { ...defaults, ...saved };
+  // A save written before it had a ledger baseline takes one from its OWN balance — never the
+  // new-company default, which would report the difference as a phantom transfer.
+  if (!saved || !saved._ledgerSnapshot || !Number.isFinite(Number(saved._ledgerSnapshot.cash))) {
+    g._ledgerSnapshot = {
+      cash: Number(g.cash) || 0, revenue: Number(g.revenue) || 0,
+      expenses: Number(g.expenses) || 0, day: Number(g.day) || 0,
+    };
+  }
   // Deep-merge nested objects so new sub-keys added in future sprints are
   // defaulted for old saves while all existing saved values are preserved.
   g.weeklyStats = { ...defaults.weeklyStats, ...(saved.weeklyStats || {}) };
@@ -4029,9 +4332,9 @@ function repairCrewAssignments(g) {
       w.assignedSiteId = null;
     }
   }
-  // Sync equipment status (don't override Maintenance/Broken)
+  // Sync equipment status (don't override Maintenance/Broken/In Repair)
   for (const e of (g.equipment || [])) {
-    if (e.status === "Maintenance" || e.status === "Broken") continue;
+    if (e.status === "Maintenance" || e.status === "Broken" || e.status === "In Repair") continue;
     if (equipSiteMap[e.id]) {
       e.status = "Active";
       e.assignedSiteId = equipSiteMap[e.id];
@@ -4068,6 +4371,21 @@ export function gameTick(prev) {
     newDay = true;
   }
 
+  // ── Breakdown repairs finish ─────────────────────────────────────────────────
+  // equipmentWear.js puts a broken-down machine "In Repair" for a stated number of hours and the
+  // log tells the player so. Nothing in this screen ever counted those hours down: the next tick
+  // flipped the machine straight back to Active, so the "4h downtime" the log promised never
+  // happened, and a machine that broke while parked stayed "In Repair" forever. Now the stated
+  // downtime is the real downtime, and the machine comes back on its own.
+  for (const e of (g.equipment || [])) {
+    if (e.status !== "In Repair") continue;
+    e.repairMinsLeft = Math.max(0, (Number(e.repairMinsLeft) || 0) - MINS_PER_TICK);
+    if (e.repairMinsLeft <= 0) {
+      e.status = "Idle";
+      addLog(g, `🔧 ${e.name} is repaired and back in service.`);
+    }
+  }
+
   // ── Crew/equipment assignment integrity every tick ───────────────────────────
   repairCrewAssignments(g);
 
@@ -4098,10 +4416,16 @@ export function gameTick(prev) {
       }
     }
 
+    // What the card reads. Reset every tick and set only by the branch that actually applies,
+    // so a stall can never leave yesterday's rate on the card. See systems/siteDiagnostics.js.
+    site.stopReason = null;
+    site.rateFactors = [];
+
     if (site.status === "Paused") {
+      site._progressRate = 0;
       if ((site.pausedDays || 0) > 0 && site.pausedDays !== 999) {
         site.pausedDays = site.pausedDays - (MINS_PER_TICK / 1440);
-        if (site.pausedDays <= 0) { site.status = "Active"; site.pausedDays = 0; }
+        if (site.pausedDays <= 0) { site.status = "Active"; site.pausedDays = 0; site.pauseReason = null; }
       }
       continue;
     }
@@ -4109,13 +4433,18 @@ export function gameTick(prev) {
 
     const assignedCrew = g.crew.filter((w) => site.assignedCrewIds.includes(w.id));
     // Only use equipment that is not broken/maintenance
-    const assignedEquip = g.equipment.filter((e) => site.assignedEquipmentIds.includes(e.id) && e.status !== "Broken" && e.status !== "Maintenance");
+    const assignedEquip = g.equipment.filter((e) => site.assignedEquipmentIds.includes(e.id) && isUsable(e));
 
     // A site with no CREW genuinely cannot proceed — there is nobody there. But a site with no
     // usable PLANT used to hit the same hard `continue`, which is how a single truck running
     // dry froze an entire contract at 48% with no way back. It now crawls, exactly as a phase
     // missing its required plant does, and says so rather than silently stopping.
-    if (!assignedCrew.length) continue;
+    if (!assignedCrew.length) {
+      site._progressRate = 0;
+      const _resting = (g.crew || []).filter((w) => w.awaitingRestForSiteId === site.id).length;
+      site.stopReason = _resting > 0 ? { key: "crew_resting", resting: _resting } : { key: "no_crew" };
+      continue;
+    }
     const _noPlant = assignedEquip.length === 0;
     if (_noPlant && !site._noPlantWarned) {
       site._noPlantWarned = true;
@@ -4145,6 +4474,8 @@ export function gameTick(prev) {
       const _due = nextDeliveryDay(site);
       const _summary = _missing.map((m) => `${m.short} ${m.matId}`).join(", ");
 
+      site._progressRate = 0;
+      site.stopReason = { key: _due != null ? "materials_in_transit" : "materials_short", due: _due, summary: _summary };
       if (!site._matsWarnedDay || site._matsWarnedDay !== g.day) {
         site._matsWarnedDay = g.day;
         addLog(g, _due != null
@@ -4253,12 +4584,38 @@ export function gameTick(prev) {
     //
     // At 3.0 the same company clears ~97% of a phase per day: five phases in about five days
     // of clean running, which leaves headroom for the friction the game then throws at it.
+    const _plantFactor = plantProgressFactor(currentPhaseName, assignedEquip, _siteDef?.minTier);
+    const _crewRatio = Math.min(crewCount / (site.crewMin || 2), 1.5);
+    const _rateFactors = [];
+    if (_crewRatio < 1) _rateFactors.push({ key: "understaffed", factor: _crewRatio, have: crewCount, need: site.crewMin || 2 });
+    if (mismatchPenalty < 1) {
+      const _wantSpec = Object.entries(SPECIALTY_PHASE_BONUS).find(([, ph]) => (ph[currentPhaseName] || 1) > 1)?.[0] || null;
+      _rateFactors.push({ key: "specialty", factor: mismatchPenalty, phase: currentPhaseName, specialty: _wantSpec });
+    }
+    if (_plantFactor < 1) {
+      const _pm = missingPlantFor(currentPhaseName, assignedEquip, _siteDef?.minTier)
+        || missingPlantFor(currentPhaseName, g.equipment.filter((e) => site.assignedEquipmentIds.includes(e.id)), _siteDef?.minTier);
+      const _inShop = g.equipment.filter((e) => site.assignedEquipmentIds.includes(e.id) && e.status === "In Repair");
+      _rateFactors.push({ key: "plant", factor: _plantFactor, phase: currentPhaseName,
+        anyOf: _pm?.anyOf || [], minTier: _pm?.minTier || 1,
+        ownedButUnusable: g.equipment.some((e) => site.assignedEquipmentIds.includes(e.id) && !isUsable(e) && e.status !== "In Repair"),
+        // A breakdown already paid for: it comes back by itself, so the card must not ask for money.
+        workshopHours: _inShop.length ? Math.max(1, Math.ceil(Math.max(..._inShop.map((e) => Number(e.repairMinsLeft) || 0)) / 60)) : null });
+    }
+    if (stratMod < 1) _rateFactors.push({ key: "site_mode", factor: stratMod, mode: site.siteMode });
     const progressRate = (3.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
       // Sprint 12: required plant missing mid-phase crawls rather than halting. A machine
       // breaking through no fault of the player must be a setback, never a dead save.
-      * plantProgressFactor(currentPhaseName, assignedEquip, _siteDef?.minTier)
-      * (_noPlant ? STALL_FACTOR : 1);
+      //
+      // Sprint 1: this used to be followed by `* (_noPlant ? STALL_FACTOR : 1)`, which charged
+      // the SAME missing-plant penalty twice — 55% x 55% = 30% speed — whenever the site had no
+      // working machine on a phase that needs one, and charged it once on phases the plant table
+      // says are hand-tool work (Inspection, Finish Work), contradicting that table. The phase
+      // requirement is the one rule; a site with no machine is simply a site that fails it.
+      * _plantFactor;
     site._progressRate = progressRate;
+    // Exactly the multipliers below 1 that were just applied, for the card to explain.
+    site.rateFactors = _rateFactors;
 
     const _prevProgress = site.phaseProgress || 0;
     site.phaseProgress = Math.min(100, (site.phaseProgress || 0) + progressRate);
@@ -4340,8 +4697,7 @@ export function gameTick(prev) {
           inspOutcome = "major";
           inspPenalty = rand(2500, 9000);
           g.cash -= inspPenalty;
-          site.status = "Paused";
-          site.pausedDays = (site.pausedDays || 0) + rand(3, 6);
+          pauseSite(site, rand(3, 6), "quality", `${completedPhaseName} failed`);
           g.reputation = Math.max(0, (g.reputation || 0) - 3);
           addLog(g, `❌ ${site.label}: Major inspection failure — ${money(inspPenalty)} cost, site paused.`);
         }
@@ -4492,6 +4848,7 @@ export function gameTick(prev) {
             const streakReward = g.onTimeStreak * 300;
             g.cash += streakReward;
             g.revenue += streakReward;
+            recordTransaction(g, "bonuses", streakReward, `${g.onTimeStreak}-job on-time streak bonus`);
             addLog(g, `🔥 ${g.onTimeStreak}-job on-time streak! Bonus: ${money(streakReward)}`);
             addImportantNotice(g, `On-time streak of ${g.onTimeStreak}! Bonus ${money(streakReward)} earned.`, "green");
           }
@@ -4590,6 +4947,7 @@ export function gameTick(prev) {
           const _hasPaving = (_grantDef?.phases || []).some(p => p === "Paving" || p === "Base Layer");
           if (g.activeGrant.type === "infrastructure" && (_isInfra || _hasPaving) && g.day <= g.activeGrant.deadline) {
             g.cash = (g.cash || 0) + g.activeGrant.reward;
+            recordTransaction(g, "bonuses", g.activeGrant.reward, "Infrastructure grant");
             addLog(g, `🏛️ Infrastructure grant awarded — ${money(g.activeGrant.reward)} deposited!`);
             g.pendingStory = g.pendingStory || { icon: "ribbon", title: "Grant Awarded!", body: `You completed an infrastructure contract on time and earned the city grant of ${money(g.activeGrant.reward)}.` };
             g.activeGrant = null;
@@ -4682,7 +5040,9 @@ export function gameTick(prev) {
       });
       if (eligible.length) {
         const event = pick(eligible);
+        const _chaosScope = beginCashScope(g);
         const result = event.apply(site, g);
+        closeCashScope(g, _chaosScope, CHAOS_LEDGER_CATEGORY[event.id] || "misc", `${site.label}: ${event.label}`);
         if (result) {
           if (!site.chaosHistory) site.chaosHistory = [];
           site.chaosHistory = [{ ...result, day: g.day }, ...site.chaosHistory].slice(0, 10);
@@ -4692,7 +5052,9 @@ export function gameTick(prev) {
           } else if (result.type === "permit" && Math.random() < 0.3) {
             applyInspectionPass(g);
           }
+          const _chainScope = beginCashScope(g);
           checkChainEvents(site, g, result.type);
+          closeCashScope(g, _chainScope, "fines", `${site.label}: follow-up to ${event.label.toLowerCase()}`);
         }
         // Regional weather check
         const siteCityDef = CITIES.find((c) => c.id === site.cityId);
@@ -4711,6 +5073,8 @@ export function gameTick(prev) {
     for (const id of site.assignedEquipmentIds) {
       const e = g.equipment.find((eq) => eq.id === id);
       if (!e) continue;
+      // A machine that is broken or in the workshop is not running, so it is not burning fuel.
+      if (!isUsable(e)) continue;
       e.fuel = Math.max(0, (e.fuel ?? e.fuelCap ?? 0) - (0.5 * MINS_PER_TICK / 60));
       if (e.fuel <= 0 && e.fuelCap > 0 && e.status === "Active") {
         e.status = "Idle";
@@ -4866,19 +5230,17 @@ export function gameTick(prev) {
         w.stamina = Math.min(100, w.stamina + rand(15, 25));
         w.mood = Math.min(100, w.mood + rand(2, 6));
       }
-      // Back to the job they were pulled off, once they can actually work it. Without this the
-      // crew recover to full in the yard while the site they left sits at 48% forever.
-      if (w.awaitingRestForSiteId && w.stamina >= 45) {
-        const _back = (g.activeSites || []).find((st) => st.id === w.awaitingRestForSiteId);
-        if (_back && (_back.status === "Active" || _back.status === "Paused")) {
-          _back.assignedCrewIds = [...(_back.assignedCrewIds || []), w.id];
-          w.status = "Working";
-          w.assignedSiteId = _back.id;
-          addLog(g, `💪 ${w.name} rested and back on ${_back.label}.`);
-        }
-        w.awaitingRestForSiteId = null;
-      }
     }
+
+    // Equipment fuel refill (simulate overnight refuel)
+    for (const e of g.equipment) {
+      if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.5);
+    }
+
+    // Back to the job they were pulled off — rested crew, refuelled and repaired machines. Without
+    // this they recover in the yard while the site they left sits at 48% forever. One function
+    // for every recoverable removal, so a new way off a site cannot forget the way back.
+    for (const _ret of returnRecoveredToSites(g, isUsable)) addLog(g, _ret.text);
 
     // A site with nobody on it is the other half of the freeze. Say so, loudly, every time it
     // happens — silence here is what let a contract die at 48% without the player knowing why.
@@ -4886,7 +5248,10 @@ export function gameTick(prev) {
       const _hasCrew = (_s.assignedCrewIds || []).length > 0;
       if (!_hasCrew && _s.status === "Active" && !_s._noCrewWarned) {
         _s._noCrewWarned = true;
-        addImportantNotice(g, `${_s.label} has nobody on site — work has stopped. Assign crew.`, "red", { actionLabel: "Assign crew", actionTab: "Sites" });
+        const _resting = (g.crew || []).filter((w) => w.awaitingRestForSiteId === _s.id).length;
+        addImportantNotice(g, _resting > 0
+          ? `${_s.label} has stopped — its crew are resting and go back automatically once rested. Assign other crew to keep it moving.`
+          : `${_s.label} has nobody on site — work has stopped. Assign crew.`, "red", { actionLabel: "Assign crew", actionTab: "Sites" });
       } else if (_hasCrew && _s._noCrewWarned) {
         _s._noCrewWarned = false;
       }
@@ -4904,23 +5269,6 @@ export function gameTick(prev) {
       if (sc.status === "Idle" && sc.daysLeft > 0) sc.status = "Active";
     }
 
-    // Equipment fuel refill (simulate overnight refuel)
-    for (const e of g.equipment) {
-      if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.5);
-      // Send it back to the site it was pulled from, the moment it has enough in the tank to
-      // be useful. Without this the machine refuels forever in the yard while the job it left
-      // sits frozen.
-      if (e.awaitingFuelForSiteId && e.fuel >= e.fuelCap * 0.25) {
-        const _back = (g.activeSites || []).find((st) => st.id === e.awaitingFuelForSiteId);
-        if (_back && (_back.status === "Active" || _back.status === "Paused")) {
-          _back.assignedEquipmentIds = [...(_back.assignedEquipmentIds || []), e.id];
-          e.status = "Active";
-          e.assignedSiteId = _back.id;
-          addLog(g, `⛽ ${e.name} refuelled and back on ${_back.label}.`);
-        }
-        e.awaitingFuelForSiteId = null;
-      }
-    }
 
     // Expire stale bids (preserve bids that have been accepted/active)
     g.bids = (g.bids||[]).filter(b => !b.expiryDay || b.expiryDay >= g.day || b.isActive);
@@ -5219,7 +5567,7 @@ export function gameTick(prev) {
         // unexplained expense AND an unexplained cash surplus and logged a phantom pair
         // ("Uncategorized operating expense" + "Financing or balance transfer in") every
         // single day a balance was drawn. Naming it here absorbs both.
-        recordTransaction(g, "financing", -_clInt, "Credit line interest charged");
+        recordTransaction(g, "financing", -_clInt, "Credit line interest charged", { nonCash: true });
       }
     }
 
@@ -5684,6 +6032,12 @@ export function gameTick(prev) {
         g.gameOverReason = "bankruptcy";
       } else {
         addLog(g, `🚨 Bankruptcy warning: ${money(Math.abs(g.cash))} in debt — Day ${g.bankruptcyDays} of 5 before collapse.`);
+        // A five-day countdown to game over was announced only in the scrolling log. An action
+        // item cannot age out of the inbox, so the player cannot miss the one warning that ends
+        // the save.
+        addImportantNotice(g,
+          `Bankruptcy in ${5 - g.bankruptcyDays} day${5 - g.bankruptcyDays === 1 ? "" : "s"}: the account is ${money(Math.abs(g.cash))} overdrawn. Get cash back above -$10,000 — finish a job, sell a machine or borrow.`,
+          "action", { actionLabel: "Open Finance", actionTab: "Finance" });
       }
     } else if (g.cash >= 0) {
       g.bankruptcyDays = 0;
@@ -6239,6 +6593,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if ((w.level||1) < 3 || (w.skill||0) < 70) { Alert.alert("Not Eligible", "Worker needs level 3+ and skill 70+."); return; }
       g.cash -= 500;
       g.expenses += 500;
+      recordTransaction(g, "payroll", -500, `${w.name}: promotion`);
       const newRole = `Senior ${w.role}`;
       w.role = newRole;
       w.skill = Math.min(150, (w.skill||80) + 5);
@@ -6264,81 +6619,17 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleBuyMaterials = useCallback((matId, qty) => {
     fireHaptic("light");
     update((g) => {
-      if (!qty || qty < 1) return;
-      const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
-      const basePrice = applyRegionalMaterialPrice(rawBasePrice, g);
-      // R15-8: Apply flash deal price if active for this material
-      const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
-      const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
-      const totalCost = price * qty;
-      if (g.cash < totalCost) { alertInsufficientFunds(g, totalCost, "These materials"); return; }
-      g.cash -= totalCost;
-      g.expenses += totalCost;
-      g.materials[matId] = (g.materials[matId] || 0) + qty;
-      const mat = MATERIAL_DEFS.find((m) => m.id === matId);
-      recordTransaction(g, "materials", -totalCost, `Bought ${qty} ${mat?.unit || "units"} of ${mat?.label || matId}`);
-      addLog(g, `📦 Purchased ${qty} ${mat?.unit || "units"} of ${mat?.label || matId} for ${money(totalCost)}.`);
+      const res = buyYardMaterials(g, matId, qty);
+      if (res.status === "unaffordable") alertInsufficientFunds(g, res.cost, "These materials");
     });
   }, [update]);
 
   // Purchase exactly the missing materials for an active site at market price
   const handleBuyMaterialsForSite = useCallback((siteId) => {
     update((g) => {
-      const site = g.activeSites.find(s => s.id === siteId);
-      if (!site) return;
-      const contract = g.contracts.find(c => c.id === site.contractId);
-      const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
-      const missing = getSiteMissingMaterials(site, def, g);
-      if (!missing.length) return;
-      // ── ORDERS NOW TAKE TIME TO ARRIVE ────────────────────────────────────
-      // Materials used to appear the instant they were paid for, which made the emergency
-      // option — 1.5x price for the same instant delivery — strictly worse than this one,
-      // and therefore never the right call. A normal order is placed with a supplier and
-      // lands a couple of days later; work stalls until it does. That is what the emergency
-      // premium now buys.
-      //
-      // Cash still leaves the account at the moment of ordering, and the cost is still
-      // attributed to this project at that moment, so nothing about the books changes.
-      const totalCost = missing.reduce((s, m) => s + m.costNormal, 0);
-      if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
-
-      let ordered = missing;
-      let spend = totalCost;
-      if (g.cash < totalCost) {
-        // Short of cash: order as much as the balance covers, material by material.
-        let budget = g.cash;
-        ordered = [];
-        spend = 0;
-        for (const m of missing) {
-          if (budget <= 0) break;
-          const canBuy = Math.min(m.missing, Math.floor(budget / m.pricePerUnit));
-          if (canBuy <= 0) continue;
-          const cost = canBuy * m.pricePerUnit;
-          ordered.push({ ...m, missing: canBuy, costNormal: cost, costEmergency: Math.round(cost * 1.5) });
-          budget -= cost;
-          spend += cost;
-        }
-        if (ordered.length === 0) {
-          alertInsufficientFunds(g, missing[0].pricePerUnit, "Even one unit of material");
-          return;
-        }
-      }
-
-      g.cash -= spend;
-      g.expenses += spend;
-      accrueProjectCost(site, "materials", spend);
-      recordTransaction(g, "materials", -spend, `${site.label}: material order`);
-
-      const deliveries = planDeliveries(ordered, g.day);
-      site.pendingDeliveries.push(...deliveries);
-      const arrivesIn = Math.max(0, (deliveries[0]?.arrivesDay ?? g.day) - g.day);
-      const summary = ordered.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
-      addLog(g, `🚚 Ordered ${summary} for ${money(spend)} — arriving day ${deliveries[0]?.arrivesDay ?? g.day}.`);
-      addImportantNotice(
-        g,
-        `Materials ordered for ${site.label}: ${money(spend)}, arriving in ${arrivesIn} day${arrivesIn === 1 ? "" : "s"}. Work stalls until then — pay the emergency premium for same-day if you cannot wait.`,
-        "neutral"
-      );
+      // State change in orderSiteMaterials() so the harness orders through the same path.
+      const res = orderSiteMaterials(g, siteId);
+      if (res.status === "unaffordable") alertInsufficientFunds(g, res.unitPrice, "Even one unit of material");
     });
   }, [update]);
 
@@ -6384,133 +6675,28 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handleStartSite = useCallback((contract, crewIds, equipIds) => {
     fireHaptic("light");
     update((g) => {
-      const c = g.contracts.find((c) => c.id === contract.id);
-      if (!c || c.status !== "Open") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
-
-      // Sprint 12: the right machine for the job. Equipment type used to be a BONUS with a
-      // floor of 1.0, so the wrong machine and NO machine were worth exactly the same and
-      // nothing ever said "you cannot do this without a crane".
-      // The contract's own minTier is the authority on how big a machine this job needs.
-      const _cDefStart = CONTRACT_DEFS.find((d) => d.id === c.defId);
-      const _plant = canStartWithPlant(c.phases || [], (g.equipment || []).filter((e) => equipIds.includes(e.id)), _cDefStart?.minTier);
-      if (!_plant.ok) {
+      // The state change lives in mobilizeSite() so the playtest harness drives the exact code
+      // a player's tap does. This wrapper only turns its verdict into the alert the player sees.
+      const res = mobilizeSite(g, contract.id, crewIds, equipIds);
+      if (res.status === "unavailable") { Alert.alert("Unavailable", "This contract is no longer open."); return; }
+      if (res.status === "plant") {
         fireHaptic("error");
-        Alert.alert("Wrong Plant For The Job", `${_plant.missing.summary}\n\n${_plant.missing.action}`);
+        Alert.alert("Wrong Plant For The Job", `${res.missing.summary}\n\n${res.missing.action}`);
         return;
       }
-
-      // The freeze is real now. It was set at 14 days overdue and read by NOTHING — every
-      // reference in this screen was status text, so "operations suspended" suspended nothing.
-      // Scoped to NEW work only: sites already running keep going and keep paying, so a frozen
-      // player can finish what they started and earn their way out instead of being stuck.
-      if (!canTakeNewWork(g)) {
-        Alert.alert("Operations Frozen", blockedReason(g));
-        return;
-      }
-      const blockReason = getAssignBlockReason(c, crewIds, equipIds, g);
-      if (blockReason) {
-        const { title, body } = buildAssignBlockAlert(blockReason, getAssignBlockKind(c, crewIds, equipIds, g));
+      if (res.status === "frozen") { Alert.alert("Operations Frozen", res.reason); return; }
+      if (res.status === "blocked") {
+        const { title, body } = buildAssignBlockAlert(res.reason, res.kind);
         Alert.alert(title, body);
         return;
       }
-
-      // ── THE BID IS NOW AWARDED, NOT ASSUMED ────────────────────────────────
-      // Bid style used to move the payout and nothing else: Premium paid +28% at no cost,
-      // so it was free money and the "choice" was fake. It now moves the probability of
-      // being awarded the job. The player sees that probability on the card before
-      // committing, and `rollBidOutcome` rolls the same number the card showed, because
-      // both come from one `planBid` call.
-      const bidStyle = (g.contractBidStyles || {})[c.id] || DEFAULT_BID_STYLE;
-      // The office perk rides on the state handed to the roll, so the bid card and the award
-      // read one number. `withBidPerks` is used at every call site for exactly that reason.
-      const outcome = rollBidOutcome(c, bidStyle, withBidPerks(g));
-      const effectiveValue = outcome.effectiveValue;
-
-      g.bidsPlaced = (g.bidsPlaced || 0) + 1;
-      if (outcome.won) g.bidsWon = (g.bidsWon || 0) + 1;
-      else g.bidsLost = (g.bidsLost || 0) + 1;
-
-      if (!outcome.won) {
-        // Losing costs the contract, not the crew. Nothing is consumed: no materials drawn,
-        // no crew or machines marked active, no cash moved. The board is the cost.
-        const winner = pickWinningRival(c, g);
-        c.status = "Taken";
-        if (winner && winner.id) {
-          const rival = (g.rivals || []).find((r) => r.id === winner.id);
-          if (rival) {
-            rival.activeJobs = (rival.activeJobs || 0) + 1;
-            rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-          }
-        }
-        const winnerName = winner?.name || "another contractor";
-        addLog(g, `📄 Bid lost: "${c.label}" went to ${winnerName}.`);
-        addImportantNotice(g, `${winnerName} won "${c.label}". A lower bid would have had a better chance.`, "orange");
+      if (res.status === "lost") {
         Alert.alert(
           "Bid Lost",
-          `${winnerName} was awarded "${c.label}".\n\nYou bid ${outcome.label.toLowerCase()} — a ${outcome.winPercent}% chance. Your crew and materials were not committed.`,
+          `${res.winnerName} was awarded "${res.label}".\n\nYou bid ${res.outcome.label.toLowerCase()} — a ${res.outcome.winPercent}% chance. Your crew and materials were not committed.`,
           [{ text: "OK" }]
         );
-        return;
       }
-
-      // Consume materials — track exactly what was fulfilled, never go negative.
-      // Stock drawn from inventory was paid for earlier, at the supplier. Valuing it at
-      // today's price is what lets the completion P&L show a real margin instead of
-      // pretending warehoused material was free.
-      const materialsFulfilled = {};
-      let materialsFromStockCost = 0;
-      for (const matId of Object.keys(c.materials || {})) {
-        const needed = c.materials[matId];
-        const available = Math.max(0, g.materials[matId] || 0);
-        const consumed = Math.min(needed, available);
-        g.materials[matId] = available - consumed;
-        materialsFulfilled[matId] = consumed;
-        materialsFromStockCost += consumed * getMaterialUnitPrice(g, matId);
-      }
-
-      // Mark crew and equipment as active
-      for (const id of crewIds) {
-        const w = g.crew.find((w) => w.id === id);
-        if (w) { w.status = "Active"; w.assignedSiteId = contract.id; }
-      }
-      for (const id of equipIds) {
-        const e = g.equipment.find((e) => e.id === id);
-        if (e) { e.status = "Active"; e.assignedSiteId = contract.id; }
-      }
-
-      trackContractWon(g);
-
-      c.status = "Active";
-      g.activeSites.push({
-        id: uid(), contractId: c.id, label: c.label, client: c.client,
-        totalValue: effectiveValue, phases: [...c.phases],
-        currentPhaseIdx: 0, phaseProgress: 0,
-        assignedCrewIds: [...crewIds],
-        assignedEquipmentIds: [...equipIds],
-        crewMin: c.crewMin, equipMin: c.equipMin,
-        startDay: g.day, durationDays: c.durationDays,
-        deadlineDay: c.deadline, penaltyPerDay: c.penaltyPerDay,
-        status: "Active", chaosHistory: [], pausedDays: 0,
-        cityId: c.cityId || "salem", siteMode: "normal",
-        materialsFulfilled,
-        depositPaid: 0, completionBonus: 0, rushQualityPenalty: 0,
-        // Phase 2: orders in transit, and what the client has certified so far.
-        pendingDeliveries: [], progressPaid: 0, phasesClaimed: 0,
-        costs: createProjectCostLedger(),
-      });
-
-      // R14-2: 25% deposit received on mobilise
-      const _deposit = Math.round(effectiveValue * 0.25);
-      g.cash += _deposit;
-      g.revenue += _deposit;
-      g.weeklyStats.revenue += _deposit;
-      const _newSite = g.activeSites[g.activeSites.length - 1];
-      _newSite.depositPaid = _deposit;
-      // Attribution only — this cash left the balance when the material was bought.
-      accrueProjectCost(_newSite, "materials", materialsFromStockCost);
-
-      const bidNote = bidStyle !== DEFAULT_BID_STYLE ? ` [${outcome.label.toLowerCase()} bid]` : "";
-      addLog(g, `🏗️ Bid won: "${c.label}" for ${c.client} — ${money(effectiveValue)} contract${bidNote}. 💰 25% deposit: ${money(_deposit)}.`);
     });
   }, [update]);
 
@@ -6584,23 +6770,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   const handlePayTax = useCallback(() => {
     fireHaptic("light");
     update((g) => {
-      if ((g.taxDue || 0) <= 0) return;
-      // Pay what you can. The old handler did `if (g.cash < g.taxDue) return`, so a bill
-      // larger than the player's cash could never be reduced — only grown — while the overdue
-      // counter climbed forever. That was a permanent, unrecoverable state.
-      const _want = suggestedPayment(g);
-      if (g.cash < _want) { alertInsufficientFunds(g, _want, "A part payment on this tax bill"); return; }
-      const _res = applyTaxPayment(g, _want);
-      if (_res.paid <= 0) return;
+      const _res = payTaxBill(g);
+      if (_res.status === "unaffordable") { alertInsufficientFunds(g, _res.want, "A part payment on this tax bill"); return; }
+      if (_res.status !== "paid") return;
       fireHaptic(_res.cleared ? "milestone" : "success");
-      recordTransaction(g, "taxes", -_res.paid, _res.cleared ? "Tax bill paid" : "Tax bill part payment");
-      addLog(g, _res.cleared
-        ? `✅ Tax bill of ${money(_res.paid)} paid in full.`
-        : `🧾 Part payment of ${money(_res.paid)} — ${money(_res.remaining)} still owed.`);
-      if (_res.unfrozen) {
-        fireHaptic("milestone");
-        addImportantNotice(g, "Operations resumed — the tax freeze has been lifted.", "green");
-      }
+      if (_res.unfrozen) fireHaptic("milestone");
     });
   }, [update]);
 
@@ -6770,6 +6944,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const totalCost = def.cost + (alreadyInCity ? 0 : city.unlockCost);
       g.cash -= totalCost;
       g.expenses += totalCost;
+      recordTransaction(g, "property", -totalCost, `${def.name} in ${city.name}`);
       if (!g.cityOffices) g.cityOffices = [];
       g.cityOffices.push({ id: uid(), cityId, typeId: officeTypeId, name: `${def.name} — ${city.name}`, openedDay: g.day });
       addLog(g, `🏙️ Opened ${def.name} in ${city.name}, ${city.state}!`);
@@ -6940,6 +7115,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!nextTier || g.cash < nextTier.cost) return;
       g.cash -= nextTier.cost;
       g.expenses += nextTier.cost;
+      recordTransaction(g, "equipment", -nextTier.cost, `${eq.name}: ${upg.label} upgrade`);
       if (!eq.upgrades) eq.upgrades = {};
       eq.upgrades[upgradeId] = currentTier + 1;
       addLog(g, `⚙️ ${eq.name}: ${upg.label} upgraded to Tier ${currentTier + 1} (${nextTier.effect})`);
@@ -6947,18 +7123,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleRepairEquipmentNew = useCallback((equipId, isEmergency) => {
-    update((g) => {
-      const _eq = (g.equipment || []).find(e => e.id === equipId);
-      if (!_eq) return;
-      const _baseCost = Math.round((_eq.price || 5000) * (isEmergency ? 0.4 : 0.2));
-      if (g.cash < _baseCost) { addLog(g, `Not enough cash to repair ${_eq.name}.`); return; }
-      g.cash -= _baseCost;
-      g.expenses += _baseCost;
-      _eq.condition = isEmergency ? 100 : Math.min(100, (_eq.condition || 0) + 60);
-      _eq.status = "Idle";
-      if (g.pendingBreakdown?.equipId === equipId) g.pendingBreakdown = null;
-      addLog(g, `🔧 ${_eq.name} repaired — condition ${Math.round(_eq.condition)}%`);
-    });
+    update((g) => { repairEquipment(g, equipId, isEmergency); });
   }, [update]);
 
   const handleRaiseWage = useCallback((workerId) => {
@@ -7067,6 +7232,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (g.cash < _bonus) { addLog(g, "Not enough cash for bonus."); return; }
       g.cash -= _bonus;
       g.expenses += _bonus;
+      recordTransaction(g, "payroll", -_bonus, `${_w.name}: bonus`);
       _w.mood = Math.min(100, (_w.mood ?? 70) + 20);
       _w.loyalty = Math.min(100, (_w.loyalty ?? 0) + 12);
       addLog(g, `🎁 ${_w.name} received a ${money(_bonus)} bonus — morale +20`);
@@ -7075,16 +7241,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   const handleRestWorker = useCallback((workerId) => {
     fireHaptic("light");
-    update((g) => {
-      const _w = (g.crew||[]).find(w => w.id === workerId);
-      if (!_w) return;
-      (g.activeSites||[]).forEach(site => {
-        site.assignedCrewIds = (site.assignedCrewIds||[]).filter(id => id !== workerId);
-      });
-      _w.status = "Resting";
-      _w.restUntilStamina = 80;
-      addLog(g, `💤 ${_w.name} is resting — will return when stamina reaches 80%.`);
-    });
+    update((g) => { restWorker(g, workerId); });
   }, [update]);
 
   const handleRestAllTired = useCallback(() => {
@@ -7092,6 +7249,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       let count = 0;
       (g.crew||[]).forEach(_w => {
         if ((_w.stamina ?? 100) < 40 && _w.status !== "Resting") {
+          const _from = (g.activeSites||[]).find(site => (site.assignedCrewIds||[]).includes(_w.id));
+          if (_from) _w.awaitingRestForSiteId = _from.id;
           (g.activeSites||[]).forEach(site => {
             site.assignedCrewIds = (site.assignedCrewIds||[]).filter(id => id !== _w.id);
           });
@@ -7112,6 +7271,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if ((g.cash||0) < 25) { addLog(g, "Not enough cash for lunch."); return; }
       if (_w.lastLunchDay === g.day) { addLog(g, `${_w.name} already had lunch today.`); return; }
       g.cash -= 25;
+      recordTransaction(g, "payroll", -25, `${_w.name}: crew lunch`);
       _w.mood = Math.min(100, (_w.mood ?? 70) + 8);
       _w.stamina = Math.min(100, (_w.stamina ?? 50) + 5);
       _w.lastLunchDay = g.day;
@@ -7123,8 +7283,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
     update((g) => {
       const _s = (g.activeSites||[]).find(s => s.id === siteId);
       if (!_s) return;
-      _s.status = "Paused";
-      _s.pausedDays = 999;
+      pauseSite(_s, 999, "manual");
       addLog(g, `⏸ ${_s.label} paused.`);
     });
   }, [update]);
@@ -7135,6 +7294,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!_s) return;
       _s.status = "Active";
       _s.pausedDays = 0;
+      _s.pauseReason = null;
       addLog(g, `▶️ ${_s.label} resumed.`);
     });
   }, [update]);
@@ -7147,8 +7307,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const _def = CONTRACT_DEFS.find(c => c.id === (g.contracts||[]).find(cc => cc.id === _s.contractId)?.defId);
       const _fee = Math.round((_def?.baseValue || 10000) * 0.15);
       const _repLoss = Math.max(2, (_def?.tier||_def?.minTier||1) * 2);
-      g.cash = Math.max(-50000, (g.cash||0) - _fee);
+      const _cashBeforeFee = g.cash || 0;
+      g.cash = Math.max(-50000, _cashBeforeFee - _fee);
       g.expenses = (g.expenses||0) + _fee;
+      recordTransaction(g, "fines", g.cash - _cashBeforeFee, `${_s.label}: abandonment fee`);
       g.reputation = Math.max(0, (g.reputation||0) - _repLoss);
       (_s.assignedCrewIds||[]).forEach(cid => { const _w=(g.crew||[]).find(w=>w.id===cid); if(_w){_w.status="Idle"; _w.assignedSiteId=null;} });
       (_s.assignedEquipmentIds||[]).forEach(eid => { const _e=(g.equipment||[]).find(e=>e.id===eid); if(_e){_e.assignedSiteId=null;_e.status="Idle";} });
@@ -7196,6 +7358,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if ((g.cash||0) < _cost) { addLog(g, `Need ${money(_cost)} to renegotiate.`); alertInsufficientFunds(g, _cost, "Renegotiating this contract"); return; }
       g.cash -= _cost;
       g.expenses = (g.expenses||0) + _cost;
+      recordTransaction(g, "fines", -_cost, `${_s.label}: deadline renegotiation`);
       g.reputation = Math.max(0, (g.reputation||0) - 2);
       _s.deadlineDay = (g.day||0) + Math.max(7, Math.round((_def?.durationDays||14)*0.4));
       _s.renegotiated = true;
@@ -8093,6 +8256,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     const _wc = g.weeklyChallenge;
                     g.cash += _wc.reward;
                     g.revenue += _wc.reward;
+                    recordTransaction(g, "bonuses", _wc.reward, "Weekly challenge reward");
                     g.reputation = Math.min(100, (g.reputation||0) + _wc.repBonus);
                     _wc.claimedDay = g.day;
                     addLog(g, `🎉 Weekly challenge reward claimed: ${money(_wc.reward)} + ${_wc.repBonus} rep!`);
@@ -8785,10 +8949,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       {(() => {
                         const _rate = site._progressRate;
                         if (!_rate || overallPct >= 100 || site.status === "Paused") return null;
-                        const _phasesLeft = (site.phases.length || 1) - (site.currentPhaseIdx || 0);
-                        const _progressLeft = 100 * _phasesLeft - (site.phaseProgress || 0);
-                        const _pctPerDay = _rate * 48;
-                        const _daysLeft = _pctPerDay > 0 ? Math.ceil(_progressLeft / _pctPerDay) : null;
+                        const _pctPerDay = pctPerDay(_rate);
+                        const _daysLeft = daysRemaining(site, _rate);
                         return (
                           <Text style={[TYPE.caption, { color: T.sub, marginTop: 4 }]}>
                             {_daysLeft ? `~${_daysLeft} days remaining · ` : ""}{_pctPerDay.toFixed(1)}%/day
@@ -8797,6 +8959,21 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       })()}
                     </View>
                   </View>
+
+                  {/* Why this site is stopped, paused or slow — straight from what the tick did to
+                      it, with the most useful fix. Sprint 1, P0-1: no silent stalls. */}
+                  <SiteStatusBanner
+                    T={T}
+                    site={site}
+                    day={game.day}
+                    resolveAction={(action) => {
+                      if (action.label === "Order materials") return () => handleBuyMaterialsForSite(site.id);
+                      if (action.label === "Pay for same-day") return () => handleEmergencyPurchase(site.id);
+                      if (action.label === "Resume") return () => handleResumeSite(site.id);
+                      if (action.tab && action.tab !== "Sites") return () => setTab(action.tab);
+                      return null;
+                    }}
+                  />
 
                   {/* ── PHASE STRIP ────────────────────────────────────────────────
                       The shape of the job: what is signed off, what the crew is on, and
@@ -8874,35 +9051,15 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     </View>
                   )}
 
-                  {/* Specialty mismatch + rush quality warnings */}
-                  {(() => {
-                    const sitePh = site.phases[site.currentPhaseIdx] || "";
-                    const specialtyMap = SPECIALTY_PHASE_BONUS;
-                    const crewHasMatch = siteCrew.some(w => (specialtyMap[w.specialty || ""] || {})[sitePh] > 1.0);
-                    const phaseTypeMatch = sitePh && (PHASE_TYPE_BONUS[sitePh] || {});
-                    const equipHasMatch = siteEquip.some(e => (phaseTypeMatch[e.type] || 1.0) > 1.0);
-                    const showMismatch = sitePh && siteCrew.length > 0 && !crewHasMatch && !equipHasMatch;
-                    const rushPenalty = site.rushQualityPenalty || 0;
-                    return (
-                      <>
-                        {showMismatch && (() => {
-                          const neededSpec = Object.entries(SPECIALTY_PHASE_BONUS).find(([, phases]) =>
-                            Object.entries(phases).some(([p, v]) => v > 1.0 && sitePh.toLowerCase().includes(p.toLowerCase()))
-                          )?.[0] || "matching";
-                          return (
-                            <Text style={[TYPE.caption, { color: T.caution, marginBottom: SPACING.xs }]}>
-                              ⚠ {sitePh} needs a {neededSpec} specialist · −10% speed without one
-                            </Text>
-                          );
-                        })()}
-                        {rushPenalty > 0.04 && (
-                          <Text style={[TYPE.caption, { color: T.caution, marginBottom: SPACING.xs }]}>
-                            ⚡ Rush impact: quality −{Math.round(rushPenalty * 100)}%
-                          </Text>
-                        )}
-                      </>
-                    );
-                  })()}
+                  {/* Rush quality warning. The specialty-mismatch line that used to sit here fired on
+                      a different condition from the −10% the tick actually applied (it stayed quiet
+                      whenever a machine matched the phase), so the card and the simulation
+                      disagreed. SiteStatusBanner now reports the penalty the tick applied. */}
+                  {(site.rushQualityPenalty || 0) > 0.04 && (
+                    <Text style={[TYPE.caption, { color: T.caution, marginBottom: SPACING.xs }]}>
+                      ⚡ Rush impact: quality −{Math.round((site.rushQualityPenalty || 0) * 100)}%
+                    </Text>
+                  )}
 
                   {/* The throttle, where the player is actually looking.
                       A device screenshot showed a garage job reading "~32 days remaining ·
@@ -9178,7 +9335,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                                 borderWidth: 1.5, borderColor: alpha(T.steel, 0.6),
                                 minHeight: MIN_TAP_TARGET, alignItems: "center", justifyContent: "center",
                               }}
-                              onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) { s.status = "Paused"; s.pausedDays = 999; } })}
+                              onPress={() => update(g => { const s = g.activeSites.find(s => s.id === site.id); if (s) pauseSite(s, 999, "manual"); })}
                               accessibilityRole="button"
                               accessibilityLabel="Pause this site, no penalty"
                             >
@@ -11558,11 +11715,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <TouchableOpacity
                   key={i}
                   style={[styles.btn, { marginBottom: 8, backgroundColor: i === 0 ? (T[game.pendingDecision.tone] || T.blue) : T.panel2, borderColor: i === 0 ? (T[game.pendingDecision.tone] || T.blue) : T.strongBorder, borderWidth: i === 0 ? 0 : 1.5 }]}
-                  onPress={() => update(g => {
-                    const evtDef = DECISION_EVENTS.find(e => e.id === g.pendingDecision?.id) || EMPLOYEE_EVENTS.find(e => e.id === g.pendingDecision?.id);
-                    if (evtDef?.options?.[i]?.apply) evtDef.options[i].apply(g);
-                    g.pendingDecision = null;
-                  })}
+                  onPress={() => update(g => resolveDecision(g, i))}
                 >
                   <Text style={[styles.btnText, { color: i === 0 ? "#000" : T.text, fontWeight: "800" }]}>{opt.label}</Text>
                   {opt.sub && <Text style={[styles.sub, { color: i === 0 ? "rgba(0,0,0,0.65)" : T.sub, textAlign: "center", marginTop: 2 }]}>{opt.sub}</Text>}
@@ -11605,7 +11758,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 onPress={() => update(g => {
                   const bd = g.pendingBreakdown;
                   const equip = g.equipment.find(e => e.id === bd.equipId);
-                  if (equip) { g.cash -= bd.repairCost; equip.condition = Math.min(100, equip.condition + 40); equip.status = "Active"; }
+                  if (equip) { g.cash -= bd.repairCost; recordTransaction(g, "maintenance", -bd.repairCost, `${bd.equipName}: breakdown repair`); equip.condition = Math.min(100, equip.condition + 40); equip.status = "Active"; }
                   addLog(g, `🔧 ${bd.equipName} repaired for ${money(bd.repairCost)} — back online.`);
                   g.pendingBreakdown = null;
                 })}
@@ -11650,6 +11803,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   const scrapValue = equip ? Math.round(equip.price * 0.15 * equip.condition / 100) : 0;
                   if (equip) {
                     g.cash += scrapValue;
+                    recordTransaction(g, "sales", scrapValue, `${bd.equipName}: scrapped`);
                     const site = g.activeSites.find(s => s.id === bd.siteId);
                     if (site) site.assignedEquipmentIds = (site.assignedEquipmentIds || []).filter(id => id !== bd.equipId);
                     g.equipment = g.equipment.filter(e => e.id !== bd.equipId);
@@ -11915,6 +12069,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   if (w) {
                     g.reputation = (g.reputation||0) + 3;
                     g.cash += 500; g.revenue += 500;
+                    recordTransaction(g, "bonuses", 500, `${w.name}: departure referral`);
                     g.crew = g.crew.filter(c => c.id !== ev.workerId);
                     addLog(g, `👋 ${w.name} departed gracefully. +3 rep, +$500 referral.`);
                   }

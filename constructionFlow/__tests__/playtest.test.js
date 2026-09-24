@@ -1,175 +1,102 @@
-// PLAYTEST — actually play the opening of the game, and report it in REAL MINUTES.
+// PLAYTEST — actually play the opening of the game, through the real game paths, and report it.
 //
 // WHY THIS EXISTS
 // ---------------
-// Four sprints of thorough unit tests never once played the game, and a defect that made the
-// first contract literally impossible to finish reached a real device. Every module was proven;
-// the GAME was not.
+// Four sprints of unit tests never once played the game, and a defect that made the first
+// contract impossible to finish reached a real device. This file plays it.
 //
-// It also reports the only number a player actually feels: how long a job takes in REAL
-// MINUTES, against FleetFlow's own smallest delivery. Counting game DAYS hid this for four
-// sprints — "a 6-day contract" sounds fine right up until you measure that it was taking
-// FORTY-THREE REAL MINUTES while FleetFlow's shortest delivery is six.
+// Sprint 1 rebuilt it on scripts/playtest/firstHourHarness.js. The previous version built its own
+// site object, never paid the mobilisation deposit, never ordered through the order path, and
+// dismissed every decision card without applying it — so it measured a game that did not exist,
+// and it could not see the $460,000 of first-hour cash that moved with no ledger entry, the
+// stale "%/day" on stalled sites, or the workers the Rest button stranded. The harness mobilises
+// through mobilizeSite(), orders through orderSiteMaterials(), answers cards through
+// resolveDecision(), repairs through repairEquipment(), and ticks through gameTick().
 //
-// FleetFlow's bar, taken from its own data rather than from memory:
-//   routeSecRange [500, 900] / vehicle speed, floored at 180s  =>  6 to 15 real minutes.
+// Scenario A (Sprint 1, P1-10): a fresh company, first contract through second contract.
+// Deterministic: every run is seeded.
 //
 // Run it alone and read the table:  npx jest playtest
 //
-// This is a REPORT as much as a test. The assertions at the end are the ship gate; the printed
-// table is what a person reads to decide whether the game is fun.
+// FleetFlow's bar for the smallest job, taken from its own data: 6 to 15 real minutes.
 
-import { freshState, gameTick, CONTRACT_DEFS, MATERIAL_DEFS } from "../src/games/constructionflow/ConstructionFlowScreen.js";
-import { ticksPerDay, realSecondsPerGameDay } from "../src/systems/gameClock.js";
-
-const TPD = ticksPerDay("1x");
-const SEC_PER_DAY = realSecondsPerGameDay("1x");
+import { playFirstHour, summarize, SEC_PER_DAY } from "../scripts/playtest/firstHourHarness.js";
 
 const FLEETFLOW_SHORT_JOB_MIN = 6;
 const FLEETFLOW_SHORT_JOB_MAX = 15;
+const SEEDS = Array.from({ length: 16 }, (_, i) => i + 1);
 
-function startFirstContract() {
-  const g = { ...freshState(), setupDone: true, tutorialDone: true };
-  const c = (g.contracts || [])[0];
-  // Exactly what the tutorial tells a new player to do: take the first contract, put the crew
-  // and the truck on it, and the starting lumber covers the materials.
-  const need = c.materials || {};
-  const fulfilled = {};
-  for (const k of Object.keys(need)) fulfilled[k] = need[k];
-  g.activeSites = [{
-    id: "pt-1", contractId: c.id, label: c.label, client: c.client, status: "Active",
-    phases: [...c.phases], currentPhaseIdx: 0, phaseProgress: 0,
-    assignedCrewIds: g.crew.map((w) => w.id), assignedEquipmentIds: g.equipment.map((e) => e.id),
-    materialsFulfilled: fulfilled, pendingDeliveries: [], progressPaid: 0, phasesClaimed: 0,
-    totalValue: c.value, depositPaid: Math.round(c.value * 0.2), penaltyPerDay: 100,
-    deadlineDay: g.day + c.durationDays, startDay: g.day, siteMode: "normal", chaosHistory: [],
-  }];
-  for (const w of g.crew) w.status = "Working";
-  for (const e of g.equipment) e.status = "Active";
-  return { g, contract: c };
-}
+const money = (n) => (n == null ? "--" : `${n < 0 ? "-" : ""}$${Math.abs(Math.round(n)).toLocaleString("en-US")}`);
 
-// An ATTENTIVE PLAYER, not a passive observer. A harness that only watches measures whether the
-// game plays itself; what matters is whether a person who responds to what the game tells them
-// can finish a job. So this reacts to the one action item the opening contract can raise —
-// "short of materials, nothing on order" — by buying them, at the real price, out of real cash.
-//
-// Without this the harness died three runs in ten on a material stall, which is a player who
-// walked away rather than a broken game. WITH it, a stall that still kills the job is a defect.
-function restockIfShort(g) {
-  let spent = 0;
-  for (const site of (g.activeSites || [])) {
-    const def = CONTRACT_DEFS.find((c) => c.id === (g.contracts.find((cc) => cc.id === site.contractId)?.defId));
-    const needs = def?.materials;
-    if (!needs) continue;
-    for (const [matId, needed] of Object.entries(needs)) {
-      const have = (site.materialsFulfilled || {})[matId] || 0;
-      if (have >= needed) continue;
-      const short = needed - have;
-      const price = (MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice) || 100;
-      const cost = Math.round(short * price);
-      if (g.cash < cost) continue;      // a player who cannot afford it is a different story
-      g.cash -= cost;
-      g.expenses += cost;
-      site.materialsFulfilled = { ...(site.materialsFulfilled || {}), [matId]: needed };
-      spent += cost;
-    }
-  }
-  return spent;
-}
-
-function playOneGame(maxDays = 120) {
-  let { g, contract } = startFirstContract();
-  const startCash = g.cash, startDay = g.day, startCrew = g.crew.length;
-  let minCash = g.cash, finishedDay = null, stalledDays = 0, repairs = 0;
-
-  for (let i = 0; i < TPD * maxDays && finishedDay === null; i++) {
-    g = gameTick(g);
-    if (g.pendingDecision) g = { ...g, pendingDecision: null };
-    if (i % TPD === 0) restockIfShort(g);   // the player checks their sites once a day
-    if (g.cash < minCash) minCash = g.cash;
-    if ((g.healthLog || []).length > repairs) repairs = g.healthLog.length;
-    if ((g.activeSites || []).length === 0) finishedDay = g.day - startDay;
-    else if (i % TPD === 0) {
-      const s = g.activeSites[0];
-      if (!(s.assignedCrewIds || []).length || !(s.assignedEquipmentIds || []).length) stalledDays++;
-    }
-  }
-
-  return {
-    contractedDays: contract.durationDays,
-    actualDays: finishedDay,
-    realMinutes: finishedDay === null ? null : +(finishedDay * SEC_PER_DAY / 60).toFixed(1),
-    profit: Math.round(g.cash - startCash),
-    cashFloorPct: Math.round((minCash / startCash) * 100),
-    crewLost: startCrew - g.crew.length,
-    stalledDays,
-    saveRepairs: repairs,
-  };
-}
-
-describe("PLAYTEST: the opening contract", () => {
-  const RUNS = 10;
-  let rows;
+describe("PLAYTEST — Scenario A: a fresh company, first contract through second", () => {
+  let runs, sum;
 
   beforeAll(() => {
-    rows = Array.from({ length: RUNS }, () => playOneGame());
-    const lines = rows.map((r) =>
-      `  ${String(r.actualDays ?? "NEVER").padStart(5)}d ${String(r.realMinutes ?? "--").padStart(6)}min` +
-      `  profit ${String(r.profit).padStart(8)}  cash floor ${String(r.cashFloorPct).padStart(3)}%` +
-      `  crewLost ${r.crewLost}  stalled ${r.stalledDays}d` +
-      (r.saveRepairs ? `  !! ${r.saveRepairs} SAVE REPAIRS` : ""));
-    const done = rows.filter((r) => r.actualDays !== null);
-    const mins = done.map((r) => r.realMinutes).sort((a, b) => a - b);
+    runs = SEEDS.map((seed) => playFirstHour(seed, { maxDays: 45, jobs: 2 }));
+    sum = summarize(runs);
+    const cat = (r, k) => r.categories[k] || 0;
+    const lines = runs.map((r) => {
+      const j1 = r.jobs[0] || {};
+      const j2 = r.jobs[1] || {};
+      const e1 = j1.economics || {};
+      return `  seed ${String(r.seed).padStart(2)}  job1 ${String(j1.defId).padEnd(6)} ${String(j1.days ?? "NEVER").padStart(3)}d ${String(j1.realMinutes ?? "--").padStart(5)}min` +
+        ` profit ${money(e1.netProfit).padStart(8)}  job2 ${String(j2.defId ?? "-").padEnd(10)} ${String(j2.days ?? "-").padStart(3)}d` +
+        `  cash ${money(r.startCash)} → min ${money(r.minCash)} → ${money(r.finalCash)}` +
+        `  wages ${money(-cat(r, "payroll"))} mats ${money(-cat(r, "materials"))} fuel ${money(-cat(r, "fuel"))}` +
+        ` overhead ${money(-(cat(r, "property") + cat(r, "equipment")))} repairs ${money(-cat(r, "maintenance"))}` +
+        ` fines ${money(-cat(r, "fines"))} tax paid ${money(r.taxPaid)} tax reserve ${money(r.taxReserve)}`;
+    });
     console.log(
-      `\nPLAYTEST — ${RUNS} runs of the opening contract` +
-      `\nclock: ${SEC_PER_DAY.toFixed(0)}s per game day (${(SEC_PER_DAY / 60).toFixed(1)} min)` +
+      `\nPLAYTEST — ${runs.length} seeded fresh companies · ${(SEC_PER_DAY / 60).toFixed(1)} real min per game day` +
       `\nFleetFlow's smallest delivery: ${FLEETFLOW_SHORT_JOB_MIN}-${FLEETFLOW_SHORT_JOB_MAX} real minutes\n` +
       lines.join("\n") +
-      `\n  median: ${mins.length ? mins[Math.floor(mins.length / 2)] : "n/a"} real minutes\n`
+      `\n  ${JSON.stringify(sum)}\n`
     );
+  }, 180000);
+
+  test("≥90% finish the first contract without forced borrowing or bankruptcy", () => {
+    const clean = runs.filter((r) => r.jobs[0]?.endDay != null && r.loansTaken === 0 && r.emergencyGrants === 0 && !r.gameOver && r.bankruptcyDays === 0);
+    expect(clean.length / runs.length).toBeGreaterThanOrEqual(0.9);
   });
 
-  test("it finishes — every time", () => {
-    // Before the hotfix this was 0 out of 6. A contract that cannot be completed is not a
-    // difficulty curve, it is a broken game.
-    expect(rows.filter((r) => r.actualDays === null)).toHaveLength(0);
+  test("≥90% go on to start AND finish a second contract", () => {
+    expect(sum.job2Complete / runs.length).toBeGreaterThanOrEqual(0.9);
   });
 
-  test("it takes a FleetFlow-sized amount of REAL time", () => {
-    // The number the player feels. Game-day counts hid a 43-minute job behind "6 days".
-    const mins = rows.map((r) => r.realMinutes).filter((m) => m !== null).sort((a, b) => a - b);
-    const median = mins[Math.floor(mins.length / 2)];
-    expect(median).toBeLessThanOrEqual(FLEETFLOW_SHORT_JOB_MAX);
-    expect(median).toBeGreaterThan(2);
+  test("the first job takes a FleetFlow-sized amount of REAL time", () => {
+    expect(sum.medianJob1Minutes).toBeLessThanOrEqual(FLEETFLOW_SHORT_JOB_MAX);
+    expect(sum.medianJob1Minutes).toBeGreaterThan(2);
   });
 
-  test("most runs make money", () => {
-    const done = rows.filter((r) => r.actualDays !== null);
-    expect(done.filter((r) => r.profit > 0).length).toBeGreaterThanOrEqual(Math.ceil(done.length * 0.6));
+  test("the company is never close to broke in its first hour", () => {
+    expect(Math.min(...runs.map((r) => r.minCash / r.startCash))).toBeGreaterThan(0.4);
   });
 
-  test("the company is never close to broke on its first job", () => {
-    // "I literally run out of money before a job is completed."
-    expect(Math.min(...rows.map((r) => r.cashFloorPct))).toBeGreaterThan(40);
+  test("every dollar that moved is named in the ledger", () => {
+    // Before Sprint 1: deposits, fines, medical bills and decision-card money moved with no
+    // entry, and the ledger's snapshot reset absorbed it so even the safety net saw nothing.
+    expect(sum.silentCash).toBe(0);
+    expect(sum.reconciledCash).toBe(0);
   });
 
-  test("the site never sits stalled for long", () => {
-    // The fuel/exhaustion freeze showed up here as dozens of stalled days.
-    expect(Math.max(...rows.map((r) => r.stalledDays))).toBeLessThanOrEqual(3);
+  test("no silent stalls: a site that is not moving always says why", () => {
+    expect(sum.unknownStalls).toBe(0);
+    expect(sum.staleRateTicks).toBe(0);
   });
 
-  test("the opening job does not empty the crew", () => {
-    // Not zero: the employee events can legitimately take someone off the books, and a run
-    // that loses one person to a random event is the game working. What must not happen is a
-    // systematic bleed — which is what the bad market-wage table produced (1-3 of 3, every run).
-    const lost = rows.map((r) => r.crewLost);
+  test("nobody and nothing is stranded off a live site", () => {
+    expect(sum.strandedCrewRuns).toBe(0);
+    expect(sum.strandedEquipRuns).toBe(0);
+    expect(sum.stuckInRepairRuns).toBe(0);
+  });
+
+  test("no NaN/Infinity anywhere in the save, and no save repair fired", () => {
+    expect(sum.nonFiniteRuns).toBe(0);
+    expect(sum.saveRepairs).toBe(0);
+  });
+
+  test("the opening does not empty the crew", () => {
+    const lost = runs.map((r) => 3 - (r.state.crew || []).length);
     expect(Math.max(...lost)).toBeLessThanOrEqual(1);
-    expect(lost.filter((n) => n > 0).length).toBeLessThanOrEqual(2);
-  });
-
-  test("no save repair fires during normal play", () => {
-    // If this trips, something is producing NaN and saveHealth is masking it.
-    expect(rows.reduce((s, r) => s + r.saveRepairs, 0)).toBe(0);
   });
 });

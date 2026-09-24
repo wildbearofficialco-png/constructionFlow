@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 
-import { freshState, migrateState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
+import { freshState, migrateState, gameTick, mobilizeSite } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 import { canTakeNewWork, assessWeeklyTax, applyTaxPayment, TAX_RATE,
   accrueTaxReserve,
   issueWeeklyTaxBill,
@@ -24,20 +24,32 @@ const SCREEN_CODE = fs.readFileSync(SCREEN_PATH, "utf8")
 
 describe("the freeze is enforced, not just displayed", () => {
   test("the contract-acceptance path actually checks it", () => {
-    // The bug in one line: the flag was set and no code path consulted it.
+    // The bug in one line: the flag was set and no code path consulted it. The Bids tap handler
+    // delegates to mobilizeSite() (Sprint 1, so the playtest harness runs the same code), so
+    // that is where the gate has to be.
     expect(SCREEN_CODE).toContain("canTakeNewWork(g)");
+    const fn = SCREEN_CODE.slice(SCREEN_CODE.indexOf("export function mobilizeSite"));
+    expect(fn.slice(0, 1400)).toContain("canTakeNewWork");
     const handler = SCREEN_CODE.slice(SCREEN_CODE.indexOf("const handleStartSite"));
-    expect(handler.slice(0, 1400)).toContain("canTakeNewWork");
+    expect(handler.slice(0, 600)).toContain("mobilizeSite(");
   });
 
   test("the block is raised before any state is mutated", () => {
     // A frozen player must not lose materials or crew assignment to a rejected start.
-    const handler = SCREEN_CODE.slice(SCREEN_CODE.indexOf("const handleStartSite"));
-    const gateAt = handler.indexOf("canTakeNewWork");
-    const rollAt = handler.indexOf("rollBidOutcome");
+    const fn = SCREEN_CODE.slice(SCREEN_CODE.indexOf("export function mobilizeSite"));
+    const gateAt = fn.indexOf("canTakeNewWork");
+    const rollAt = fn.indexOf("rollBidOutcome");
     expect(gateAt).toBeGreaterThan(-1);
     expect(rollAt).toBeGreaterThan(-1);
     expect(gateAt).toBeLessThan(rollAt);
+
+    // And behaviourally: a frozen company's bid is refused with nothing consumed.
+    const g = { ...freshState(), businessFrozen: true, taxDue: 5000, taxOverdueDays: 20 };
+    const c = g.contracts.find((x) => x.defId === "fence");
+    const before = JSON.stringify({ cash: g.cash, materials: g.materials, crew: g.crew, contracts: g.contracts });
+    const res = mobilizeSite(g, c.id, g.crew.map((w) => w.id), g.equipment.map((e) => e.id));
+    expect(res.status).toBe("frozen");
+    expect(JSON.stringify({ cash: g.cash, materials: g.materials, crew: g.crew, contracts: g.contracts })).toBe(before);
   });
 
   test("freezing does NOT stop sites already under way", () => {
