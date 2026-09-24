@@ -64,6 +64,19 @@ export const UNFREEZE_SHARE = 0.5;
 // Paying down the bill buys back time as well as money.
 export const PARTIAL_DAYS_FORGIVEN = 4;
 
+// HOW OFTEN THE BILL ARRIVES, and the second half of "taxes are due every five seconds".
+//
+// FleetFlow bills weekly — but a FleetFlow week is SEVEN REAL DAYS, because one game minute is
+// one real minute. Construction Flow compresses a day into 96 real seconds, so a game week is
+// eleven real MINUTES. Billing weekly on that clock is not the same mechanic wearing a
+// different hat; it is a tax bill roughly nine hundred times more often in the only unit the
+// player actually experiences.
+//
+// Monthly, at 28 days, puts the bill about 45 real minutes apart. Still far more frequent than
+// FleetFlow in real terms — this is a compressed game and that is the point — but it is a
+// periodic event rather than a metronome.
+export const TAX_PERIOD_DAYS = 28;
+
 // An Estimator on the office staff keeps the assessable base tight — the same shape as
 // FleetFlow's Analyst, who cuts the rate to 0.80x. This is the player's LEVER on tax, and its
 // absence is half of why tax reads as punishment rather than a problem: a bill you can do
@@ -247,9 +260,26 @@ export function applyTaxPayment(game, requestedAmount) {
 // drift from it.
 export function accrueTaxReserve(game) {
   if (!game) return 0;
-  const weeklyRevenue = num(game.weeklyStats?.revenue, 0);
-  game.taxReserve = weeklyRevenue > 0 ? Math.round(weeklyRevenue * taxRateFor(game)) : 0;
+  // Revenue banked from weeks already closed, PLUS the week in progress. `weeklyStats` is reset
+  // every seven days, so on a 28-day tax period it alone would forget three weeks in four and
+  // bill the player for a quarter of what they earned.
+  const banked = num(game.taxPeriodRevenue, 0);
+  const thisWeek = num(game.weeklyStats?.revenue, 0);
+  const periodRevenue = banked + thisWeek;
+  game.taxReserve = periodRevenue > 0 ? Math.round(periodRevenue * taxRateFor(game)) : 0;
   return game.taxReserve;
+}
+
+// Called at each week close, before weeklyStats is cleared, so the period keeps its memory.
+export function bankWeekIntoTaxPeriod(game) {
+  if (!game) return 0;
+  game.taxPeriodRevenue = num(game.taxPeriodRevenue, 0) + num(game.weeklyStats?.revenue, 0);
+  return game.taxPeriodRevenue;
+}
+
+export function isTaxDay(game) {
+  const day = num(game?.day, 0);
+  return day > 0 && day % TAX_PERIOD_DAYS === 0;
 }
 
 // What the player is told they are heading for. Kept separate from the field so callers read an
@@ -268,6 +298,7 @@ export function issueWeeklyTaxBill(game) {
   if (!game) return 0;
   const bill = Math.max(0, Math.round(num(game.taxReserve, 0)));
   game.taxReserve = 0;
+  game.taxPeriodRevenue = 0;
   if (bill <= 0) return 0;
   game.taxDue = num(game.taxDue, 0) + bill;
   return bill;

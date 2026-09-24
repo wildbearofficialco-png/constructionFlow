@@ -59,7 +59,31 @@ export const TICK_MS = 3000;
 // At 10: a game day is 1440 / 10 = 144 ticks = 432 real seconds = 7.2 minutes, and a game week
 // is about 50 minutes. Three times slower than before, and still roughly 200x faster than
 // FleetFlow — which is the correct place to be for a game whose jobs are measured in months.
-export const MINS_PER_TICK = 10;
+// MEASURED AGAINST FLEETFLOW IN REAL TIME, which is the comparison that actually matters and
+// the one I failed to make for four sprints.
+//
+//   FleetFlow's smallest delivery:  routeSecRange [500, 900] / vehicle speed, floored at 180s
+//                                   => 6 to 15 REAL MINUTES, and several run in parallel, each
+//                                      paying out as it lands.
+//
+//   Construction Flow at MINS_PER_TICK 10:  432 real seconds per game day
+//                                   => a SIX-DAY starter contract took 43 REAL MINUTES, paid
+//                                      once at the end, with nothing else earning meanwhile.
+//
+// Three to seven times a FleetFlow delivery, for a single payout. That is the "why is it taking
+// so long to do a job" report, and it is arithmetic rather than opinion.
+//
+// I ALSO CAUSED PART OF IT. Sprint 11 read "taxes are due every five seconds" as "the whole game
+// runs too fast" and slowed the clock three-fold, from 144 to 432 seconds a day. The complaint
+// was about how often the TAX BILL arrives, not about job pace — and the change tripled exactly
+// the thing being complained about. Tax cadence is fixed separately, where it belongs.
+//
+// At 45: a game day is 96 real seconds, so the six-day starter contract lands at about NINE AND
+// A HALF REAL MINUTES — inside FleetFlow's own smallest-delivery window.
+//
+// Per-game-day economics are untouched by this: costs and income both scale with the day, which
+// is what `gameClockIntegration.test.js` pins.
+export const MINS_PER_TICK = 45;
 
 export const MINUTES_PER_DAY = 1440;
 
@@ -71,9 +95,9 @@ export const MINUTES_PER_DAY = 1440;
 // asking for different things, and one toggle cannot serve both.
 export const SPEEDS = Object.freeze([
   { id: "pause", label: "❚❚", multiplier: 0, description: "Paused" },
-  { id: "1x", label: "1×", multiplier: 1, description: "Normal — about 7 minutes to the day" },
+  { id: "1x", label: "1×", multiplier: 1, description: "Normal — about 1.6 minutes to the day" },
   { id: "2x", label: "2×", multiplier: 2, description: "Double" },
-  { id: "4x", label: "4×", multiplier: 4, description: "Fast — the old pace" },
+  { id: "4x", label: "4×", multiplier: 4, description: "Fast — for skipping a quiet stretch" },
 ]);
 
 export const DEFAULT_SPEED_ID = "1x";
