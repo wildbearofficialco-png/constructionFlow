@@ -5,6 +5,64 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Build 11 — the silent throttle
+
+A device screenshot answered "why the hell is it taking so long" exactly, and the cause was mine.
+
+```
+Garage Construction                    24%     Due day 39
+Foundation                      Phase 2 of 6
+~32 days remaining · 14.8%/day          Time left: 6d
+EQUIPMENT · 2   Basic Pickup Truck · Skid Steer
+```
+
+A six-day deadline, thirty-two days of work remaining, two machines parked on site, and **nothing
+anywhere on the screen explaining why**.
+
+### The arithmetic
+
+Crew 2 against the garage job's `crewMin: 2` gives **65%/day** at full rate. Sprint 12's
+`STALL_FACTOR` of **0.25** takes that to **16.2%/day**. The screenshot reads **14.8%**.
+
+### The cause was a design error, not tuning
+
+Every contract in the game already carries its own `minTier`. The garage job says:
+
+```js
+{ id: "garage", label: "Garage Construction", minTier: 1, crewMin: 2, ... }
+```
+
+**Tier-1 plant is enough — the game says so.** Sprint 12 then invented a second, stricter,
+per-phase rule (*"Foundation needs tier 2"*) and let it silently override the contract's own
+stated requirement. A player who owned exactly what the job asked for was throttled to a quarter
+speed for it.
+
+- **The contract's `minTier` now wins.** The phase table still decides *which kind* of plant the
+  work needs — a pickup cannot drive piles at any tier — but it may not demand a bigger machine
+  than the job itself asked for.
+- **`STALL_FACTOR` 0.25 → 0.55.** A wrong-plant penalty should cost time, not the contract.
+
+### The worse half: it was invisible
+
+The Sprint 12 warning only fired when a site had **no** machine at all. With two machines on
+site it never fired, so the throttle was silent. A penalty the player cannot see is
+indistinguishable from a bug — and it was reported as one, fairly.
+
+A throttled site now carries a line on the site card itself, where the player is already
+looking: *"Foundation needs Foundation or Concrete or Earthwork plant at tier 2+ — running at
+55% speed."* Plus an action item, which never ages out of the inbox.
+
+There is a test asserting the card **renders** it, not merely that the field is set. Setting a
+value and never showing it is this project's most repeated defect, and it would have been the
+same bug again.
+
+### Tests
+
+**1020 across 48 suites.** New: a regression case reproducing the reported garage job exactly —
+two tier-1 machines on a `minTier: 1` contract must run at full speed, while a contract that
+genuinely demands tier 4 still demands it.
+
+
 ## Build 10 — jobs take FleetFlow-sized time, and a harness that plays the game
 
 > *"Explain why the hell it's taking so long to do a job! FleetFlow is the example!"*

@@ -194,3 +194,50 @@ describe("heavy plant", () => {
     expect(HEAVY_TIER).toBe(3);
   });
 });
+
+describe("the contract's own minTier is the authority", () => {
+  // REPORTED FROM A DEVICE, with a screenshot: a Garage Construction job showing
+  //
+  //     Foundation · Phase 2 of 6 · ~32 days remaining · 14.8%/day     Due day 39, 6d left
+  //
+  // with a Basic Pickup Truck and a Skid Steer parked on it and NOTHING on screen explaining
+  // why. The arithmetic: crew 2 of crewMin 2 gives 65%/day at full rate; the old STALL_FACTOR
+  // of 0.25 takes that to 16.2%/day. The reported figure was 14.8%.
+  //
+  // The cause was mine and it was a design error, not a tuning one. Every contract already
+  // carries its own `minTier` — the garage job says `minTier: 1`, meaning tier-1 plant is
+  // enough. Sprint 12 invented a stricter per-phase rule ("Foundation needs tier 2") and let it
+  // silently override the game's own stated requirement. A player who owned exactly what the
+  // job asked for was throttled to a quarter speed for it.
+  const GARAGE_MIN_TIER = 1;
+  const skidSteer = { id: "ss", type: "Earthwork", tier: 1, status: "Active" };
+  const pickup = { id: "pu", type: "Earthwork", tier: 1, status: "Active" };
+
+  test("a garage foundation is NOT throttled by tier-1 plant", () => {
+    expect(satisfies("Foundation", [skidSteer, pickup], GARAGE_MIN_TIER)).toBe(true);
+    expect(plantProgressFactor("Foundation", [skidSteer, pickup], GARAGE_MIN_TIER)).toBe(1.0);
+  });
+
+  test("without the contract's tier it would still be throttled — this is the bug", () => {
+    expect(satisfies("Foundation", [skidSteer, pickup])).toBe(false);
+  });
+
+  test("a contract that DOES demand big plant still demands it", () => {
+    // The clamp lowers a phase requirement to the contract's figure; it never raises the
+    // contract's. A mega job asking for tier 4 is not softened by this.
+    expect(satisfies("Piling", [skidSteer], 4)).toBe(false);
+    expect(satisfies("Piling", [{ id: "pd", type: "Foundation", tier: 4, status: "Idle" }], 4)).toBe(true);
+  });
+
+  test("the kind of plant still matters, whatever the contract's tier", () => {
+    // A pickup cannot drive piles no matter how modest the contract is.
+    expect(satisfies("Piling", [pickup], 1)).toBe(false);
+  });
+
+  test("the penalty is now felt rather than fatal", () => {
+    // 0.25 turned a six-day job into a thirty-two-day one. A wrong-plant penalty should cost
+    // the player time, not the contract.
+    expect(STALL_FACTOR).toBeGreaterThanOrEqual(0.5);
+    expect(STALL_FACTOR).toBeLessThan(1);
+  });
+});
