@@ -97,13 +97,27 @@ export function isUsable(machine) {
   return status !== "Broken" && status !== "Maintenance" && status !== "Sold";
 }
 
-export function requirementFor(phaseName) {
-  return PHASE_PLANT_REQUIREMENTS[phaseName] || null;
+// THE ROOT ERROR THIS FIXES.
+//
+// Every contract in the game already carries its own `minTier` — the garage job says
+// `minTier: 1`, meaning tier-1 plant is enough to do it. Sprint 12 then invented a SECOND,
+// stricter, per-phase requirement ("Foundation needs tier 2") and let it silently override the
+// contract's own stated requirement. A player who owned exactly what the job asked for was
+// throttled to a quarter speed for it, with nothing on screen explaining why.
+//
+// The contract's own figure wins. The phase table still decides WHICH KIND of plant the work
+// needs — you cannot drive piles with a pickup — but it may not demand a bigger machine than
+// the job itself asked for.
+export function requirementFor(phaseName, contractMinTier = null) {
+  const req = PHASE_PLANT_REQUIREMENTS[phaseName];
+  if (!req) return null;
+  if (!Number.isFinite(contractMinTier)) return req;
+  return { ...req, minTier: Math.min(req.minTier, Math.max(1, contractMinTier)) };
 }
 
 // Does this set of machines satisfy the phase?
-export function satisfies(phaseName, machines) {
-  const req = requirementFor(phaseName);
+export function satisfies(phaseName, machines, contractMinTier = null) {
+  const req = requirementFor(phaseName, contractMinTier);
   if (!req) return true;
   return arr(machines).some(
     (m) => isUsable(m) && req.anyOf.includes(m.type) && tierOf(m) >= req.minTier
@@ -111,9 +125,9 @@ export function satisfies(phaseName, machines) {
 }
 
 // What is missing, in words the player can act on. Returns null when nothing is.
-export function missingPlantFor(phaseName, machines) {
-  const req = requirementFor(phaseName);
-  if (!req || satisfies(phaseName, machines)) return null;
+export function missingPlantFor(phaseName, machines, contractMinTier = null) {
+  const req = requirementFor(phaseName, contractMinTier);
+  if (!req || satisfies(phaseName, machines, contractMinTier)) return null;
 
   // Distinguish "you own nothing suitable" from "the suitable machine is broken", because they
   // need completely different actions from the player.
@@ -140,22 +154,22 @@ export function missingPlantFor(phaseName, machines) {
 // Demanding the plant for every phase up front would mean a player could not take a job until
 // they owned a tower crane for a fit-out six months away, which is not how a contractor works:
 // you win the job, then you hire in.
-export function canStartWithPlant(phases, machines) {
+export function canStartWithPlant(phases, machines, contractMinTier = null) {
   const first = arr(phases)[0];
   if (!first) return { ok: true, missing: null };
-  const missing = missingPlantFor(first, machines);
+  const missing = missingPlantFor(first, machines, contractMinTier);
   return { ok: !missing, missing };
 }
 
 // Every phase of a job, with what it will need. This is the honest version of the check above:
 // the player is told up front what is coming, rather than being blocked by surprise at phase 4.
-export function plantPlanFor(phases, machines) {
+export function plantPlanFor(phases, machines, contractMinTier = null) {
   return arr(phases).map((phaseName) => {
-    const req = requirementFor(phaseName);
+    const req = requirementFor(phaseName, contractMinTier);
     return {
       phase: phaseName,
       required: req ? { anyOf: req.anyOf, minTier: req.minTier } : null,
-      satisfied: satisfies(phaseName, machines),
+      satisfied: satisfies(phaseName, machines, contractMinTier),
     };
   });
 }
@@ -165,8 +179,11 @@ export function plantPlanFor(phases, machines) {
 // How badly progress suffers when the required plant is not on site. NOT zero, deliberately:
 // a machine breaking mid-phase must be a setback the player can dig out of, never a dead save.
 // The crew keep working by hand and get a fraction of the rate.
-export const STALL_FACTOR = 0.25;
+// Was 0.25 — a FOUR-TIMES slowdown for bringing a tier-1 machine to a tier-2 phase. On a real
+// device that turned a garage job into "~32 days remaining · 14.8%/day" against a six-day
+// deadline, and the player was never told why. A penalty should be felt, not fatal.
+export const STALL_FACTOR = 0.55;
 
-export function plantProgressFactor(phaseName, machines) {
-  return satisfies(phaseName, machines) ? 1.0 : STALL_FACTOR;
+export function plantProgressFactor(phaseName, machines, contractMinTier = null) {
+  return satisfies(phaseName, machines, contractMinTier) ? 1.0 : STALL_FACTOR;
 }

@@ -59,8 +59,11 @@ describe("the gate is wired to starting a site", () => {
     expect(SCREEN_CODE).toContain("Wrong Plant For The Job");
   });
 
-  test("progress is multiplied by the plant factor", () => {
-    expect(SCREEN_CODE).toContain("plantProgressFactor(currentPhaseName, assignedEquip)");
+  test("progress is multiplied by the plant factor, against the contract's own tier", () => {
+    // The third argument is the fix for the reported garage job: every contract already carries
+    // a minTier, and the phase table may narrow WHICH plant is needed but must not demand a
+    // bigger machine than the job itself asked for.
+    expect(SCREEN_CODE).toContain("plantProgressFactor(currentPhaseName, assignedEquip, _siteDef?.minTier)");
   });
 });
 
@@ -257,5 +260,31 @@ describe("the requirement is visible before the player commits", () => {
 
   test("and confirms when it is not", () => {
     expect(CODE).toContain("Plant on hand for all");
+  });
+});
+
+describe("a throttled site says so, on the card the player is looking at", () => {
+  const CODE2 = fs.readFileSync(SCREEN_PATH, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
+
+  test("the tick records why the site is slow", () => {
+    expect(CODE2).toContain("site.plantWarning =");
+    expect(CODE2).toContain("running at ${Math.round(STALL_FACTOR * 100)}% speed");
+  });
+
+  test("and the site card RENDERS it", () => {
+    // Setting a field and never showing it is this project's most repeated defect. The warning
+    // existing in state while the player stares at an unexplained 14.8%/day is the same bug as
+    // the one being fixed.
+    expect(CODE2).toContain("{site.plantWarning && (");
+    expect(CODE2).toContain("🐌 {site.plantWarning}");
+  });
+
+  test("it also raises an action item, which never ages out", () => {
+    expect(CODE2).toContain("is running slow.");
+    expect(CODE2).toContain('"action", { actionLabel: "Assign plant"');
+  });
+
+  test("progress is judged against the contract's own tier, not an invented one", () => {
+    expect(CODE2).toContain("plantProgressFactor(currentPhaseName, assignedEquip, _siteDef?.minTier)");
   });
 });

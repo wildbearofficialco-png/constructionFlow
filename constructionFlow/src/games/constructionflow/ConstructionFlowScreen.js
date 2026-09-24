@@ -4161,6 +4161,31 @@ export function gameTick(prev) {
       continue;
     }
 
+    // A throttled site must say so. Sprint 12 added a plant requirement that quietly cut
+    // progress when the wrong machine was assigned, and only warned when a site had NO machine
+    // at all — so a garage job with a pickup and a skid steer on it ran at a fraction of speed
+    // showing "~32 days remaining · 14.8%/day" against a six-day deadline, with no explanation
+    // anywhere on the screen. A penalty the player cannot see is indistinguishable from a bug,
+    // and this one WAS reported as one.
+    const _phaseNow = site.phases[site.currentPhaseIdx || 0] || "";
+    const _wrongPlant = !_noPlant && !plantSatisfies(_phaseNow, assignedEquip, _siteDef?.minTier);
+    if (_wrongPlant) {
+      const _miss = missingPlantFor(_phaseNow, assignedEquip, _siteDef?.minTier);
+      site.plantWarning = _miss
+        ? `${_phaseNow} needs ${_miss.anyOf.join(" or ")} plant at tier ${_miss.minTier}+ — running at ${Math.round(STALL_FACTOR * 100)}% speed.`
+        : null;
+      if (site._plantWarnedPhase !== _phaseNow) {
+        site._plantWarnedPhase = _phaseNow;
+        addLog(g, `🐌 ${site.label}: ${site.plantWarning}`);
+        addImportantNotice(g,
+          `${site.label} is running slow. ${site.plantWarning} Assign the right machine or the deadline will go.`,
+          "action", { actionLabel: "Assign plant", actionTab: "Sites" });
+      }
+    } else {
+      site.plantWarning = null;
+      site._plantWarnedPhase = null;
+    }
+
     // Progress rate: base 2% per tick, modified by crew skill & trait
     const avgSkill = assignedCrew.reduce((s, w) => s + w.skill, 0) / assignedCrew.length;
     // No-show crew excluded from speed average (they randomly skip ticks)
@@ -4231,7 +4256,7 @@ export function gameTick(prev) {
     const progressRate = (3.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
       // Sprint 12: required plant missing mid-phase crawls rather than halting. A machine
       // breaking through no fault of the player must be a setback, never a dead save.
-      * plantProgressFactor(currentPhaseName, assignedEquip)
+      * plantProgressFactor(currentPhaseName, assignedEquip, _siteDef?.minTier)
       * (_noPlant ? STALL_FACTOR : 1);
     site._progressRate = progressRate;
 
@@ -6365,7 +6390,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       // Sprint 12: the right machine for the job. Equipment type used to be a BONUS with a
       // floor of 1.0, so the wrong machine and NO machine were worth exactly the same and
       // nothing ever said "you cannot do this without a crane".
-      const _plant = canStartWithPlant(c.phases || [], (g.equipment || []).filter((e) => equipIds.includes(e.id)));
+      // The contract's own minTier is the authority on how big a machine this job needs.
+      const _cDefStart = CONTRACT_DEFS.find((d) => d.id === c.defId);
+      const _plant = canStartWithPlant(c.phases || [], (g.equipment || []).filter((e) => equipIds.includes(e.id)), _cDefStart?.minTier);
       if (!_plant.ok) {
         fireHaptic("error");
         Alert.alert("Wrong Plant For The Job", `${_plant.missing.summary}\n\n${_plant.missing.action}`);
@@ -8876,6 +8903,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       </>
                     );
                   })()}
+
+                  {/* The throttle, where the player is actually looking.
+                      A device screenshot showed a garage job reading "~32 days remaining ·
+                      14.8%/day" against a six-day deadline, with two machines parked on it and
+                      no explanation anywhere. The penalty was real and correct; its invisibility
+                      was the defect, and it was reported as the game being broken — fairly. */}
+                  {site.plantWarning && (
+                    <View style={{ marginTop: 6, backgroundColor: alpha(T.caution, 0.14), borderRadius: 6, padding: 7, borderWidth: 1, borderColor: T.caution }}>
+                      <Text style={[styles.sub, { color: T.caution, fontWeight: "700", fontSize: 12 }]}>
+                        🐌 {site.plantWarning}
+                      </Text>
+                    </View>
+                  )}
 
                   {/* Crew on site. Every row is a full-width tap target at the 44pt minimum —
                       the inherited rows were 9px text with 2px padding, roughly 14pt tall. */}
@@ -12176,7 +12216,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                       hitting it is a trap. plantPlanFor covers every phase, not just the first
                       one that blocks, so nothing is a surprise at phase four either. */}
                   {(() => {
-                    const plan = plantPlanFor(c.phases || [], game.equipment || []);
+                    const plan = plantPlanFor(c.phases || [], game.equipment || [], CONTRACT_DEFS.find((d) => d.id === c.defId)?.minTier);
                     const needed = plan.filter((p) => p.required);
                     if (needed.length === 0) return null;
                     const short = needed.filter((p) => !p.satisfied);
