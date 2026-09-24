@@ -67,6 +67,9 @@ import {
   accrueTaxReserve,
   taxEstimate,
   issueWeeklyTaxBill,
+  bankWeekIntoTaxPeriod,
+  isTaxDay,
+  TAX_PERIOD_DAYS,
   applyLatePenalty,
   applyOverdueCreditHit,
   canTakeNewWork,
@@ -524,7 +527,8 @@ const EQUIPMENT_UPGRADES = [
 
 // ─── Contract Definitions ────────────────────────────────────────────────────────
 
-const CONTRACT_DEFS = [
+// Exported so the playtest harness can act like a player who restocks a stalled site.
+export const CONTRACT_DEFS = [
   // ── Residential — fast cash, reputation growth ───────────────────────────────
   { id: "fence",        label: "Fence Installation",       category: "Residential",
     minTier: 1, crewMin: 1, equipMin: 1,
@@ -781,7 +785,8 @@ const CONTRACT_DEFS = [
 
 // ─── Material Catalog ───────────────────────────────────────────────────────────
 
-const MATERIAL_DEFS = [
+// Exported for the same reason: the harness pays the real price for materials.
+export const MATERIAL_DEFS = [
   { id: "concrete",   label: "Concrete",   unit: "m³",   basePrice: 120, volatility: 0.14, icon: "layers" },
   { id: "lumber",     label: "Lumber",     unit: "sheets",basePrice: 85,  volatility: 0.18, icon: "leaf" },
   { id: "steel",      label: "Steel",      unit: "tons",  basePrice: 950, volatility: 0.20, icon: "build" },
@@ -3596,7 +3601,7 @@ export function freshState() {
     theme: "dark",
     marketState: "Normal",
     businessFrozen: false,
-    taxDue: 0, taxOverdueDays: 0, taxReserve: 0,
+    taxDue: 0, taxOverdueDays: 0, taxReserve: 0, taxPeriodRevenue: 0,
     eventHistory: {},
     revenue: 0, expenses: 0,
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
@@ -3788,6 +3793,7 @@ export function migrateState(saved) {
   if (!g.eventHistory || typeof g.eventHistory !== "object" || Array.isArray(g.eventHistory)) {
     g.eventHistory = {};
   }
+  if (!Number.isFinite(g.taxPeriodRevenue)) g.taxPeriodRevenue = 0;
   if (!Number.isFinite(saved?.taxReserve)) accrueTaxReserve(g);
   // A save can arrive already corrupted — that is exactly the state the $NaN report described.
   // Repair before the first tick rather than after.
@@ -4124,16 +4130,33 @@ export function gameTick(prev) {
       ([matId, needed]) => ((site.materialsFulfilled || {})[matId] || 0) < needed
     );
     if (_hasMissingMats) {
-      // Say which it is: waiting on a delivery is a different problem from nobody having
-      // ordered anything, and only the second one needs the player.
-      if (Math.random() < 0.04) {
-        const _due = nextDeliveryDay(site);
-        addLog(
-          g,
-          _due != null
-            ? `⏳ ${site.label}: Work stalled — materials arrive day ${_due}. Pay the emergency premium for same-day.`
-            : `⚠️ ${site.label}: Work stalled — nothing on order. Order materials in Sites.`
-        );
+      // THE THIRD FREEZE, and the same shape as the fuel and exhaustion ones. A site short of
+      // materials stops dead — correctly, you cannot build without them — but the ONLY signal
+      // was a log line with a four-percent chance per tick, buried in a scrolling feed. So a
+      // theft (which Sprint 12 made both larger and more frequent) could take a site to a halt
+      // that lasted the rest of the game, while wages and overheads carried on, and the player
+      // was never told why. Three runs in ten of the playtest harness died exactly this way.
+      //
+      // The work still stops. What changes is that the player cannot miss it.
+      site.status = "Active";
+      const _missing = Object.entries(_siteDef.materials)
+        .map(([matId, needed]) => ({ matId, short: needed - ((site.materialsFulfilled || {})[matId] || 0) }))
+        .filter((m) => m.short > 0);
+      const _due = nextDeliveryDay(site);
+      const _summary = _missing.map((m) => `${m.short} ${m.matId}`).join(", ");
+
+      if (!site._matsWarnedDay || site._matsWarnedDay !== g.day) {
+        site._matsWarnedDay = g.day;
+        addLog(g, _due != null
+          ? `⏳ ${site.label}: stalled — ${_summary} arrives day ${_due}.`
+          : `⚠️ ${site.label}: STALLED — short ${_summary}, nothing on order.`);
+        // An action item, not a log line. Action items do not age out of the inbox, so a
+        // stalled site stays in front of the player until they deal with it.
+        if (_due == null) {
+          addImportantNotice(g,
+            `${site.label} has stopped: short ${_summary} and nothing on order. The crew are being paid to stand still.`,
+            "action", { actionLabel: "Order materials", actionTab: "Sites" });
+        }
       }
       continue;
     }
@@ -5118,14 +5141,18 @@ export function gameTick(prev) {
           addLog(g, `🏗️ Property income: +${money(_propIncome)} passive revenue from ${_ownedProps.length} propert${_ownedProps.length === 1 ? 'y' : 'ies'}.`);
         }
       }
-      const weeklyRevenue = g.weeklyStats.revenue || 0;
-      // Accrue one last time so revenue booked earlier in THIS block (property income, above)
-      // is captured, then bill from the reserve. The reserve has been visible to the player all
-      // week, so the amount here is a number they have already seen rather than a surprise.
+      // Bank the week that is about to be cleared, so a 28-day tax period does not forget
+      // three weeks in four.
+      bankWeekIntoTaxPeriod(g);
       accrueTaxReserve(g);
-      const _bill = issueWeeklyTaxBill(g);
-      if (_bill > 0) {
-        addLog(g, `🧾 Tax assessed: ${money(_bill)} on ${money(weeklyRevenue)} of revenue — the amount set aside this week.`);
+      // The bill is MONTHLY now, not weekly. A game week is eleven real minutes on this clock,
+      // and billing on it was the literal substance of "taxes are due every five seconds".
+      if (isTaxDay(g)) {
+        const _periodRevenue = g.taxPeriodRevenue || 0;
+        const _bill = issueWeeklyTaxBill(g);
+        if (_bill > 0) {
+          addLog(g, `🧾 Tax assessed: ${money(_bill)} on ${money(_periodRevenue)} of revenue this period — the amount set aside.`);
+        }
       }
       // Weekly summary log
       const weekRev = g.weeklyStats.revenue || 0;

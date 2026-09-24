@@ -32,34 +32,43 @@ import {
   chancePerTick,
 } from "../src/systems/gameClock.js";
 
-describe("the pace actually changed", () => {
-  test("a day is now several real minutes rather than two and a half", () => {
-    const mins = realSecondsPerGameDay("1x") / 60;
-    expect(mins).toBeGreaterThan(5);
-    expect(mins).toBeLessThan(15);
+describe("the pace is measured against FleetFlow in REAL time", () => {
+  // Sprint 11 wrote these tests around the wrong goal. They asserted a day should be "several
+  // real minutes", which sounded reasonable and was never checked against anything. The number
+  // that matters is how long a JOB takes, because that is what the player waits through:
+  //
+  //   FleetFlow's smallest delivery: routeSecRange [500,900] / vehicle speed, floored at 180s
+  //                                  => 6 to 15 REAL MINUTES.
+  //
+  // At the pace Sprint 11 chose, Construction Flow's six-day starter contract took FORTY-THREE
+  // real minutes and paid once. That is the defect these tests now exist to prevent.
+  const FLEETFLOW_SHORT_JOB_MIN = 6;
+  const FLEETFLOW_SHORT_JOB_MAX = 15;
+  const STARTER_CONTRACT_DAYS = 6;
+
+  test("a six-day contract lands inside FleetFlow's shortest-delivery window", () => {
+    const minutes = (realSecondsPerGameDay("1x") * STARTER_CONTRACT_DAYS) / 60;
+    expect(minutes).toBeLessThanOrEqual(FLEETFLOW_SHORT_JOB_MAX);
+    expect(minutes).toBeGreaterThanOrEqual(FLEETFLOW_SHORT_JOB_MIN - 3);
   });
 
-  test("the old pace is still reachable, and then some", () => {
-    // The game used to run at a fixed 144s/day. 4x is 108s/day — faster still — so nothing is
-    // taken away from a player who liked the old speed; 2x (216s) brackets it from the other
-    // side. The point of the control is that the pace is now the player's to pick.
-    const OLD_SECONDS_PER_DAY = 144;
-    expect(realSecondsPerGameDay("4x")).toBeLessThanOrEqual(OLD_SECONDS_PER_DAY);
-    expect(realSecondsPerGameDay("2x")).toBeGreaterThan(OLD_SECONDS_PER_DAY);
+  test("a game day is well under two real minutes", () => {
+    // The old value was 432 seconds. This is the regression guard on that specific mistake.
+    expect(realSecondsPerGameDay("1x")).toBeLessThan(120);
   });
 
-  test("it is no longer 600x FleetFlow", () => {
-    // FleetFlow: 1 game minute per real minute.
-    const fleetflowSecondsPerGameMinute = 60;
-    const ratio = fleetflowSecondsPerGameMinute / realSecondsPerGameMinute("1x");
-    expect(ratio).toBeLessThan(250);
+  test("and 4x is for skipping ahead, not for making it bearable", () => {
+    // If 1x is only tolerable at 4x, 1x is wrong.
+    expect(realSecondsPerGameDay("4x")).toBeLessThan(realSecondsPerGameDay("1x"));
   });
 
-  test("but it is deliberately NOT FleetFlow's clock", () => {
-    // A mega contract runs 300 game days. At FleetFlow's rate that is 300 REAL days for one
-    // job. Copying the clock would not make this feel like FleetFlow, it would make it
-    // unplayable — so a day stays well under an hour.
-    expect(realSecondsPerGameDay("1x")).toBeLessThan(3600);
+  test("it is still NOT FleetFlow's clock, deliberately", () => {
+    // FleetFlow: one game minute per real minute, so one game day is a real day. Construction
+    // Flow's mega contracts run 300 game days — at that rate a single job would take 300 real
+    // days. Parity of JOB LENGTH is the goal; parity of clock would be unplayable.
+    const MEGA_DAYS = 300;
+    const megaHours = (realSecondsPerGameDay("1x") * MEGA_DAYS) / 3600;
+    expect(megaHours).toBeLessThan(24);
   });
 });
 
@@ -184,9 +193,15 @@ describe("rate-invariant chance", () => {
     expect(1 - Math.pow(1 - 0.0017, 48)).toBeCloseTo(0.08, 2);
   });
 
-  test("and would have become 22% at the new one", () => {
-    // The silent breakage. Nothing throws; the player is just interrupted three times as often.
-    expect(1 - Math.pow(1 - 0.0017, ticksPerDay("1x"))).toBeGreaterThan(0.2);
+  test("and drifts badly at any other tick rate, which is the whole point", () => {
+    // The hard-coded 0.0017 was 8% a day only at 48 ticks. The pace has since moved twice —
+    // down to 144 ticks and back up to 32 — and a literal cannot follow it. Stated as a
+    // property rather than pinned to one number, because pinning it to one number is exactly
+    // the mistake being guarded against.
+    const atCurrentRate = 1 - Math.pow(1 - 0.0017, ticksPerDay("1x"));
+    expect(Math.abs(atCurrentRate - 0.08)).toBeGreaterThan(0.01);
+    // Whereas the helper holds 8% wherever the pace goes.
+    expect(1 - Math.pow(1 - chancePerTick(0.08), ticksPerDay("1x"))).toBeCloseTo(0.08, 10);
   });
 
   test("certainty and impossibility pass through unchanged", () => {

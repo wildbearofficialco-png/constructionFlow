@@ -5,6 +5,95 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Build 10 — jobs take FleetFlow-sized time, and a harness that plays the game
+
+> *"Explain why the hell it's taking so long to do a job! FleetFlow is the example!"*
+
+Fair, and here is the number I should have measured four sprints ago instead of arguing about
+game days.
+
+### The comparison, in the only unit a player feels
+
+FleetFlow's smallest delivery, from its own data — `routeSecRange [500, 900]` divided by vehicle
+speed, floored at 180s:
+
+| | real time for one job |
+|---|---|
+| **FleetFlow, smallest delivery** | **6–15 minutes** |
+| Construction Flow, 6-day starter contract | **43 minutes** |
+
+Three to seven times longer, paid **once** at the end, while FleetFlow runs several routes in
+parallel each paying as it lands.
+
+### And I made it worse
+
+Sprint 11 read *"taxes are due every five seconds"* as *the whole game runs too fast* and slowed
+the clock three-fold, 144 → 432 seconds per game day. The complaint was about how often the
+**tax bill** arrives, not about job pace. I tripled exactly the thing being complained about.
+
+- **`MINS_PER_TICK` 10 → 45.** A game day is now **96 real seconds**, so the six-day starter
+  contract lands at **about 8 real minutes** — inside FleetFlow's own smallest-delivery window.
+- **Tax period 7 days → 28.** A game week is eleven real minutes on this clock; FleetFlow's week
+  is seven *real days*. Billing weekly here was not the same mechanic in a different hat, it was
+  a tax bill roughly nine hundred times more often in real terms. The reserve now accumulates
+  across the whole period (`taxPeriodRevenue`), because `weeklyStats` is cleared every seven days
+  and would otherwise have forgotten three weeks in four.
+
+Per-game-day economics are untouched — costs and income both scale with the day.
+
+### The third freeze
+
+The playtest harness immediately found one I had missed. A site short of materials stops dead —
+correctly, you cannot build without them — but the **only** signal was a log line with a **4%
+chance per tick**, buried in a scrolling feed. A theft (which Sprint 12 made both larger and more
+frequent) could halt a site for the rest of the game while wages carried on, and the player was
+never told why. Three runs in ten died exactly this way.
+
+The work still stops. What changed is that it now raises an **action item** — which never ages
+out of the inbox — naming the exact shortfall: *"short 6 lumber and nothing on order. The crew
+are being paid to stand still."*
+
+That is the third member of a family: fuel-stranded plant, exhausted crew, and now materials.
+All three froze a site permanently and said nothing useful.
+
+### The harness
+
+`__tests__/playtest.test.js` plays the opening contract ten times and reports it in **real
+minutes**, against FleetFlow's bar. It models an **attentive player**, not a passive observer:
+it checks its sites once a game day and pays real money for missing materials, because a harness
+that only watches measures whether the game plays itself.
+
+```
+PLAYTEST — 10 runs of the opening contract
+clock: 96s per game day (1.6 min)
+FleetFlow's smallest delivery: 6-15 real minutes
+
+      6d    9.6min  profit     4326  cash floor  96%  crewLost 0
+      4d    6.4min  profit     6550  cash floor  99%  crewLost 0
+      ...
+  median: 8 real minutes
+```
+
+Before this week: **0 of 6 completed, >120 days, every run lost money.**
+
+### Also confirmed: the game runs in a browser here
+
+`expo export --platform web` bundles clean, and headless Chromium drives it end to end — setup,
+state, city, into the game, onto the Bids screen — with **zero console errors**. Sprint 12's
+plant-requirement line renders live. That is a second harness worth building out; this changelog
+records that it works rather than claiming more than was done.
+
+### Tests
+
+**1011 across 48 suites**, three consecutive clean full runs. The pre-existing
+`rivalMarketIntegration` entrant flake did not reproduce in any of them.
+
+Three Sprint 11 clock tests were **rewritten rather than repaired**: they asserted a day should
+be "several real minutes", which sounded reasonable, was never checked against anything, and
+encoded the wrong goal. They now assert what matters — a six-day contract inside FleetFlow's
+shortest-delivery window, and a mega contract still under a real day.
+
+
 ## Hotfix (build 9) — the job that could never finish
 
 Reported from a device, and it was the worst defect this project has produced:
