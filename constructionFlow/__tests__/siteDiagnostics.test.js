@@ -30,6 +30,13 @@ import { pctPerDay, daysRemaining } from "../src/utils/sitePace.js";
 import { ticksPerDay } from "../src/systems/gameClock.js";
 import SiteStatusBanner from "../src/components/SiteStatusBanner.js";
 
+import { mulberry32 as __mulberry32 } from "../scripts/playtest/firstHourHarness.js";
+
+// Deterministic: every test in this file runs on a seeded RNG, so a pass or a failure reproduces.
+let __realRandom;
+beforeEach(() => { __realRandom = Math.random; Math.random = __mulberry32(20260924); });
+afterEach(() => { Math.random = __realRandom; });
+
 jest.setTimeout(30000);
 
 // A fence job started through the real Bids path, rng pinned so the bid is won.

@@ -195,13 +195,19 @@ function respond(g, run) {
 
 // ─── One run ─────────────────────────────────────────────────────────────────
 
-export function playFirstHour(seed, { maxDays = 45, jobs = 2 } = {}) {
+export function playFirstHour(seed, { maxDays = 45, jobs = 2, trace = null } = {}) {
   return withSeed(seed, () => {
     let g = { ...freshState(), setupDone: true, tutorialDone: false };
     const run = {
       seed, startCash: g.cash, minCash: g.cash, finalCash: null,
       bids: [], startBlocks: [], materialOrders: 0, unaffordableOrders: 0, taxPaid: 0,
       playerReassignedCrew: 0, repairs: 0,
+      chaos: {},              // site events by type
+      chaosEvents: 0,
+      siteDays: 0,            // game days a site was open (active or paused), for per-site rates
+      pauses: {},             // Active → Paused transitions by reason
+      inspectionCosts: 0,     // fines + remediation from inspections, incidents and violations
+      loginBonus: 0,          // streak money paid during simulated play (must be 0)
       jobs: [],               // { defId, startDay, endDay, days, realMinutes, economics }
       cash: { named: 0, reconciled: 0, silent: 0 },
       silentSamples: [],      // ticks where money moved with no ledger entry
@@ -239,6 +245,25 @@ export function playFirstHour(seed, { maxDays = 45, jobs = 2 } = {}) {
       const wasPaused = new Set((before.activeSites || []).filter((s) => s.status === "Paused").map((s) => s.id));
 
       g = gameTick(before);
+      if (trace) trace(before, g, i);
+
+      // ── Site events and holds ──
+      const beforeSites = Object.fromEntries((before.activeSites || []).map((s) => [s.id, s]));
+      for (const s of (g.activeSites || [])) {
+        const prev = beforeSites[s.id];
+        if (!prev) continue;
+        const top = (s.chaosHistory || [])[0];
+        const prevTop = (prev.chaosHistory || [])[0];
+        if (top && JSON.stringify(top) !== JSON.stringify(prevTop)) {
+          run.chaosEvents += 1;
+          run.chaos[top.type || "other"] = (run.chaos[top.type || "other"] || 0) + 1;
+        }
+        if (prev.status !== "Paused" && s.status === "Paused") {
+          const why = s.pauseReason?.key || "unknown";
+          run.pauses[why] = (run.pauses[why] || 0) + 1;
+        }
+      }
+      if (i % TPD === 0) run.siteDays += (g.activeSites || []).length;
 
       // ── Money integrity ──
       const acct = accountCashMove(before, g, ids);
@@ -255,6 +280,11 @@ export function playFirstHour(seed, { maxDays = 45, jobs = 2 } = {}) {
       for (const e of acct.entries) {
         if (e.meta && e.meta.source === "reconciliation") continue;
         run.categories[e.category] = (run.categories[e.category] || 0) + e.amount;
+        // Login/return streak only — the on-time JOB streak is earned by delivering work.
+        if (/login streak|return streak/i.test(e.description)) run.loginBonus += e.amount;
+        if (e.category === "fines" || /remediation|inspection|incident|unlicensed/i.test(e.description)) {
+          if (e.amount < 0) run.inspectionCosts -= e.amount;
+        }
         if (e.description === "Startup emergency grant") run.emergencyGrants += 1;
       }
       const nf = findNonFinite(g);
@@ -355,6 +385,10 @@ export function playFirstHour(seed, { maxDays = 45, jobs = 2 } = {}) {
       if (g.cash < run.minCash) run.minCash = g.cash;
       if ((g.bankruptcyDays || 0) > run.bankruptcyDays) run.bankruptcyDays = g.bankruptcyDays;
       run.loansTaken = (g.loans || []).length;
+      // A loan the harness player accepted from a decision card (the angel investor) is a choice,
+      // not forced borrowing. Forced = an emergency grant, a bankruptcy countdown, or a loan taken
+      // any other way.
+      run.voluntaryLoans = (g.ledger || []).filter((e) => e.category === "financing" && e.amount > 0 && /Accept investment/.test(e.description)).length;
       if (g.gameOver) { run.gameOver = true; break; }
       if (run.jobs.length >= jobs && run.jobs.every((j) => j.endDay !== null)) break;
     }
@@ -372,8 +406,15 @@ export function summarize(runs) {
   const done1 = runs.filter((r) => r.jobs[0]?.endDay != null);
   const done2 = runs.filter((r) => r.jobs[1]?.endDay != null);
   const mins = done1.map((r) => r.jobs[0].realMinutes).sort((a, b) => a - b);
+  const days = runs.reduce((s, r) => s + Math.max(1, (r.endDay || 1) - 1), 0);
+  const siteDays = runs.reduce((s, r) => s + r.siteDays, 0);
   return {
     runs: runs.length,
+    chaosPerGameDay: +(runs.reduce((s, r) => s + r.chaosEvents, 0) / days).toFixed(3),
+    chaosPerSiteDay: +(runs.reduce((s, r) => s + r.chaosEvents, 0) / Math.max(1, siteDays)).toFixed(3),
+    loginBonus: runs.reduce((s, r) => s + r.loginBonus, 0),
+    forcedBorrowing: runs.filter((r) => r.emergencyGrants > 0 || r.bankruptcyDays > 0 || r.gameOver || (r.loansTaken || 0) > (r.voluntaryLoans || 0)).length,
+    voluntaryLoanRuns: runs.filter((r) => (r.voluntaryLoans || 0) > 0).length,
     job1Complete: done1.length,
     job2Complete: done2.length,
     medianJob1Minutes: mins.length ? mins[Math.floor(mins.length / 2)] : null,

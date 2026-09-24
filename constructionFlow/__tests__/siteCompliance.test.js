@@ -13,9 +13,6 @@ import {
   SAFETY_CERTS,
   CATCH_CHANCE_PER_MACHINE,
   SAFETY_OFFICER_RISK_REDUCTION,
-  FINE_SHARE_OF_SITE,
-  MIN_FINE,
-  MAX_FINE,
   UNSAFE_CONDITION,
   THEFT_MIN_UNITS,
   THEFT_MAX_UNITS,
@@ -33,6 +30,7 @@ import {
   theftRiskMultiplier,
   describeTheft,
 } from "../src/systems/siteCompliance.js";
+import { KNOWING_CAP_SHARE, ROUTINE_CAP_SHARE, PENALTY_CEILING } from "../src/systems/penalties.js";
 
 const crane = (id = "c1", over = {}) => ({ id, type: "Lifting", tier: 4, status: "Idle", condition: 90, ...over });
 const truck = (id = "t1", over = {}) => ({ id, type: "Utility", tier: 1, status: "Idle", condition: 90, ...over });
@@ -142,23 +140,32 @@ describe("getting caught is a risk, not a gate", () => {
 });
 
 describe("the fine", () => {
+  // Sprint 1: fines come from the one penalty rule (systems/penalties.js). The old flat $1,200
+  // floor took 13% of a $9,000 starter fence for a routine visit, and more of anything smaller.
   test("scales with the site, so it means something at every size", () => {
     expect(fineFor(site({ totalValue: 2000000 }))).toBeGreaterThan(fineFor(site({ totalValue: 200000 })));
   });
 
-  test("is never trivial and never a death sentence", () => {
-    expect(fineFor(site({ totalValue: 1 }))).toBe(MIN_FINE);
-    expect(fineFor(site({ totalValue: 500000000 }))).toBe(MAX_FINE);
+  test("never takes more than its share of the job, and never exceeds the ceiling", () => {
+    const tiny = 3000;
+    expect(fineFor(site({ totalValue: tiny }))).toBeLessThanOrEqual(tiny * KNOWING_CAP_SHARE);
+    expect(fineFor(site({ totalValue: tiny }), 1, { knowing: false })).toBeLessThanOrEqual(tiny * ROUTINE_CAP_SHARE);
+    expect(fineFor(site({ totalValue: 5e9 }))).toBe(PENALTY_CEILING);
   });
 
-  test("uses the documented share in the middle of the range", () => {
-    const v = 500000;
-    expect(fineFor(site({ totalValue: v }))).toBe(Math.round(v * FINE_SHARE_OF_SITE));
+  test("running unlicensed (knowing) costs more than a housekeeping finding", () => {
+    const s = site({ totalValue: 500000 });
+    expect(fineFor(s, 3, { knowing: true })).toBeGreaterThan(fineFor(s, 1, { knowing: false }));
   });
 
-  test("a site with no value still produces a real fine", () => {
-    expect(fineFor(site({ totalValue: undefined }))).toBe(MIN_FINE);
-    expect(fineFor(null)).toBe(MIN_FINE);
+  test("a Safety Officer argues it down", () => {
+    const s = site({ totalValue: 500000 });
+    expect(fineFor(s, 3, { mitigated: true })).toBeLessThan(fineFor(s, 3));
+  });
+
+  test("a site with no recorded value cannot produce a fine out of nothing", () => {
+    expect(fineFor(site({ totalValue: undefined }))).toBe(0);
+    expect(fineFor(null)).toBe(0);
   });
 });
 

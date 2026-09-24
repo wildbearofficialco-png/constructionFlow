@@ -33,13 +33,46 @@ export const PAUSE_REASONS = Object.freeze({
   other:       { label: "On hold",                    action: null },
 });
 
+// Holds the authorities put on a site. Only their own resolution clears them — the countdown, or
+// the regulatory decision card's paid paths. Sprint 1: the generic Resume button cleared ANY pause,
+// so a permit hold or a failed safety inspection could be waved away with one tap.
+export const REGULATORY_HOLDS = Object.freeze(new Set(["permit", "regulatory", "inspection", "quality"]));
+
+export function isRegulatoryHold(site) {
+  return site?.status === "Paused" && REGULATORY_HOLDS.has(site?.pauseReason?.key);
+}
+
+// Can the PLAYER resume this site? Only a pause the player made. A pre-Sprint-1 save's manual
+// pause carries no reason but is recognisable by its open-ended 999 days.
+export function canPlayerResume(site) {
+  if (site?.status !== "Paused") return false;
+  const key = site?.pauseReason?.key;
+  if (key) return key === "manual";
+  return site?.pausedDays === 999;
+}
+
+// Can an automatic manager (a Senior PM) get a paused site moving? Operational holds yes;
+// regulatory holds never.
+export function canAutoResume(site) {
+  return site?.status === "Paused" && !isRegulatoryHold(site);
+}
+
 // The one way a site should be put on hold, so the reason travels with the pause.
 export function pauseSite(site, days, reasonKey = "other", detail = null) {
   if (!site) return;
+  const key = PAUSE_REASONS[reasonKey] ? reasonKey : "other";
+  // A player's own pause never replaces a regulatory hold — otherwise "Pause" then "Resume" would
+  // be a way round the permit office.
+  if (key === "manual" && isRegulatoryHold(site)) return;
+  const openEnded = days === Infinity || days >= 999;
+  const wasOpenEnded = site.status === "Paused" && site.pausedDays >= 999;
   site.status = "Paused";
-  if (days === Infinity || days >= 999) site.pausedDays = 999;
+  if (openEnded) site.pausedDays = 999;
+  // A timed hold landing on an open-ended manual pause starts its own clock, rather than adding to
+  // the 999 sentinel and becoming a thousand-day hold.
+  else if (wasOpenEnded) site.pausedDays = Math.max(0, Number(days) || 0);
   else site.pausedDays = Math.max(0, Number(site.pausedDays) || 0) + Math.max(0, Number(days) || 0);
-  site.pauseReason = { key: PAUSE_REASONS[reasonKey] ? reasonKey : "other", detail: detail || null };
+  site.pauseReason = { key, detail: detail || null };
 }
 
 // ─── Rate factors ────────────────────────────────────────────────────────────

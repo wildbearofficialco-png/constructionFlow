@@ -55,7 +55,10 @@ describe("PLAYTEST — Scenario A: a fresh company, first contract through secon
   }, 180000);
 
   test("≥90% finish the first contract without forced borrowing or bankruptcy", () => {
-    const clean = runs.filter((r) => r.jobs[0]?.endDay != null && r.loansTaken === 0 && r.emergencyGrants === 0 && !r.gameOver && r.bankruptcyDays === 0);
+    // A loan the player accepted from a decision card is a choice; forced borrowing is an
+    // emergency grant, a bankruptcy countdown, or any other loan.
+    const forced = (r) => r.emergencyGrants > 0 || r.gameOver || r.bankruptcyDays > 0 || (r.loansTaken || 0) > (r.voluntaryLoans || 0);
+    const clean = runs.filter((r) => r.jobs[0]?.endDay != null && !forced(r));
     expect(clean.length / runs.length).toBeGreaterThanOrEqual(0.9);
   });
 
@@ -93,6 +96,14 @@ describe("PLAYTEST — Scenario A: a fresh company, first contract through secon
   test("no NaN/Infinity anywhere in the save, and no save repair fired", () => {
     expect(sum.nonFiniteRuns).toBe(0);
     expect(sum.saveRepairs).toBe(0);
+  });
+
+  test("no login/return bonus is paid for simulated days", () => {
+    expect(sum.loginBonus).toBe(0);
+  });
+
+  test("site events arrive at their documented rate (8% a site-day), not 4x it", () => {
+    expect(sum.chaosPerSiteDay).toBeLessThan(0.14);
   });
 
   test("the opening does not empty the crew", () => {

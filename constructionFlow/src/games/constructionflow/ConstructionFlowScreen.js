@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import CollapsibleSection from "../../components/CollapsibleSection.js";
 import SiteStatusBanner from "../../components/SiteStatusBanner.js";
+import ChainOpportunityCard from "../../components/ChainOpportunityCard.js";
 import { pctPerDay, daysRemaining } from "../../utils/sitePace.js";
 import {
   tickEmployeePersonalities,
@@ -26,11 +27,17 @@ import { initTerritories, tickTerritories } from "../../systems/territorySystem.
 import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
 import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
 import { recordTransaction, beginCashScope, closeCashScope } from "../../systems/financialLedger.js";
-import { pauseSite, returnRecoveredToSites } from "../../systems/siteDiagnostics.js";
+import { pauseSite, returnRecoveredToSites, canPlayerResume, canAutoResume } from "../../systems/siteDiagnostics.js";
+import { chaosChancePerTick } from "../../systems/siteEvents.js";
+import { penaltyFor } from "../../systems/penalties.js";
+import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
+import { registerSession } from "../../systems/sessionStreak.js";
+import {
+  earnChainOpportunity, openReadyChainOpportunities, hasLiveChainOpportunity, chainReadiness, CHAIN_LOCKED, CHAIN_OFFER_DAYS,
+} from "../../systems/chainOpportunities.js";
 import {
   getConstructionRegionalSnapshot,
   applyRegionalContractValue,
-  applyRegionalMaterialPrice,
   applyRegionalWage,
 } from "../../systems/constructionRegionalEconomy.js";
 import {
@@ -1099,14 +1106,6 @@ function withBidPerks(g) {
   };
 }
 
-function getMaterialDiscount(g) {
-  // Phase 6: dealing straight with suppliers earns terms; stiffing them costs terms. Added to
-  // the buildings' discount and re-clamped, so goodwill can lift you but never to free
-  // materials, and a grudge can price you up but never past paying double.
-  const { supplierGoodwill } = resolveMemoryEffects(g);
-  const combined = resolveCompanyPerks(g).materialDiscount + supplierGoodwill;
-  return Math.max(-0.25, Math.min(0.5, combined));
-}
 
 function getEquipCapBonus(g) {
   const office = OFFICES[g?.officeIndex || 0];
@@ -1172,7 +1171,10 @@ function checkEmpireGoals(g) {
       if (goal.check(g)) {
         if (!g.empireGoalsCompleted) g.empireGoalsCompleted = [];
         g.empireGoalsCompleted.push(goal.id);
-        if (goal.cashReward) { g.cash += goal.cashReward; g.revenue += goal.cashReward; }
+        if (goal.cashReward) {
+          g.cash += goal.cashReward; g.revenue += goal.cashReward;
+          recordTransaction(g, "bonuses", goal.cashReward, `Empire goal: ${goal.title}`);
+        }
         if (goal.repReward)  g.reputation = Math.min(100, (g.reputation||0) + goal.repReward);
         addLog(g, `🏆 Empire Goal: "${goal.title}" — +${money(goal.cashReward||0)} & +${goal.repReward} rep!`);
       }
@@ -1253,7 +1255,7 @@ export const CHAOS_EVENTS = [
   },
   { id: "safety",     label: "Safety Incident",       prob: 0.02, tone: "red",    icon: "🦺",
     apply: (site, game) => {
-      const fine = rand(2000, 8000);
+      const fine = penaltyFor({ contractValue: site.totalValue, severity: "major", companyLevel: game.companyLevel, roll: Math.random() });
       game.cash -= fine;
       game.reputation = Math.max(0, game.reputation - rand(2, 6));
       addLog(game, `🦺 Safety incident on ${site.label}! Fine of ${money(fine)} issued.`);
@@ -1318,8 +1320,7 @@ export const CHAOS_EVENTS = [
         addLog(game, `✅ ${site.label}: Safety inspection PASSED — reputation up.`);
         return { text: "Safety inspection passed. Reputation +.", type: "inspect_pass" };
       } else {
-        const baseVal = site.totalValue || 8000;
-        const fine = Math.max(500, Math.round(baseVal * rand(8, 18) / 100 / 100) * 100);
+        const fine = penaltyFor({ contractValue: site.totalValue, severity: "major", companyLevel: game.companyLevel, roll: Math.random() });
         game.cash -= fine;
         site.pausedDays = 0;
         pauseSite(site, rand(2, 4), "inspection", `${money(fine)} fine`);
@@ -2384,6 +2385,12 @@ function getOpenContracts(state) {
   return state.contracts.filter((c) => c.status === "Open");
 }
 
+// What the company could staff and equip right now — the gates a chain opportunity waits on.
+function companyCapacity(g) {
+  const office = OFFICES[g.officeIndex] || OFFICES[0];
+  return { crewCap: getTotalCrewCap(g), equipCap: (office?.equipCap || 2) + getEquipCapBonus(g), equipment: g.equipment || [] };
+}
+
 function getBestEquipTier(state) {
   if (!state.equipment.length) return 0;
   return Math.max(...state.equipment.map((e) => e.tier));
@@ -2481,12 +2488,14 @@ function applyInsuranceClaim(g, rawDamage) {
   return netDamage;
 }
 
-function applyIncident(g, severity) {
+function applyIncident(g, severity, contractValue = 0) {
   if (!g.incidentHistory) g.incidentHistory = [];
   g.safetyScore     = Math.max(0, Math.min(100, (g.safetyScore    ?? 70) - severity * rand(3, 8)));
   g.complianceScore = Math.max(0, Math.min(100, (g.complianceScore ?? 60) - severity * rand(2, 5)));
   g.safetyViolations = (g.safetyViolations ?? 0) + 1;
-  const rawCost = severity * rand(1500, 4000);
+  // Damage and medical cost of the incident, priced off the job it happened on (it was a flat
+  // $1,500–4,000 per level, charged ON TOP of the event's own fine — up to ~$16k on a $9k fence).
+  const rawCost = penaltyFor({ contractValue, severity: severity >= 2 ? "major" : "minor", companyLevel: g.companyLevel, roll: Math.random() });
   const netCost = applyInsuranceClaim(g, rawCost);
   g.cash -= netCost;
   g.expenses += netCost;
@@ -2721,30 +2730,24 @@ function getAssignBlockReason(contract, crewIds, equipIds, state) {
 // what the shop *quotes* for it can never drift apart (WildBear standard: "displayed price
 // and charged price must use the same calculation path").
 function getMaterialUnitPrice(game, matId) {
-  const mat = MATERIAL_DEFS.find((m) => m.id === matId);
-  const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
-  const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
-  return Math.round(basePrice * (1 - (game ? getMaterialDiscount(game) : 0)));
+  return quoteMaterialUnitPrice(game, matId, MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice);
 }
 
 // Returns array of { matId, label, icon, unit, needed, fulfilled, missing, pricePerUnit, costNormal, costEmergency }
 function getSiteMissingMaterials(site, contractDef, game) {
   if (!contractDef?.materials) return [];
-  const disc = game ? getMaterialDiscount(game) : 0;
   return Object.entries(contractDef.materials).reduce((acc, [matId, needed]) => {
     const fulfilled = (site.materialsFulfilled || {})[matId] || 0;
     const shortfall = Math.max(0, needed - fulfilled);
     if (shortfall === 0) return acc;
     const mat = MATERIAL_DEFS.find(m => m.id === matId);
-    const rawBasePrice = (game?.materialPrices?.[matId]) || mat?.basePrice || 100;
-    const basePrice = game ? applyRegionalMaterialPrice(rawBasePrice, game) : rawBasePrice;
-    const pricePerUnit = Math.round(basePrice * (1 - disc));
+    const pricePerUnit = getMaterialUnitPrice(game, matId);
     acc.push({
       matId, needed, fulfilled, missing: shortfall,
       label: mat?.label || matId, icon: mat?.icon || "📦", unit: mat?.unit || "units",
       pricePerUnit,
       costNormal: pricePerUnit * shortfall,
-      costEmergency: Math.round(pricePerUnit * shortfall * 1.5),
+      costEmergency: quoteMaterialCost(game, matId, shortfall, { emergency: true, fallbackBase: mat?.basePrice }),
     });
     return acc;
   }, []);
@@ -2950,12 +2953,8 @@ export function resolveDecision(g, i) {
 // materials screens and the playtest harness. Mutates `g`.
 export function buyYardMaterials(g, matId, qty) {
   if (!qty || qty < 1) return { status: "none" };
-  const rawBasePrice = g.materialPrices[matId] || MATERIAL_DEFS.find((m) => m.id === matId)?.basePrice || 100;
-  const basePrice = applyRegionalMaterialPrice(rawBasePrice, g);
-  // R15-8: Apply flash deal price if active for this material
-  const isFlashDeal = g.hotMaterialDeal && g.hotMaterialDeal.matId === matId && g.hotMaterialDeal.expiresDay >= g.day;
-  const price = isFlashDeal ? g.hotMaterialDeal.unitPrice : Math.round(basePrice * (1 - getMaterialDiscount(g)));
-  const totalCost = price * qty;
+  // The canonical price (regional, supplier terms or flash deal) — the same number the Buy modal quotes.
+  const totalCost = getMaterialUnitPrice(g, matId) * qty;
   if (g.cash < totalCost) return { status: "unaffordable", cost: totalCost };
   g.cash -= totalCost;
   g.expenses += totalCost;
@@ -2999,6 +2998,8 @@ export function repairEquipment(g, equipId, isEmergency) {
   _eq.status = "Idle";
   if (g.pendingBreakdown?.equipId === equipId) g.pendingBreakdown = null;
   addLog(g, `🔧 ${_eq.name} repaired — condition ${Math.round(_eq.condition)}%`);
+  // Pulled off a site for this repair (a recall)? It goes straight back, not at tomorrow's check.
+  if (_eq.awaitingRepairForSiteId) for (const _ret of returnRecoveredToSites(g, isUsable)) addLog(g, _ret.text);
   return { status: "repaired", cost: _baseCost };
 }
 
@@ -3017,6 +3018,91 @@ export function restWorker(g, workerId) {
   _w.restUntilStamina = 80;
   addLog(g, `💤 ${_w.name} is resting — will return when stamina reaches 80%.`);
   return true;
+}
+
+// The Resume button. Resumes only a pause the player made — a permit, regulatory or inspection
+// hold is cleared by its own resolution, never by this. Returns whether it resumed. Mutates `g`.
+export function resumeSite(g, siteId) {
+  const _s = (g.activeSites||[]).find(s => s.id === siteId);
+  if (!_s) return false;
+  if (!canPlayerResume(_s)) {
+    addLog(g, `⛔ ${_s.label} is on an official hold — it cannot be resumed early.`);
+    return false;
+  }
+  _s.status = "Active";
+  _s.pausedDays = 0;
+  _s.pauseReason = null;
+  addLog(g, `▶️ ${_s.label} resumed.`);
+  return true;
+}
+
+// Same-day emergency order at 1.5x, on supplier credit if cash is short. Shared with the tests.
+export function emergencyOrderMaterials(g, siteId) {
+  const site = g.activeSites.find(s => s.id === siteId);
+  if (!site) return { status: "none" };
+  const contract = g.contracts.find(c => c.id === site.contractId);
+  const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
+  const missing = getSiteMissingMaterials(site, def, g);
+  if (!missing.length) return { status: "none" };
+  const totalCost = missing.reduce((s, m) => s + m.costEmergency, 0);
+  const shortfall = Math.max(0, totalCost - (g.cash || 0));
+  const canUseCredit = (g.creditScore || 600) >= 600;
+  if (shortfall > 0 && !canUseCredit) {
+    addLog(g, `❌ Emergency purchase failed — insufficient cash and credit below 600.`);
+    return { status: "refused" };
+  }
+  if (shortfall > 0) {
+    g.debt = (g.debt || 0) + shortfall;
+    g.creditScore = Math.max(300, (g.creditScore || 600) - 5);
+    g.cash = Math.max(0, g.cash - (totalCost - shortfall));
+    addLog(g, `⚡ Emergency: ${money(shortfall)} charged to supplier credit.`);
+  } else {
+    g.cash -= totalCost;
+  }
+  g.expenses += totalCost;
+  // Emergency premium is a cost this project caused, so it lands on this project.
+  accrueProjectCost(site, "materials", totalCost);
+  recordTransaction(g, "materials", -totalCost, `${site.label}: emergency material order`);
+  // The part on supplier credit did not leave the bank today — it became debt. Name it, so the
+  // ledger matches the balance.
+  if (shortfall > 0) recordTransaction(g, "financing", shortfall, `${site.label}: supplier credit drawn`);
+
+  // Same-day: the emergency order is queued like any other, but with a zero-day lead, so
+  // it is collected by the same arrival path in the tick rather than a second code path
+  // that could drift from it. This is now what the 1.5x premium actually buys.
+  if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
+  site.pendingDeliveries.push(...planDeliveries(missing, g.day, { emergency: true }));
+  const summary = missing.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
+  addLog(g, `⚡ Emergency order placed: ${summary} (${money(totalCost)}) — on site today.`);
+  return { status: "ordered", cost: totalCost };
+}
+
+// Auto-buy: top up every active site's shortfall at the canonical price. Shared with the tests.
+export function autoPurchaseSiteMaterials(g) {
+  for (const site of (g.activeSites || [])) {
+    if (site.status !== "Active") continue;
+    const _con = (g.contracts || []).find(c => c.id === site.contractId);
+    const _def = CONTRACT_DEFS.find(d => d.id === _con?.defId);
+    if (!_def?.materials) continue;
+    for (const [matId, needed] of Object.entries(_def.materials)) {
+      const have = (site.materialsFulfilled || {})[matId] || 0;
+      if (have >= needed) continue;
+      const shortage = needed - have;
+      // Same price the manual quote shows (systems/materialPricing.js) — it used to skip the
+      // regional adjustment, so auto-buy and the shop disagreed.
+      const cost = getMaterialUnitPrice(g, matId) * shortage;
+      if (g.cash >= cost) {
+        g.cash -= cost;
+        g.expenses = (g.expenses || 0) + cost;
+        g.weeklyStats.expenses = (g.weeklyStats.expenses || 0) + cost;
+        if (!site.materialsFulfilled) site.materialsFulfilled = {};
+        site.materialsFulfilled[matId] = needed;
+        accrueProjectCost(site, "materials", cost);
+        recordTransaction(g, "materials", -cost, `${site.label}: auto-purchased ${shortage} ${matId}`);
+        addLog(g, `⚡ Auto-purchased ${shortage} ${matId} for "${site.label}" — ${money(cost)}.`);
+      }
+    }
+  }
 }
 
 // Which Getting Started step the player is on, derived purely from game state — there is no
@@ -3144,7 +3230,9 @@ export function checkMilestones(state) {
       if (m.check(state)) {
         state._milestones[m.key] = true;
         if (typeof m.reward === "function") {
+          const _scope = beginCashScope(state);
           m.reward(state);
+          closeCashScope(state, _scope, "bonuses", `Milestone: ${m.label}`);
           addImportantNotice(state, `🏆 "${m.label}" milestone reached!`, "green");
         } else if (m.reward > 0) {
           state.cash += m.reward;
@@ -3550,7 +3638,7 @@ export function enhancedRivalDailyLogic(g) {
     const focusMap = { residential: ["Residential"], commercial: ["Commercial"], infrastructure: ["Infrastructure"] };
     const targetCategories = focusMap[rival.focus] || ["Commercial"];
     const vulnerableContracts = g.contracts.filter((c) =>
-      c.status === "Open" && targetCategories.includes(c.category) && c.expiresDay <= g.day + 2
+      isRivalBiddable(c) && targetCategories.includes(c.category) && c.expiresDay <= g.day + 2
     );
     for (const c of vulnerableContracts) {
       if (Math.random() < rival.aggression * 0.8 * stealPenalty) {
@@ -3561,7 +3649,7 @@ export function enhancedRivalDailyLogic(g) {
         break;
       }
     }
-    const expiredOpen = g.contracts.filter((c) => c.status === "Open" && c.expiresDay < g.day);
+    const expiredOpen = g.contracts.filter((c) => isRivalBiddable(c) && c.expiresDay < g.day);
     for (const c of expiredOpen) {
       if (Math.random() < rival.aggression * stealPenalty) {
         c.status = "Taken";
@@ -3661,6 +3749,13 @@ export function enhancedRivalDailyLogic(g) {
   }
 }
 
+// A contract the open market can take. An earned chain opportunity is a private offer to the
+// player — the reward for finishing its prerequisite — so no rival can bid it away. Sprint 1 found
+// rivals claiming one on the very day it opened.
+function isRivalBiddable(c) {
+  return !!c && c.status === "Open" && !c.isChainUnlock;
+}
+
 export function enhancedRivalBidding(g, openContracts) {
   if (!openContracts || openContracts.length === 0) return;
   const hasPMDirector = (g.projectManagers || []).some((pm) => pm.typeId === "director");
@@ -3697,7 +3792,7 @@ export function enhancedRivalBidding(g, openContracts) {
     if (!personality) continue;
     if (personality.dailySkip && Math.random() > personality.dailySkip) continue;
     const targets = openContracts.filter((c) =>
-      c.status === "Open" && personality.focus.includes(c.category)
+      isRivalBiddable(c) && personality.focus.includes(c.category)
     );
     for (const c of targets) {
       if (Math.random() < rival.aggression * personality.focusBonus * cityPressure * playerEdge) {
@@ -3764,7 +3859,8 @@ function checkChainEvents(site, game, lastEventType) {
     }
     case "safety": {
       if (Math.random() < 0.50) {
-        const fine = rand(1500, 5000);
+        // A second finding on the same site is worse than the first.
+        const fine = penaltyFor({ contractValue: site.totalValue, severity: "severe", companyLevel: game.companyLevel, roll: Math.random() });
         game.cash -= fine;
         pauseSite(site, rand(1, 3), "inspection", `follow-up, ${money(fine)} fine`);
         addLog(game, `🔍 Chain: Follow-up inspection at ${site.label} — ${money(fine)} fine, work paused.`);
@@ -3835,7 +3931,7 @@ export function pruneContractHistory(g) {
   const kept = [];
   const history = [];
   for (const c of g.contracts) {
-    if (c.status === "Open" || liveContractIds.has(c.id)) { kept.push(c); continue; }
+    if (c.status === "Open" || c.status === CHAIN_LOCKED || liveContractIds.has(c.id)) { kept.push(c); continue; }
     // Contracts a rival snapped up are pure noise once they are well past expiry.
     if (c.status === "Taken" && (c.expiresDay || 0) < currentDay - 10) continue;
     history.push(c);
@@ -3975,6 +4071,7 @@ export function freshState() {
     _stories: [],
     lastLoginDay: 0,
     consecutiveLoginDays: 0,
+    lastSessionDate: null,   // real calendar day of the last session, "YYYY-MM-DD"
     tutorialDone: false,
     lastRealTimestamp: null,
     // Addiction Pass additions
@@ -4151,6 +4248,9 @@ export function migrateState(saved) {
   // Sprint finalization fields
   if (g.lastLoginDay === undefined)         g.lastLoginDay = g.day || 1;
   if (g.consecutiveLoginDays === undefined) g.consecutiveLoginDays = 0;
+  // Saves from before real-session tracking counted the streak in GAME days; that number means
+  // nothing now, so the real-day streak starts fresh at the next session.
+  if (!saved || saved.lastSessionDate === undefined) { g.lastSessionDate = null; g.consecutiveLoginDays = 0; }
   if (g.tutorialDone === undefined)         g.tutorialDone = (g.completedJobs || 0) > 0;
   if (g.lastRealTimestamp === undefined)    g.lastRealTimestamp = null;
   if (g.pendingOfflineSummary === undefined)g.pendingOfflineSummary = null;
@@ -4299,6 +4399,14 @@ export function migrateState(saved) {
     }
     return c;
   });
+  // An earned chain opportunity from before Sprint 1 is an ordinary Open contract with a 14-day
+  // expiry, even if the company cannot take it. Hold it instead, exactly as a new one would be.
+  for (const c of (g.contracts || [])) {
+    if (c && c.isChainUnlock && c.status === "Open" && !chainReadiness(c, companyCapacity(g)).ready) {
+      c.status = CHAIN_LOCKED;
+      c.expiresDay = null;
+    }
+  }
   const cleaned = cleanStaleState(g);
   repairCrewAssignments(cleaned);
   return cleaned;
@@ -4682,6 +4790,11 @@ export function gameTick(prev) {
         const passChance = Math.min(0.90, 0.55 + qualityMod + (avgCrewSkillInsp - 80) / 200);
         const inspRoll = Math.random();
         let inspOutcome, inspPenalty = 0;
+        // Remediation is priced off the job (systems/penalties.js). It was a flat $500–2,500 /
+        // $2,500–9,000 — the whole value of a starter fence, and pocket change on a hospital.
+        // Rush and Budget modes are the player choosing to cut corners, so a failure there counts
+        // as a knowing one.
+        const _knowingly = site.siteMode === "rush" || site.siteMode === "budget";
         if (inspRoll < passChance) {
           inspOutcome = "pass";
           g.reputation = Math.min(100, (g.reputation || 0) + 2);
@@ -4689,13 +4802,13 @@ export function gameTick(prev) {
           addLog(g, `✅ ${site.label}: ${completedPhaseName} passed — reputation +2.`);
         } else if (inspRoll < passChance + 0.28) {
           inspOutcome = "minor";
-          inspPenalty = rand(500, 2500);
+          inspPenalty = penaltyFor({ contractValue: site.totalValue, severity: "minor", knowing: _knowingly, companyLevel: g.companyLevel, roll: Math.random() });
           g.cash -= inspPenalty;
           site.phaseProgress = -20;
           addLog(g, `🔍 ${site.label}: Minor correction required — ${money(inspPenalty)} to remediate.`);
         } else {
           inspOutcome = "major";
-          inspPenalty = rand(2500, 9000);
+          inspPenalty = penaltyFor({ contractValue: site.totalValue, severity: "major", knowing: _knowingly, companyLevel: g.companyLevel, roll: Math.random() });
           g.cash -= inspPenalty;
           pauseSite(site, rand(3, 6), "quality", `${completedPhaseName} failed`);
           g.reputation = Math.max(0, (g.reputation || 0) - 3);
@@ -4961,27 +5074,27 @@ export function gameTick(prev) {
         const _completedDef = CONTRACT_DEFS.find(c => c.id === (g.contracts.find(cc => cc.id === site.contractId)?.defId));
         if (_completedDef?.unlocksContractId) {
           const _unlockDef = CONTRACT_DEFS.find(c => c.id === _completedDef.unlocksContractId);
-          if (_unlockDef && !g.bids.some(b => b.contractId === _unlockDef.id)) {
-            const _newBid = { ..._unlockDef };
-            _newBid.value = Math.round((_unlockDef.baseValue || _unlockDef.value || 10000) * 1.15);
-            _newBid.isChainUnlock = true;
-            _newBid.id = `bid_chain_${Date.now()}`;
-            _newBid.contractId = _unlockDef.id;
-            _newBid.expiryDay = g.day + 14;
-            if (!g.bids) g.bids = [];
-            g.bids.unshift(_newBid);
-            // Also add to open contracts so it appears in Bids tab
-            const _chainContract = {
+          if (_unlockDef && !hasLiveChainOpportunity(g.contracts, _unlockDef.id)) {
+            // Earned for good. If the company cannot take it yet it waits, locked and without an
+            // expiry, until it can — see systems/chainOpportunities.js.
+            const _chainContract = earnChainOpportunity({
               id: `chain_${uid()}`, defId: _unlockDef.id, label: _unlockDef.label, category: _unlockDef.category || "Commercial",
-              client: pick(CLIENTS), value: _newBid.value, phases: [..._unlockDef.phases],
+              client: pick(CLIENTS), value: Math.round((_unlockDef.baseValue || _unlockDef.value || 10000) * 1.15), phases: [..._unlockDef.phases],
               minTier: _unlockDef.minTier, crewMin: _unlockDef.crewMin, equipMin: _unlockDef.equipMin,
               materials: { ...(_unlockDef.materials||{}) }, penaltyPerDay: _unlockDef.penaltyPerDay,
-              durationDays: _unlockDef.durationDays, deadline: g.day + _unlockDef.durationDays + rand(3, 8),
-              expiresDay: g.day + 14, status: "Open", desc: _unlockDef.desc, risk: _unlockDef.risk || 2,
-              cityId: pickContractCity(g), isChainUnlock: true,
-            };
+              durationDays: _unlockDef.durationDays, risk: _unlockDef.risk || 2, desc: _unlockDef.desc,
+              cityId: pickContractCity(g),
+            }, companyCapacity(g), g.day);
+            // The deadline is set when the bid window opens, not when the job was earned.
+            _chainContract.deadline = g.day + _unlockDef.durationDays + rand(3, 8);
             g.contracts.push(_chainContract);
-            addLog(g, `🔓 New opportunity unlocked: ${_unlockDef.label}`);
+            if (_chainContract.status === "Open") {
+              addLog(g, `🔓 New opportunity unlocked: ${_unlockDef.label}`);
+            } else {
+              const _wait = chainReadiness(_chainContract, companyCapacity(g)).waitingOn.map((x) => x.label.toLowerCase()).join(", ");
+              addLog(g, `🔓 Earned: ${_unlockDef.label}. It waits on the Bids tab until you have the ${_wait} for it.`);
+              addImportantNotice(g, `You earned a shot at ${_unlockDef.label}. It is held for you — no expiry — until your company can take it. See Bids.`, "cyan", { actionLabel: "See what it needs", actionTab: "Bids" });
+            }
           }
         }
 
@@ -5024,11 +5137,12 @@ export function gameTick(prev) {
       }
     }
 
-    // Chaos events — mid-game sites (started after day 30) get 12% daily chance vs 8%
+    // Chaos events — mid-game sites (started after day 30) get a 12% daily chance vs 8%. The
+    // daily figure is converted to a per-tick chance from the clock (systems/siteEvents.js); a
+    // fixed per-tick number drifted to ~32% a day as the tick length changed.
     const isMidGameSite = (site.startDay || 0) > 30;
-    const chaosBaseProb = isMidGameSite ? 0.015 : 0.012;
     const chaosProbMult = isMidGameSite ? 9.6 : 8;
-    if (Math.random() < chaosBaseProb) {
+    if (Math.random() < chaosChancePerTick(site)) {
       const siteEquip = g.equipment.find(e => (site.assignedEquipmentIds || []).includes(e.id));
       const telematicsTier = siteEquip?.upgrades?.telematics || 0;
       const safetyTier = siteEquip?.upgrades?.safety || 0;
@@ -5048,7 +5162,7 @@ export function gameTick(prev) {
           site.chaosHistory = [{ ...result, day: g.day }, ...site.chaosHistory].slice(0, 10);
           if (result.type === "breakdown" || result.type === "safety") {
             g.weeklyStats.unexpectedCosts = (g.weeklyStats.unexpectedCosts || 0) + 2000;
-            applyIncident(g, result.type === "safety" ? 2 : 1);
+            applyIncident(g, result.type === "safety" ? 2 : 1, site.totalValue);
           } else if (result.type === "permit" && Math.random() < 0.3) {
             applyInspectionPass(g);
           }
@@ -5150,20 +5264,9 @@ export function gameTick(prev) {
 
   // ── Daily tick ───────────────────────────────────────────────────────────────
   if (newDay) {
-    // Login streak / daily reward
-    const daysSinceLogin = (g.day||1) - (g.lastLoginDay||0);
-    if (daysSinceLogin === 1) {
-      g.consecutiveLoginDays = (g.consecutiveLoginDays||0) + 1;
-      const streakBonus = Math.min(500, (g.consecutiveLoginDays||1) * 50);
-      if ((g.consecutiveLoginDays||0) >= 3) {
-        g.cash += streakBonus;
-        recordTransaction(g, "bonuses", streakBonus, `${g.consecutiveLoginDays}-day login streak bonus`);
-        addLog(g, `🎯 ${g.consecutiveLoginDays}-day streak! Bonus: ${money(streakBonus)}.`);
-      }
-    } else if (daysSinceLogin > 2) {
-      g.consecutiveLoginDays = 1;
-    }
-    g.lastLoginDay = g.day;
+    // The login streak used to be paid here, once per SIMULATED day — so leaving the game running
+    // was a $500/day income. It is counted on real calendar days now, when the app is opened or
+    // brought back (systems/sessionStreak.js). Game days never touch it.
 
     // Payroll (with labor_shortage market event crewWageMod)
     const activePayrollEvent = g.activeMarketEvent ? MARKET_EVENTS.find((e) => e.id === g.activeMarketEvent) : null;
@@ -5180,7 +5283,9 @@ export function gameTick(prev) {
     // Equipment daily cost
     const equipCost = g.equipment.reduce((s, e) => s + e.dailyCost, 0);
 
-    const totalOverhead = dailyPayroll + dailyRent + equipCost;
+    // Charged in whole dollars, exactly as the ledger records it below. A $0.25/hr review raise
+    // makes a wage fractional; the cents used to leave the balance unrecorded, a dollar at a time.
+    const totalOverhead = Math.round(dailyPayroll) + Math.round(dailyRent) + Math.round(equipCost);
     g.cash -= totalOverhead;
     g.expenses += totalOverhead;
     g.weeklyStats.expenses += totalOverhead;
@@ -5343,6 +5448,11 @@ export function gameTick(prev) {
     // Refresh contracts. The board's size is no longer hard-coded: regional offices widen
     // it, which is what their advertised "contract slots" always claimed and never did.
     const _board = contractBoardSize(g);
+    for (const _opened of openReadyChainOpportunities(g.contracts, companyCapacity(g), g.day)) {
+      _opened.deadline = g.day + (_opened.durationDays || 14) + rand(3, 8);
+      addLog(g, `🔓 ${_opened.label} is open to bid — you have what it needs now. ${CHAIN_OFFER_DAYS} days to take it.`);
+      addImportantNotice(g, `${_opened.label} is open to bid now that your company can take it. The offer runs ${CHAIN_OFFER_DAYS} days.`, "green", { actionLabel: "Bid", actionTab: "Bids" });
+    }
     g.contracts = g.contracts.filter((c) => c.status !== "Open" || c.expiresDay >= g.day);
     while (g.contracts.filter((c) => c.status === "Open").length < _board.floor) {
       g.contracts.push(createContract(g));
@@ -5350,7 +5460,8 @@ export function gameTick(prev) {
     // Expire old contracts — cap the Open pool at 7, then bound the closed history. This
     // ran only on app load before, so a long uninterrupted session grew the save without
     // limit; a live session needs the same bound the loader applies.
-    const openPool = g.contracts.filter((c) => c.status === "Open");
+    // Earned chain opportunities are never the ones the cap trims.
+    const openPool = g.contracts.filter((c) => c.status === "Open").sort((a, b) => (b.isChainUnlock ? 1 : 0) - (a.isChainUnlock ? 1 : 0));
     g.contracts = [...g.contracts.filter((c) => c.status !== "Open"), ...openPool.slice(0, _board.cap)];
     pruneContractHistory(g);
 
@@ -5446,7 +5557,7 @@ export function gameTick(prev) {
       const _risk = catchRiskPerDay(_site, g);
       if (_risk > 0 && Math.random() < _risk) {
         const _n = unlicensedMachineCount(_site, g.crew, g.equipment);
-        const _fine = fineFor(_site, 1);
+        const _fine = fineFor(_site, 3, { knowing: true, companyLevel: g.companyLevel || 1 });
         g.cash -= _fine;
         g.expenses += _fine;
         recordTransaction(g, "fines", -_fine, `Unlicensed operation — ${_site.label}`);
@@ -5813,7 +5924,8 @@ export function gameTick(prev) {
     });
     if (hasAutoMgr) {
       for (const site of g.activeSites) {
-        if (site.status === "Paused" && Math.random() < 0.60) {
+        // Operational holds only — a PM does not overrule the permit office either.
+        if (canAutoResume(site) && Math.random() < 0.60) {
           site.status = "Active";
           site.pausedDays = 0;
           addLog(g, `📋 PM intervened — "${site.label}" back on track.`);
@@ -5997,32 +6109,7 @@ export function gameTick(prev) {
     }
 
     // ── Auto-purchase missing materials for active sites ──────────────────────
-    if (g.autoPurchaseMaterials && newDay) {
-      for (const site of (g.activeSites || [])) {
-        if (site.status !== "Active") continue;
-        const _con = (g.contracts || []).find(c => c.id === site.contractId);
-        const _def = CONTRACT_DEFS.find(d => d.id === _con?.defId);
-        if (!_def?.materials) continue;
-        const _disc = getMaterialDiscount(g);
-        for (const [matId, needed] of Object.entries(_def.materials)) {
-          const have = (site.materialsFulfilled || {})[matId] || 0;
-          if (have >= needed) continue;
-          const shortage = needed - have;
-          const price = (g.materialPrices || {})[matId] || 100;
-          const cost = Math.round(shortage * price * (1 - _disc));
-          if (g.cash >= cost) {
-            g.cash -= cost;
-            g.expenses = (g.expenses || 0) + cost;
-            g.weeklyStats.expenses = (g.weeklyStats.expenses || 0) + cost;
-            if (!site.materialsFulfilled) site.materialsFulfilled = {};
-            site.materialsFulfilled[matId] = needed;
-            accrueProjectCost(site, "materials", cost);
-            recordTransaction(g, "materials", -cost, `${site.label}: auto-purchased ${shortage} ${matId}`);
-            addLog(g, `⚡ Auto-purchased ${shortage} ${matId} for "${site.label}" — ${money(cost)}.`);
-          }
-        }
-      }
-    }
+    if (g.autoPurchaseMaterials && newDay) autoPurchaseSiteMaterials(g);
 
     // ── Bankruptcy check ──────────────────────────────────────────────────────
     if (g.cash < -10000) {
@@ -6293,16 +6380,19 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const offlineInfo = computeOfflineProgress(saved, nowTs);
           if (offlineInfo && offlineInfo.ticksToRun > 0) {
             const progressed = applyOfflineProgress(saved, offlineInfo.ticksToRun);
+            registerSession(progressed, nowTs);
             setGame(progressed);
             setTheme(progressed.theme || "dark");
           } else {
             saved.lastRealTimestamp = nowTs;
+            registerSession(saved, nowTs);
             setGame(saved);
             setTheme(saved.theme || "dark");
           }
         } else {
           const fs = freshState();
           fs.lastRealTimestamp = Date.now();
+          registerSession(fs, fs.lastRealTimestamp);
           setGame(fs);
         }
       } catch (_) {
@@ -6421,10 +6511,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const offlineInfo = computeOfflineProgress(prevGame, nowTs);
           if (offlineInfo && offlineInfo.ticksToRun > 0) {
             const progressed = applyOfflineProgress(prevGame, offlineInfo.ticksToRun);
+            registerSession(progressed, nowTs);
             saveGame(progressed);
             return progressed;
           }
-          const updated = { ...prevGame, lastRealTimestamp: nowTs };
+          const updated = { ...clone(prevGame), lastRealTimestamp: nowTs };
+          registerSession(updated, nowTs);
           saveGame(updated);
           return updated;
         });
@@ -6635,41 +6727,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   // Emergency purchase: 1.5× price, uses supplier credit if cash is short
   const handleEmergencyPurchase = useCallback((siteId) => {
-    update((g) => {
-      const site = g.activeSites.find(s => s.id === siteId);
-      if (!site) return;
-      const contract = g.contracts.find(c => c.id === site.contractId);
-      const def = CONTRACT_DEFS.find(d => d.id === contract?.defId);
-      const missing = getSiteMissingMaterials(site, def, g);
-      if (!missing.length) return;
-      const totalCost = missing.reduce((s, m) => s + m.costEmergency, 0);
-      const shortfall = Math.max(0, totalCost - (g.cash || 0));
-      const canUseCredit = (g.creditScore || 600) >= 600;
-      if (shortfall > 0 && !canUseCredit) {
-        addLog(g, `❌ Emergency purchase failed — insufficient cash and credit below 600.`);
-        return;
-      }
-      if (shortfall > 0) {
-        g.debt = (g.debt || 0) + shortfall;
-        g.creditScore = Math.max(300, (g.creditScore || 600) - 5);
-        g.cash = Math.max(0, g.cash - (totalCost - shortfall));
-        addLog(g, `⚡ Emergency: ${money(shortfall)} charged to supplier credit.`);
-      } else {
-        g.cash -= totalCost;
-      }
-      g.expenses += totalCost;
-      // Emergency premium is a cost this project caused, so it lands on this project.
-      accrueProjectCost(site, "materials", totalCost);
-      recordTransaction(g, "materials", -totalCost, `${site.label}: emergency material order`);
-
-      // Same-day: the emergency order is queued like any other, but with a zero-day lead, so
-      // it is collected by the same arrival path in the tick rather than a second code path
-      // that could drift from it. This is now what the 1.5x premium actually buys.
-      if (!Array.isArray(site.pendingDeliveries)) site.pendingDeliveries = [];
-      site.pendingDeliveries.push(...planDeliveries(missing, g.day, { emergency: true }));
-      const summary = missing.map((m) => `${m.missing} ${m.unit} of ${m.label}`).join(", ");
-      addLog(g, `⚡ Emergency order placed: ${summary} (${money(totalCost)}) — on site today.`);
-    });
+    update((g) => { emergencyOrderMaterials(g, siteId); });
   }, [update]);
 
   const handleStartSite = useCallback((contract, crewIds, equipIds) => {
@@ -7289,14 +7347,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   }, [update]);
 
   const handleResumeSite = useCallback((siteId) => {
-    update((g) => {
-      const _s = (g.activeSites||[]).find(s => s.id === siteId);
-      if (!_s) return;
-      _s.status = "Active";
-      _s.pausedDays = 0;
-      _s.pauseReason = null;
-      addLog(g, `▶️ ${_s.label} resumed.`);
-    });
+    update((g) => { resumeSite(g, siteId); });
   }, [update]);
 
   const handleAbandonSite = useCallback((siteId) => {
@@ -8636,7 +8687,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           <View style={[styles.card, { backgroundColor: T.green + "18", borderColor: T.green, borderWidth: 1.5, marginBottom: 8 }]}>
             <Text style={[styles.sectionTitle, { color: T.green }]}>📊 Market Flash Deal</Text>
             <Text style={[styles.sub, subCol]}>
-              {game.hotMaterialDeal.label} — {game.hotMaterialDeal.discountPct}% off · {money(game.hotMaterialDeal.unitPrice)}/unit
+              {game.hotMaterialDeal.label} — {game.hotMaterialDeal.discountPct}% off · {money(getMaterialUnitPrice(game, game.hotMaterialDeal.matId))}/unit
             </Text>
             <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>
               Expires Day {game.hotMaterialDeal.expiresDay} · Buy in Sites tab
@@ -8787,6 +8838,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         onStartSite={handleStartSite}
         onBuyMaterials={handleBuyMaterials}
         onSetBidStyle={handleSetBidStyle}
+        lockedChains={(game.contracts || []).filter((c) => c.status === CHAIN_LOCKED)}
+        company={companyCapacity(game)}
       />
     );
   }
@@ -9540,6 +9593,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
                   {/* Job exit controls */}
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                    {site.status === "Paused" && !canPlayerResume(site) ? (
+                      // An official hold: no Resume. The banner above says why and for how long.
+                      <View style={[styles.smallBtn, { borderWidth:1, borderColor: T.border, backgroundColor: "transparent" }]}>
+                        <Text style={[styles.smallBtnText, { color: T.sub }]}>⏳ On hold</Text>
+                      </View>
+                    ) : (
                     <TouchableOpacity
                       style={[styles.smallBtn, { borderWidth:1, borderColor: site.status==="Paused" ? T.green : T.cyan, backgroundColor: "transparent" }]}
                       onPress={() => site.status==="Paused" ? handleResumeSite(site.id) : handlePauseSite(site.id)}
@@ -9548,6 +9607,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                         {site.status==="Paused" ? "▶ Resume" : "⏸ Pause"}
                       </Text>
                     </TouchableOpacity>
+                    )}
                     {game.day > site.deadlineDay && !site.renegotiated && (
                       <TouchableOpacity
                         style={[styles.smallBtn, { borderWidth:1, borderColor: _canRenegotiate ? T.yellow : T.border, backgroundColor:"transparent", opacity: _canRenegotiate ? 1 : 0.45 }]}
@@ -11475,7 +11535,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 <Ionicons name={m.icon} size={13} color={T.text} />
                 <Text style={[styles.sub, col]}>{m.label}</Text>
               </View>
-              <Text style={[styles.sub, { color: T.cyan }]}>{game.materials[m.id] || 0} {m.unit} · {money(game.materialPrices[m.id] || m.basePrice)}/{m.unit}</Text>
+              <Text style={[styles.sub, { color: T.cyan }]}>{game.materials[m.id] || 0} {m.unit} · {money(getMaterialUnitPrice(game, m.id))}/{m.unit}</Text>
             </View>
           ))}
         </View>
@@ -12235,7 +12295,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
 const CONTRACT_CATEGORIES = ["All", "Residential", "Commercial", "Infrastructure", "Government", "Mega"];
 
-function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categoryFilter, onSetFilter, idleCrew, idleEquip, onStartSite, onBuyMaterials, onSetBidStyle }) {
+function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categoryFilter, onSetFilter, idleCrew, idleEquip, onStartSite, onBuyMaterials, onSetBidStyle, lockedChains = [], company = null }) {
   const [selectedContract, setSelectedContract] = useState(null);
   const [selectedCrewIds, setSelectedCrewIds] = useState([]);
   const [selectedEquipIds, setSelectedEquipIds] = useState([]);
@@ -12295,6 +12355,12 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 120 }}>
+        {lockedChains.length > 0 && company && (
+          <View style={{ marginBottom: 6 }}>
+            <Text style={[styles.label, { color: T.sub, marginBottom: 6 }]}>Earned opportunities · waiting on your company</Text>
+            {lockedChains.map((c) => <ChainOpportunityCard key={c.id} T={T} contract={c} company={company} formatMoney={money} />)}
+          </View>
+        )}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <Text style={[styles.sectionTitle, col]}>
             {openContracts.length}/{allOpenCount} Contract{allOpenCount !== 1 ? "s" : ""}
@@ -12753,7 +12819,8 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
           <View style={[styles.modalCard, { backgroundColor: T.panel, borderColor: T.border }]}>
             {materialModal && (() => {
               const mat = MATERIAL_DEFS.find((m) => m.id === materialModal.matId);
-              const price = game.materialPrices[materialModal.matId] || mat?.basePrice || 100;
+              // The price buyYardMaterials() will charge — same function, so quote and charge cannot differ.
+              const price = getMaterialUnitPrice(game, materialModal.matId);
               const qty = parseInt(buyQty) || 0;
               const total = price * qty;
               return (

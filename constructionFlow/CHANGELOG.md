@@ -5,6 +5,36 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 1 (P0, part 2) — decisions from the audit review
+
+No new features, no build bump. Every fix below was a logic defect, not a tuning change.
+
+- **Site chaos events fired at ~4x their documented rate.** A fixed 0.012-per-tick roll labelled
+  "8% daily" was ~32% a day at the current 32 ticks. Now `systems/siteEvents.js` holds the daily
+  chance (8% starter / 12% mid-game) and converts it with `chancePerTickFor()`, so it survives any
+  change of tick length. Measured: 0.27 → 0.07 events per site-day.
+- **The login streak paid per simulated day.** ~$3,000 per company in its first 11 game days,
+  ~$17,500 over 34. It is now counted on real calendar days when the app opens or returns to the
+  foreground (`systems/sessionStreak.js`); game days never pay it. Old game-day streaks reset.
+- **Earned chain contracts expired before they could be taken.** Finishing Residential
+  Renovation / Road Patch now permanently earns Apartment Block / City Road. It waits on the Bids tab
+  as Locked, listing each gate (crew capacity, machine slots, plant tier, plant for phase 1), with no
+  expiry, until the company can take it; then the normal 14-day window opens. Rivals can no longer
+  bid it away (one did on the day it opened). `systems/chainOpportunities.js`.
+- **Inspection and incident penalties ignored the job's size.** A flat $2,500–9,000 inspection or a
+  ~$16,000 "safety incident" on a ~$9,000 fence; the same flat sums on a $1.5M contract. One rule
+  now (`systems/penalties.js`): share of contract value by severity, higher for a knowing violation
+  (unlicensed plant, Rush/Budget corner-cutting), adjusted for company size, capped at 15% of the
+  job (45% if knowing).
+- **Resume cleared permit, regulatory and inspection holds.** It now resumes only the player's own
+  pause; Pause-then-Resume and Senior-PM auto-resume cannot bypass a hold either.
+- **Quoted and charged material prices differed.** The Buy modal showed the raw market price; the
+  purchase charged regional × supplier terms; auto-buy skipped the regional adjustment; site orders
+  ignored flash deals. Every path now reads `systems/materialPricing.js`.
+- Also: Empire-goal and milestone rewards are ledgered; a partly-credited emergency order no longer
+  leaves a ledger gap; daily overhead is charged in the whole dollars it is recorded in; a machine
+  repaired after a recall goes straight back to its site.
+
 ## Sprint 1 (P0) — Stabilization: the first hour is trustworthy
 
 Roadmap: issue #28. No new features, no tuning constants changed, no build number bump.

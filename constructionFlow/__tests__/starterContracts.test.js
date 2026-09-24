@@ -17,6 +17,13 @@ import { requirementFor, canStartWithPlant, plantPlanFor, STALL_FACTOR } from ".
 import { OFFICES } from "../src/systems/companyPerkTables.js";
 import { MINS_PER_TICK, ticksPerDay } from "../src/systems/gameClock.js";
 
+import { mulberry32 as __mulberry32 } from "../scripts/playtest/firstHourHarness.js";
+
+// Deterministic: every test in this file runs on a seeded RNG, so a pass or a failure reproduces.
+let __realRandom;
+beforeEach(() => { __realRandom = Math.random; Math.random = __mulberry32(20260924); });
+afterEach(() => { Math.random = __realRandom; });
+
 const fresh = freshState();
 const STARTERS = CONTRACT_DEFS.filter((d) => isContractEligible(d, fresh));
 const CASH = fresh.cash;
