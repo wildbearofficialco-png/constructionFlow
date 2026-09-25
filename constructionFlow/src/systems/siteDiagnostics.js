@@ -17,7 +17,10 @@
 // modifier the tick did not apply — which is how the specialty warning used to disagree with
 // the simulation.
 //
-// Everything here is pure and RNG-free.
+// Everything here is RNG-free.
+
+import { fuelUnitPrice } from "./fuelEconomy.js";
+import { recordTransaction } from "./financialLedger.js";
 
 // ─── Pauses ──────────────────────────────────────────────────────────────────
 
@@ -185,6 +188,58 @@ export function diagnoseSite(site, day) {
   };
 }
 
+// ─── Fuel settlement ─────────────────────────────────────────────────────────
+
+// The main tick owns the physical tank motion: an idle machine gains fuel, an active one burns it.
+// This function owns the MONEY side. Because it runs every tick immediately after the automatic
+// yard refill, any upward movement in a tank is purchased through the one canonical fuel price.
+// A downward movement simply resets the observed baseline. Old saves with no baseline start from
+// their current tank level, deliberately avoiding a surprise retroactive bill on migration.
+export function settleAutomaticFuelPurchases(g) {
+  const lines = [];
+  const unitPrice = fuelUnitPrice();
+  for (const e of (g.equipment || [])) {
+    const cap = Math.max(0, Number.isFinite(e.fuelCap) ? e.fuelCap : 100);
+    let current = Math.max(0, Math.min(cap, Number.isFinite(e.fuel) ? e.fuel : cap));
+
+    if (!Number.isFinite(e._fuelBilledLevel)) {
+      e._fuelBilledLevel = current;
+      continue;
+    }
+
+    let previous = Math.max(0, Math.min(cap, e._fuelBilledLevel));
+    // A machine marked as fuel-stranded was set to zero after the previous settlement pass.
+    // If the prior observation was only a sliver above zero, bill this recovery from empty rather
+    // than donating that last fraction of a unit.
+    if (e.awaitingFuelForSiteId && previous <= cap * 0.05) previous = 0;
+
+    if (current <= previous) {
+      e._fuelBilledLevel = current;
+      continue;
+    }
+
+    const wantedUnits = current - previous;
+    const availableCash = Math.max(0, Number.isFinite(g.cash) ? g.cash : 0);
+    const affordableUnits = unitPrice > 0 ? Math.min(wantedUnits, availableCash / unitPrice) : wantedUnits;
+    const actualUnits = Math.max(0, affordableUnits);
+    current = previous + actualUnits;
+    e.fuel = current;
+
+    const cost = Math.min(availableCash, Math.round(actualUnits * unitPrice));
+    if (cost > 0) {
+      g.cash -= cost;
+      g.expenses = (Number(g.expenses) || 0) + cost;
+      if (g.weeklyStats) g.weeklyStats.expenses = (Number(g.weeklyStats.expenses) || 0) + cost;
+      recordTransaction(g, "fuel", -cost, `Fuel — ${e.name || e.label || "equipment"}`,
+        { equipmentId: e.id, units: actualUnits, unitPrice });
+      lines.push({ kind: "fuel", text: `⛽ ${e.name || e.label || "Equipment"} refuelled ${actualUnits.toFixed(1)} units for $${cost.toLocaleString()}.` });
+    }
+
+    e._fuelBilledLevel = current;
+  }
+  return lines;
+}
+
 // ─── Returning people and machines to the job they left ──────────────────────
 
 // Stamina a worker pulled off a site for exhaustion or injury needs before going back.
@@ -209,7 +264,7 @@ function liveSite(g, id) {
 // `awaitingRepairForSiteId`. Before Sprint 1 only the first two were ever marked, so a worker the
 // player RESTED — exactly as the site card told them to — never went back.
 export function returnRecoveredToSites(g, isUsable) {
-  const lines = [];
+  const lines = settleAutomaticFuelPurchases(g);
   for (const w of (g.crew || [])) {
     if (!w.awaitingRestForSiteId) continue;
     if (w.status === "Resting" || w.status === "Training") continue;   // still off, by choice
@@ -232,7 +287,7 @@ export function returnRecoveredToSites(g, isUsable) {
         back.assignedEquipmentIds = [...(back.assignedEquipmentIds || []), e.id];
         e.status = "Active";
         e.assignedSiteId = back.id;
-        lines.push({ kind: "equipment", text: `⛽ ${e.name} refuelled and back on ${back.label}.` });
+        lines.push({ kind: "equipment", text: `⛽ ${e.name || e.label || "Equipment"} refuelled and back on ${back.label}.` });
       }
     }
     if (e.awaitingRepairForSiteId && e.status === "Idle" && (!isUsable || isUsable(e))) {
@@ -242,7 +297,7 @@ export function returnRecoveredToSites(g, isUsable) {
         back.assignedEquipmentIds = [...(back.assignedEquipmentIds || []), e.id];
         e.status = "Active";
         e.assignedSiteId = back.id;
-        lines.push({ kind: "equipment", text: `🔧 ${e.name} repaired and back on ${back.label}.` });
+        lines.push({ kind: "equipment", text: `🔧 ${e.name || e.label || "Equipment"} repaired and back on ${back.label}.` });
       }
     }
   }
