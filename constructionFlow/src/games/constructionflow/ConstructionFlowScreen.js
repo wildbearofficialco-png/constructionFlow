@@ -29,6 +29,13 @@ import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine
 import { recordTransaction, beginCashScope, closeCashScope } from "../../systems/financialLedger.js";
 import { pauseSite, returnRecoveredToSites, canPlayerResume, canAutoResume } from "../../systems/siteDiagnostics.js";
 import { chaosChancePerTick } from "../../systems/siteEvents.js";
+import {
+  rushStaminaChancePerTick,
+  skillGainChancePerTick,
+  RUSH_STAMINA_PER_HIT,
+  SKILL_GAIN_PER_EVENT,
+} from "../../systems/crewTickRates.js";
+import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/eventEconomy.js";
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
@@ -1226,7 +1233,12 @@ export const CHAOS_EVENTS = [
       if (!assigned) return null;
       // Offer player choice instead of auto-applying
       if (!game.pendingBreakdown) {
-        const repairCost = rand(800, 3500);
+        // Repair exposure follows the actual machine and severity instead of a flat
+        // starter-to-mega-company dollar range.
+        const repairCost = equipmentRepairEventCost(assigned, {
+          severity: 1 + Math.max(0, 100 - (assigned.condition || 100)) / 100,
+          roll: Math.random(),
+        });
         game.pendingBreakdown = {
           siteId: site.id, siteLabel: site.label,
           equipId: assigned.id, equipName: assigned.name,
@@ -1332,8 +1344,12 @@ export const CHAOS_EVENTS = [
   },
   { id: "fuel_cost",  label: "Fuel Cost Surge",       prob: 0.02, tone: "orange", icon: "⛽",
     apply: (site, game) => {
-      const surcharge = rand(500, 2000);
+      // Exposure follows the fleet that is actually burning fuel. A one-pickup starter
+      // company and a crane/dozer fleet no longer receive the same arbitrary bill.
+      const surcharge = fuelSurgeEventCost(game.equipment || [], { surgePct: 0.30, exposureDays: 5 });
       game.cash -= surcharge;
+      game.expenses = (game.expenses || 0) + surcharge;
+      if (game.weeklyStats) game.weeklyStats.expenses = (game.weeklyStats.expenses || 0) + surcharge;
       addLog(game, `⛽ Fuel cost surge on ${site.label} — ${money(surcharge)} equipment surcharge.`);
       return { text: `Fuel surge — ${money(surcharge)} equipment surcharge.`, type: "fuel_cost" };
     }
@@ -4657,11 +4673,13 @@ export function gameTick(prev) {
     // Site strategy modifier
     const SITE_MODE_MODS = { normal: 1.0, rush: 1.45, overtime: 1.30, quality: 0.78, budget: 0.88 };
     const stratMod = SITE_MODE_MODS[site.siteMode || "normal"] || 1.0;
-    // Rush/overtime: extra stamina drain
-    if ((site.siteMode === "rush" || site.siteMode === "overtime") && Math.random() < 0.25) {
+    // Rush/overtime: extra stamina drain. Expressed as a per-DAY design rate so future
+    // clock changes cannot silently multiply the cost. At the current 32 ticks/day this is
+    // intentionally identical to the old 25% per-tick behavior.
+    if ((site.siteMode === "rush" || site.siteMode === "overtime") && Math.random() < rushStaminaChancePerTick()) {
       for (const id of site.assignedCrewIds) {
         const w = g.crew.find(cw => cw.id === id);
-        if (w) w.stamina = Math.max(0, (w.stamina ?? 50) - 2);
+        if (w) w.stamina = Math.max(0, (w.stamina ?? 50) - RUSH_STAMINA_PER_HIT);
       }
     }
     // Rush mode accumulates a quality penalty (0.05% per tick, caps at 12%)
@@ -5222,7 +5240,11 @@ export function gameTick(prev) {
       const w = g.crew.find((w) => w.id === id);
       if (!w) continue;
       w.stamina = Math.max(0, w.stamina - (_seasonStamDrain * MINS_PER_TICK / 60));
-      if (Math.random() < 0.05 && (w.skill || 0) < 120) w.skill = Math.min(120, (w.skill || 75) + 1);
+      // Skill progression is a per-DAY expectation, not a hard-coded per-tick chance.
+      // Current feel is preserved while making it immune to future tick-length changes.
+      if (Math.random() < skillGainChancePerTick() && (w.skill || 0) < 120) {
+        w.skill = Math.min(120, (w.skill || 75) + SKILL_GAIN_PER_EVENT);
+      }
       if (w.stamina < 10 && w.status === "Active") {
         w.status = "Idle";
         w.assignedSiteId = null;
