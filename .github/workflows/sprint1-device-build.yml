@@ -1,0 +1,59 @@
+name: Sprint 1 Device Build — iOS
+
+on:
+  push:
+    branches:
+      - claude/construction-flow-p0-audit-ql2vfv
+    paths:
+      - '.github/workflows/sprint1-device-build.yml'
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: constructionFlow
+
+jobs:
+  build-and-submit:
+    name: Build 12 and submit to TestFlight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout stabilized branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/construction-flow-p0-audit-ql2vfv
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: constructionFlow/package-lock.json
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Verify EAS authentication
+        working-directory: ${{ env.APP_DIR }}
+        run: eas whoami
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Verify iOS build number
+        working-directory: ${{ env.APP_DIR }}
+        run: node -e "const a=require('./app.json'); if(a.expo.ios.buildNumber!=='12') throw new Error('Expected iOS build 12'); console.log('Building Construction Flow iOS build', a.expo.ios.buildNumber)"
+
+      - name: Build iOS production binary
+        working-directory: ${{ env.APP_DIR }}
+        run: eas build --platform ios --profile production --non-interactive --wait
+
+      - name: Submit latest build to TestFlight
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: eas submit --platform ios --profile production --latest --non-interactive

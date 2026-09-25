@@ -106,14 +106,24 @@ describe("how you treat suppliers prices your materials", () => {
     expect(stiffed.supplierGoodwill).toBeLessThan(0);
   });
 
-  test("the screen folds goodwill into the discount the game charges against", () => {
-    expect(SCREEN_CODE).toContain("supplierGoodwill");
-    expect(SCREEN_CODE).toMatch(/resolveCompanyPerks\(g\)\.materialDiscount \+ supplierGoodwill/);
+  // Sprint 1: supplier terms moved to systems/materialPricing.js, the single price every material
+  // path reads, so the checks follow them there.
+  test("the price the game charges folds goodwill into the discount", () => {
+    const code = require("fs").readFileSync(require("path").join(__dirname, "..", "src", "systems", "materialPricing.js"), "utf8");
+    expect(code).toMatch(/resolveCompanyPerks\(game\)\.materialDiscount \+ supplierGoodwill/);
+    expect(SCREEN_CODE).toContain("quoteMaterialUnitPrice(");
   });
 
   test("goodwill can never make materials free, and a grudge can never make them unbuyable", () => {
-    // The clamp lives in getMaterialDiscount; this asserts the bounds it enforces.
-    expect(SCREEN_CODE).toContain("Math.max(-0.25, Math.min(0.5, combined))");
+    const { supplierDiscount } = require("../src/systems/materialPricing.js");
+    const memory = (valence, n) => Array.from({ length: n }, (_, i) => ({
+      tag: `s${valence}${i}`, kind: "supplier", valence, weight: 5, day: 1, label: "x", detail: "x",
+    }));
+    for (const [valence, n] of [["good", 60], ["bad", 60]]) {
+      const d = supplierDiscount({ officeIndex: 4, properties: [], companyMemory: memory(valence, n), day: 2 });
+      expect(d).toBeGreaterThanOrEqual(-0.25);
+      expect(d).toBeLessThanOrEqual(0.5);
+    }
   });
 
   test("the supplier decision offers a real choice with a later cost", () => {

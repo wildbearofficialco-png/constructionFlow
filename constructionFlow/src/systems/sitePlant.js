@@ -94,7 +94,7 @@ function tierOf(machine) {
 export function isUsable(machine) {
   if (!machine) return false;
   const status = String(machine.status || "");
-  return status !== "Broken" && status !== "Maintenance" && status !== "Sold";
+  return status !== "Broken" && status !== "Maintenance" && status !== "In Repair" && status !== "Sold";
 }
 
 // THE ROOT ERROR THIS FIXES.

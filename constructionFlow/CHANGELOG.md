@@ -5,6 +5,87 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 1 (P0, part 2) — decisions from the audit review
+
+No new features, no build bump. Every fix below was a logic defect, not a tuning change.
+
+- **Site chaos events fired at ~4x their documented rate.** A fixed 0.012-per-tick roll labelled
+  "8% daily" was ~32% a day at the current 32 ticks. Now `systems/siteEvents.js` holds the daily
+  chance (8% starter / 12% mid-game) and converts it with `chancePerTickFor()`, so it survives any
+  change of tick length. Measured: 0.27 → 0.07 events per site-day.
+- **The login streak paid per simulated day.** ~$3,000 per company in its first 11 game days,
+  ~$17,500 over 34. It is now counted on real calendar days when the app opens or returns to the
+  foreground (`systems/sessionStreak.js`); game days never pay it. Old game-day streaks reset.
+- **Earned chain contracts expired before they could be taken.** Finishing Residential
+  Renovation / Road Patch now permanently earns Apartment Block / City Road. It waits on the Bids tab
+  as Locked, listing each gate (crew capacity, machine slots, plant tier, plant for phase 1), with no
+  expiry, until the company can take it; then the normal 14-day window opens. Rivals can no longer
+  bid it away (one did on the day it opened). `systems/chainOpportunities.js`.
+- **Inspection and incident penalties ignored the job's size.** A flat $2,500–9,000 inspection or a
+  ~$16,000 "safety incident" on a ~$9,000 fence; the same flat sums on a $1.5M contract. One rule
+  now (`systems/penalties.js`): share of contract value by severity, higher for a knowing violation
+  (unlicensed plant, Rush/Budget corner-cutting), adjusted for company size, capped at 15% of the
+  job (45% if knowing).
+- **Resume cleared permit, regulatory and inspection holds.** It now resumes only the player's own
+  pause; Pause-then-Resume and Senior-PM auto-resume cannot bypass a hold either.
+- **Quoted and charged material prices differed.** The Buy modal showed the raw market price; the
+  purchase charged regional × supplier terms; auto-buy skipped the regional adjustment; site orders
+  ignored flash deals. Every path now reads `systems/materialPricing.js`.
+- Also: Empire-goal and milestone rewards are ledgered; a partly-credited emergency order no longer
+  leaves a ledger gap; daily overhead is charged in the whole dollars it is recorded in; a machine
+  repaired after a recall goes straight back to its site.
+
+## Sprint 1 (P0) — Stabilization: the first hour is trustworthy
+
+Roadmap: issue #28. No new features, no tuning constants changed, no build number bump.
+
+A new first-hour harness (`scripts/playtest/firstHourHarness.js`) plays fresh companies through
+their first two contracts **through the real game paths** — `mobilizeSite`, `orderSiteMaterials`,
+`buyYardMaterials`, `resolveDecision`, `repairEquipment`, `payTaxBill`, `gameTick` — and audits
+every tick. The old playtest built its own site object, skipped the deposit and dismissed every
+decision card unapplied, so it could not see any of what follows.
+
+### Found and fixed
+
+- **Money moved with no ledger entry — $460,000 across 30 seeded first hours.** Root cause in
+  `financialLedger.js`: every `recordTransaction` reset the reconciliation baseline to the live
+  balance, so any unlogged cash change was absorbed the moment anything else was recorded; the
+  daily safety net reconciled $0. The baseline now advances by exactly what is recorded. Named at
+  source: the 25% mobilisation deposit, every site chaos event and follow-up, every decision-card
+  option, streak/milestone/grant bonuses, repairs, promotions, upgrades and other Crew/Sites
+  actions. New saves start with a baseline; old saves take one from their own balance.
+- **Stalled sites showed a healthy pace.** Every stall branch in the tick skipped the rate update,
+  so the card kept printing yesterday's "~3 days remaining · 97%/day". The tick now records what it
+  did (`stopReason`, `rateFactors`, `pauseReason`) and a new `SiteStatusBanner` on the site card
+  says why the site is stopped, paused or slow, with the fix.
+- **Pauses had no reason.** Permit holds, failed inspections, regulatory holds, quality failures,
+  snow and manual pauses now go through one `pauseSite()` and read e.g.
+  "Paused: Permit hold · resumes in ~3d".
+- **Missing-plant penalty charged twice.** No working machine on a phase that needs one ran at
+  55% × 55% = 30%; on hand-tool phases (Inspection, Finish Work) it ran at 55% against the plant
+  table's own rule. Now one penalty, only where the table requires plant.
+- **Hidden modifiers.** Understaffing (crew below the job minimum) cut speed with nothing on
+  screen; the specialty warning fired on a different condition from the −10% the tick applied.
+  Both now come straight from the tick.
+- **The card's clock was wrong.** "%/day" and "days remaining" used 48 ticks a day; the clock runs
+  32. The card promised jobs 1.5× faster than they ran. Now `src/utils/sitePace.js`.
+- **Stranded crew and machines.** The Rest button (which the site card recommends), a worker
+  injury and a safety recall all removed someone from a site without remembering it. All now
+  return automatically once recovered (`returnRecoveredToSites`).
+- **Breakdown downtime was fiction.** `equipmentWear.js` sets "In Repair" for stated hours; nothing
+  counted them down, so on site the downtime never happened and off site it never ended.
+- **Bankruptcy countdown was log-only.** Now an action item in the inbox.
+- Welcome message said "two crew"; a new company has three.
+
+### Tests
+
+New: `siteDiagnostics`, `firstHourRecovery` (fuel, exhaustion, Rest button, injury, breakdown,
+unaffordable repair, recall, material shortage, permit hold), `starterContracts` (every
+Level-1 contract: crew, plant, tier, materials, deadline, payout), `moneyIntegrity` (active and
+abandoned companies over 150–200 days: no NaN, no save repair, every dollar named). `playtest`
+rebuilt on the harness. Render-smoke's first mount given a realistic timeout (it failed the full
+suite on a 5s timeout, not an assertion).
+
 ## Build 11 — the silent throttle
 
 A device screenshot answered "why the hell is it taking so long" exactly, and the cause was mine.

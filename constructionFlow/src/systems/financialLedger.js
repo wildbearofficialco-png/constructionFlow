@@ -45,10 +45,7 @@ function refreshLedgerSnapshot(game) {
   };
 }
 
-// Call this AFTER the game has already applied the cash change. It only records
-// what happened; it never changes cash, revenue, expenses or weeklyStats.
-export function recordTransaction(game, category, amount, description, meta = null) {
-  if (!Number.isFinite(amount) || amount === 0) return null;
+function pushEntry(game, category, amount, description, meta) {
   if (!Array.isArray(game.ledger)) game.ledger = [];
   const entry = {
     id: uid(),
@@ -61,8 +58,69 @@ export function recordTransaction(game, category, amount, description, meta = nu
   };
   game.ledger.unshift(entry);
   if (game.ledger.length > 300) game.ledger.length = 300;
-  refreshLedgerSnapshot(game);
   return entry;
+}
+
+// Call this AFTER the game has already applied the cash change. It only records
+// what happened; it never changes cash, revenue, expenses or weeklyStats.
+//
+// Pass `meta.nonCash: true` for an entry that is a real cost but did not move cash (capitalised
+// credit-line interest is the one case today).
+//
+// SPRINT 1 — THE SWALLOW. This used to re-take the reconciliation snapshot from the live balance
+// on every call. Any cash that had moved WITHOUT a ledger entry since the last snapshot was
+// therefore absorbed into the new baseline the moment anything else was recorded — and in a game
+// tick something else is always recorded — so the daily reconciler found nothing to name. A seeded
+// playtest of the first hour logged $0 of reconciled cash while $460,000 moved with no entry at
+// all: deposits, fines, medical bills, a $120,000 investor cheque. "Where did my money go?" had no
+// answer, by construction.
+//
+// The cash baseline now advances by exactly what was recorded. Whatever moved without a record
+// stays visible as the gap between the baseline and the balance until reconcileUnloggedCashMovement
+// names it. (Resetting to the live balance was also wrong in the other direction: code that
+// deducts a combined total and then records it in parts — daily overhead does — is correct, and
+// advancing by each part handles it exactly.)
+export function recordTransaction(game, category, amount, description, meta = null) {
+  if (!Number.isFinite(amount) || amount === 0) return null;
+  const entry = pushEntry(game, category, amount, description, meta);
+  const snap = game._ledgerSnapshot;
+  if (snap && Number.isFinite(Number(snap.cash))) {
+    game._ledgerSnapshot = {
+      cash: Number(snap.cash) + (meta && meta.nonCash ? 0 : amount),
+      revenue: Number(game.revenue) || 0,
+      expenses: Number(game.expenses) || 0,
+      day: Number(game.day) || 0,
+    };
+  } else {
+    refreshLedgerSnapshot(game);
+  }
+  return entry;
+}
+
+// Name whatever cash moved inside a block of code that was not already recorded. For code that
+// moves money in many small branches (decision cards, site chaos events), this puts a single,
+// correctly-described entry on the ledger instead of relying on every branch to remember.
+//
+//   const scope = beginCashScope(g);
+//   evt.apply(g);
+//   closeCashScope(g, scope, "fines", "Safety incident — Fence Installation");
+export function beginCashScope(game) {
+  return { cash: Number(game.cash) || 0, head: (game.ledger && game.ledger[0] && game.ledger[0].id) || null };
+}
+
+export function closeCashScope(game, scope, category, description, meta = null) {
+  if (!scope) return null;
+  let logged = 0;
+  let reachedHead = scope.head === null;
+  for (const e of (game.ledger || [])) {
+    if (e.id === scope.head) { reachedHead = true; break; }
+    if (!(e.meta && e.meta.nonCash)) logged += e.amount;
+  }
+  // The ledger is capped; if the starting point has scrolled off, the scope cannot be measured.
+  if (!reachedHead && (game.ledger || []).length >= 300) return null;
+  const unlogged = Math.round((Number(game.cash) || 0) - scope.cash - logged);
+  if (unlogged === 0) return null;
+  return recordTransaction(game, category, unlogged, description, meta);
 }
 
 // Safety-net reconciliation for cash flows that have not yet been individually

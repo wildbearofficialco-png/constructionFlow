@@ -44,6 +44,7 @@
 // Everything here is pure. The randomness lives at the call sites, which pass in their own roll.
 
 import { HEAVY_TIER, isUsable } from "./sitePlant.js";
+import { penaltyFor } from "./penalties.js";
 
 export const OPERATOR_CERT = "equipment_cert";
 export const SAFETY_CERTS = ["safety_cert", "safety_mgmt_cert"];
@@ -57,11 +58,8 @@ export const CATCH_CHANCE_PER_MACHINE = 0.035;
 // certificate, did almost nothing.
 export const SAFETY_OFFICER_RISK_REDUCTION = 0.45;
 
-// Fines are a share of the site's value so they scale with the company, with a floor and a
-// ceiling so they are never trivial and never a death sentence.
-export const FINE_SHARE_OF_SITE = 0.02;
-export const MIN_FINE = 1200;
-export const MAX_FINE = 45000;
+// Fines are a share of the site's value, from the single penalty rule in systems/penalties.js
+// (severity band, knowing violation, company size, and a cap as a share of the job).
 
 // How often an inspector turns up, per site, per day.
 export const INSPECTION_CHANCE_PER_DAY = 0.012;
@@ -126,10 +124,23 @@ export function catchRiskPerDay(site, game) {
   return hasSafetyOfficer(game) ? base * (1 - SAFETY_OFFICER_RISK_REDUCTION) : base;
 }
 
-export function fineFor(site, multiplier = 1) {
-  const value = num(site?.totalValue, 0);
-  const raw = Math.round(value * FINE_SHARE_OF_SITE * multiplier);
-  return Math.max(MIN_FINE, Math.min(MAX_FINE, raw));
+// Sprint 1: delegates to the one penalty rule (systems/penalties.js). `severityScore` is the sum of
+// finding severities (1 = paperwork, 3 = unlicensed operation); `knowing` marks a violation the
+// player chose. The old flat $1,200 floor charged a $9,000 starter fence 13% for a routine visit.
+export function severityBand(severityScore) {
+  if (severityScore >= 4) return "severe";
+  if (severityScore >= 2) return "major";
+  return "minor";
+}
+
+export function fineFor(site, severityScore = 3, { knowing = true, companyLevel = 1, mitigated = false } = {}) {
+  const fine = penaltyFor({
+    contractValue: num(site?.totalValue, 0),
+    severity: severityBand(severityScore),
+    knowing,
+    companyLevel,
+  });
+  return Math.round(mitigated ? fine * 0.6 : fine);
 }
 
 // ─── The inspection ──────────────────────────────────────────────────────────
@@ -185,7 +196,12 @@ export function inspectSite(site, game) {
     severity,
     mitigated,
     // A Safety Officer does not hide a violation — they argue it down.
-    fine: findings.length === 0 ? 0 : fineFor(site, severity * (mitigated ? 0.6 : 1)),
+    fine: findings.length === 0 ? 0 : fineFor(site, severity, {
+      // Running heavy plant without a ticket is a choice the player made; the rest is housekeeping.
+      knowing: findings.some((f) => f.code === "unlicensed_operation"),
+      companyLevel: game?.companyLevel || 1,
+      mitigated,
+    }),
     reputationHit: findings.length === 0 ? 0 : Math.min(6, severity),
     reputationGain: findings.length === 0 ? 1 : 0,
   };
