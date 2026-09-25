@@ -123,6 +123,14 @@ export function hasFirstContractGuarantee(game = {}) {
   return completed === 0 && running === 0;
 }
 
+// Chain opportunities are earned by completing a prerequisite. Sprint 1 deliberately keeps
+// them locked, without an expiry clock, until the company has enough crew/plant capacity to
+// take them. Once that gate is open the award itself must not be another dice roll: the player
+// already did the work that earned it. Public-market jobs remain competitive.
+export function hasEarnedContractGuarantee(contract = {}) {
+  return contract.chainGuaranteed === true && contract.locked !== true;
+}
+
 // The full picture the player is shown BEFORE committing, so a lost bid is never a surprise:
 // what it pays, how likely it is, and who else wants it. The screen renders exactly this
 // object, and `rollBidOutcome` consumes exactly this `winChance` — so what is promised and
@@ -131,9 +139,11 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
   const style = getBidStyle(styleKey);
   const headline = Number.isFinite(contract.value) ? contract.value : 0;
   const competition = getBidCompetition(game, contract);
-  const guaranteed = hasFirstContractGuarantee(game);
-  // Floors and ceilings so no bid is ever hopeless or certain — except the first contract,
-  // which is certain on purpose.
+  const firstContractGuaranteed = hasFirstContractGuarantee(game);
+  const earnedContractGuaranteed = hasEarnedContractGuarantee(contract);
+  const guaranteed = firstContractGuaranteed || earnedContractGuaranteed;
+  // Floors and ceilings so no public-market bid is ever hopeless or certain. The opening job
+  // and earned chain opportunities are the two explicit guarantees.
   const winChance = guaranteed ? 1 : Math.max(0.25, Math.min(0.97, style.baseWinChance * competition));
 
   return {
@@ -141,9 +151,11 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
     styleKey: style.key,
     label: style.label,
     blurb: style.blurb,
-    detail: guaranteed
-      ? "Your first contract is yours — nobody outbids a new firm on its opening job."
-      : style.detail,
+    detail: earnedContractGuaranteed
+      ? "You earned this follow-up contract — once eligible, it is yours to accept."
+      : firstContractGuaranteed
+        ? "Your first contract is yours — nobody outbids a new firm on its opening job."
+        : style.detail,
     valueMultiplier: style.value,
     effectiveValue: Math.round(headline * style.value),
     winChance,
