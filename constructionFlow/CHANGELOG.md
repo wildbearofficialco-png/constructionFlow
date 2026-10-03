@@ -5,6 +5,22 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## Sprint 1 — pre-merge review fixes
+
+- **The earned-contract guarantee never fired in a real game.** `hasEarnedContractGuarantee()`
+  read `chainGuaranteed`/`locked`, fields only the unit tests set; the live game marks an earned
+  offer with `isChainUnlock` and status "Locked". An open Apartment Block / City Road offer was
+  rolled like a public bid and could be lost. It now reads the live record (legacy fields still
+  honoured), with a test built from `earnChainOpportunity()` itself.
+- **Overnight refuelling was billed net of the day's burn.** Settlement ran only after the refill,
+  so a machine that burned 30 units and was refilled 30 paid for none of it. The day's burn is now
+  settled before the refill, so every unit put in the tank is billed once, through the Fuel line.
+- **Expo SDK 57 patch alignment** (the one remaining Expo Doctor warning): `expo` 57.0.26,
+  `expo-constants` 57.0.20, `expo-linking` 57.0.11, `expo-router` 57.0.24 — the versions SDK 57's
+  own `bundledNativeModules.json` recommends. No React Native, Reanimated or other native-core change.
+- Removed the one-off `sprint1-device-build.yml` workflow (hard-coded to build 12 and this branch);
+  release builds go through `eas-build-ios.yml`.
+
 ## Sprint 1 (P0, part 2) — decisions from the audit review
 
 No new features, no build bump. Every fix below was a logic defect, not a tuning change.
