@@ -127,8 +127,13 @@ export function hasFirstContractGuarantee(game = {}) {
 // them locked, without an expiry clock, until the company has enough crew/plant capacity to
 // take them. Once that gate is open the award itself must not be another dice roll: the player
 // already did the work that earned it. Public-market jobs remain competitive.
+//
+// The live game marks an earned opportunity with `isChainUnlock` and holds it with status "Locked"
+// (systems/chainOpportunities.js). This used to read only `chainGuaranteed`/`locked`, which no
+// game path ever set, so a real earned offer was rolled like a public bid and could be lost.
 export function hasEarnedContractGuarantee(contract = {}) {
-  return contract.chainGuaranteed === true && contract.locked !== true;
+  if (contract.locked === true || contract.status === "Locked") return false;
+  return contract.chainGuaranteed === true || contract.isChainUnlock === true;
 }
 
 // The full picture the player is shown BEFORE committing, so a lost bid is never a surprise:

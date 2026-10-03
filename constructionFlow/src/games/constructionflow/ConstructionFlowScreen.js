@@ -27,7 +27,7 @@ import { initTerritories, tickTerritories } from "../../systems/territorySystem.
 import { LENDING_PRODUCTS } from "../../data/lendingProducts.js";
 import { computeLoanOffer, offerToLoanRecord } from "../../systems/lendingEngine.js";
 import { recordTransaction, beginCashScope, closeCashScope } from "../../systems/financialLedger.js";
-import { pauseSite, returnRecoveredToSites, canPlayerResume, canAutoResume } from "../../systems/siteDiagnostics.js";
+import { pauseSite, returnRecoveredToSites, settleAutomaticFuelPurchases, canPlayerResume, canAutoResume } from "../../systems/siteDiagnostics.js";
 import { chaosChancePerTick } from "../../systems/siteEvents.js";
 import {
   rushStaminaChancePerTick,
@@ -5360,6 +5360,10 @@ export function gameTick(prev) {
     }
 
     // Equipment fuel refill (simulate overnight refuel)
+    // Settle first, so the day's burn lowers the billing baseline before the tank goes back up.
+    // Settled only after the refill, the refill was billed NET of that burn: a truck that ran
+    // 12 units dry and was refilled 30 paid for 18.
+    for (const _fuelLine of settleAutomaticFuelPurchases(g)) addLog(g, _fuelLine.text);
     for (const e of g.equipment) {
       if (e.status === "Idle") e.fuel = Math.min(e.fuelCap, e.fuel + e.fuelCap * 0.5);
     }

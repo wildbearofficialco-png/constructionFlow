@@ -1,5 +1,7 @@
 import { settleAutomaticFuelPurchases, returnRecoveredToSites } from "../src/systems/siteDiagnostics.js";
 import { BASE_FUEL_PRICE_PER_UNIT } from "../src/systems/fuelEconomy.js";
+import { freshState, gameTick } from "../src/games/constructionflow/ConstructionFlowScreen.js";
+import { MINS_PER_TICK } from "../src/systems/gameClock.js";
 
 describe("automatic refuelling is a real operating expense", () => {
   function game(overrides = {}) {
@@ -73,5 +75,19 @@ describe("automatic refuelling is a real operating expense", () => {
     settleAutomaticFuelPurchases(g);
     expect(g.cash).toBe(10000);
     expect(g.equipment[0]._fuelBilledLevel).toBe(60);
+  });
+  // Through the real overnight path: the day's burn must not be netted against the refill.
+  test("the overnight refill bills every unit put in the tank, not the refill net of the day's burn", () => {
+    const g = freshState();
+    g.gameMinutes = 1440 - MINS_PER_TICK;           // the next tick crosses midnight
+    const truck = g.equipment[0];
+    truck.status = "Idle";
+    truck.fuel = 10;
+    truck._fuelBilledLevel = 40;                      // last settled at 40, burned 30 since
+    const refill = Math.min(truck.fuelCap, 10 + truck.fuelCap * 0.5) - 10;
+    const next = gameTick(g);
+    const fuel = next.ledger.filter((e) => e.category === "fuel").reduce((s, e) => s + e.amount, 0);
+    expect(next.equipment[0].fuel).toBe(10 + refill);
+    expect(fuel).toBe(-Math.round(refill * BASE_FUEL_PRICE_PER_UNIT));
   });
 });
