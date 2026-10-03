@@ -186,10 +186,15 @@ export function offlineFromElapsed(elapsedRealSeconds) {
 // Expressed this way the intent survives any future pace change, because the DAILY rate is the
 // number a designer actually reasons about.
 export function chancePerTick(dailyChance, speedId = DEFAULT_SPEED_ID) {
+  return chancePerTickFor(dailyChance, ticksPerDay(speedId));
+}
+
+// The same conversion for an explicit number of ticks in a day. Split out so a test can prove a
+// daily rate survives a change of tick length without having to change the real clock.
+export function chancePerTickFor(dailyChance, ticks) {
   const p = Number.isFinite(dailyChance) ? Math.min(1, Math.max(0, dailyChance)) : 0;
   if (p <= 0) return 0;
   if (p >= 1) return 1;
-  const ticks = ticksPerDay(speedId);
   if (!Number.isFinite(ticks) || ticks <= 0) return 0;
   // 1 - (1-p)^(1/n): the per-tick chance whose complement over n ticks is exactly (1-p).
   return 1 - Math.pow(1 - p, 1 / ticks);

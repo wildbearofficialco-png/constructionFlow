@@ -27,6 +27,12 @@ import ConstructionFlowScreen, {
 
 jest.useFakeTimers();
 
+// The first test pays for mounting a 13,000-line screen cold. Alone it takes about a second; in
+// the full parallel suite it regularly passed the 5s default and failed "a brand-new company" on a
+// timeout rather than on anything it asserts — a red `npm test` that meant nothing. Sprint 1's
+// definition of done is "npm test passes repeatedly", so the budget reflects the real cost.
+jest.setTimeout(30000);
+
 const STORAGE_KEY = "constructionflow_v1_save";
 
 // First client id from the real roster, so the fixture cannot drift from the data.
