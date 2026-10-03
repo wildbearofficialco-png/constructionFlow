@@ -5,6 +5,13 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## 1.0.0 (build 13) — Sprint 1 stabilized first hour
+
+Build 12 was cut from the Sprint 1 branch before its review fixes. Build 13 is the first binary
+from main carrying all of Sprint 1 P0 plus the review fixes below. Save-compatible with builds
+1–12: no destructive migration; old saves gain a ledger baseline, a held state for earned chain
+offers, and a fresh real-day return streak.
+
 ## Sprint 1 — pre-merge review fixes
 
 - **The earned-contract guarantee never fired in a real game.** `hasEarnedContractGuarantee()`
