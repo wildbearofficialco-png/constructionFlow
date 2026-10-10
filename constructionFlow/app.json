@@ -15,7 +15,7 @@
     ],
     "ios": {
       "bundleIdentifier": "co.wildbear.constructionflow",
-      "buildNumber": "13",
+      "buildNumber": "14",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false

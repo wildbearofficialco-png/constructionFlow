@@ -5,13 +5,18 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## 1.0.0 (build 14) — save-data safety
+
+TestFlight build for physical-device testing. Save-compatible with builds 1–13; the first launch
+writes the initial backup.
+
 - **A save that failed to load was silently replaced by a fresh company.** Any exception while
   loading — a truncated write, a migration throwing on an old shape, or a tick throwing during
   offline catch-up — started a new company, and the 2s autosave wrote it over the real save.
   Loading now keeps a last-known-good backup (`constructionflow_v1_backup`), restores from it when
   the save can't be read, and quarantines an unreadable save (`constructionflow_v1_unreadable`)
-  instead of overwriting it. A catch-up that throws returns the save un-progressed rather than
-  losing it. Same fix FleetFlow shipped in build 43. `systems/saveRecovery.js`. No build bump.
+  instead of overwriting it. A storage read that fails outright also restores the backup. A
+  catch-up that throws returns the save un-progressed rather than losing it. Same fix FleetFlow shipped in build 43. `systems/saveRecovery.js`.
 
 ## 1.0.0 (build 13) — Sprint 1 stabilized first hour
 
