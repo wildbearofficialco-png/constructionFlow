@@ -39,6 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
+import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
   earnChainOpportunity, openReadyChainOpportunities, hasLiveChainOpportunity, chainReadiness, CHAIN_LOCKED, CHAIN_OFFER_DAYS,
@@ -3654,13 +3655,9 @@ export function enhancedRivalDailyLogic(g) {
     // event and belongs in their ops log. A rival opening a yard, winning an award or buying
     // another firm is market news and belongs in `marketNews` — the ops log is capped at 25
     // entries and rival activity fires far more often than the player's own.
-    // Rivals occasionally poach your crew if they're struggling
+    // Rivals court unhappy crew. Was an instant removal; now an offer the player can answer.
     if ((rival.rep || 0) > 20 && Math.random() < 0.02) {
-      const poachTarget = g.crew.find(w => w.mood < 50 && w.loyalty < 40);
-      if (poachTarget) {
-        g.crew = g.crew.filter(w => w.id !== poachTarget.id);
-        addLog(g, `👋 ${poachTarget.name} was poached by ${rival.name}. Low morale cost you a worker.`);
-      }
+      rivalCourtsCrew(g, rival, (g.crew || []).filter((w) => (w.mood ?? 70) < 50 && (w.loyalty ?? 50) < 40));
     }
 
     // Hire workers when growing and profitable
@@ -3755,17 +3752,11 @@ export function enhancedRivalDailyLogic(g) {
     g.cityStats[_rivalCity].rivalJobs = (g.cityStats[_rivalCity].rivalJobs || 0) + 1;
 
     // ── Rival War: Employee poaching (Feature 7) ────────────────────────────
+    // A bigger rival makes one of your idle people an offer (systems/crewPoaching.js). It used to
+    // take them on the spot — on day 2 of a new company, in the build-14 playtest.
     if ((rival.valuation || rival.cash || 0) > (g.companyValuation||0) * 1.8 && Math.random() < 0.03) {
       const _idleCrew = (g.crew||[]).filter(w => w.status === "Idle");
-      if (_idleCrew.length > 1) {
-        const _target = _idleCrew[Math.floor(Math.random() * _idleCrew.length)];
-        // Remove from all site assignments before removing from crew
-        for (const _site of (g.activeSites||[])) {
-          _site.assignedCrewIds = (_site.assignedCrewIds||[]).filter(id => id !== _target.id);
-        }
-        g.crew = g.crew.filter(w => w.id !== _target.id);
-        addLog(g, `⚠️ ${rival.name} poached ${_target.name} from your crew!`);
-      }
+      if (_idleCrew.length > 1) rivalCourtsCrew(g, rival, _idleCrew);
     }
 
     // ── Rival War: cityJobs tracking ─────────────────────────────────────────
@@ -3815,6 +3806,38 @@ export function enhancedRivalDailyLogic(g) {
 // tutorial's opening job, or a job the player said yes to on a decision card ("Take the rush
 // job"). In the build-14 playtest a rival took the very fence the tutorial pointed at, and
 // another "outbid" the player on a rush job they had just accepted.
+// A rival approaches someone in `pool`. Loyal, well-paid people may refuse on their own (told to
+// the player as good news); otherwise the player is warned and has POACH_RESPONSE_DAYS to match.
+function rivalCourtsCrew(g, rival, pool) {
+  if (!poachingAllowed(g)) return null;
+  const res = approachCrew({ day: g.day, crew: pool }, rival);
+  if (!res) return null;
+  const w = res.worker;
+  if (res.kind === "declined") {
+    addLog(g, `🤝 ${w.name} turned down an offer from ${rival.name} — they're staying with you.`);
+    addImportantNotice(g, `${rival.name} tried to hire ${w.name}. They said no — loyalty and fair pay keep people.`, "green");
+  } else {
+    addLog(g, `📨 ${rival.name} offered ${w.name} ${money(res.offer.offerWage)}/day to leave (you pay ${money(w.wagePerDay)}).`);
+    addImportantNotice(g,
+      `${rival.name} offered ${w.name} ${money(res.offer.offerWage)}/day. Match it in Crew by day ${res.offer.expiresDay}, or they leave.`,
+      "red", { actionLabel: "Respond", actionTab: "Crew" });
+  }
+  return res;
+}
+
+// Offers left unanswered: the worker takes the job.
+export function resolvePoachOffers(g) {
+  for (const w of expiredOffers(g)) {
+    const to = w.poachOffer?.rivalName || "a rival";
+    for (const site of (g.activeSites || [])) {
+      site.assignedCrewIds = (site.assignedCrewIds || []).filter((id) => id !== w.id);
+    }
+    g.crew = (g.crew || []).filter((x) => x.id !== w.id);
+    addLog(g, `👋 ${w.name} left for ${to}.`);
+    addImportantNotice(g, `${w.name} took the offer from ${to} and has left the company.`, "orange", { actionLabel: "Hire", actionTab: "Crew" });
+  }
+}
+
 function isRivalBiddable(c) {
   return !!c && c.status === "Open" && !c.isChainUnlock && !c.reservedForPlayer;
 }
@@ -4926,6 +4949,13 @@ export function gameTick(prev) {
         g.weeklyStats.revenue += earned;
         if (earned > 0) recordTransaction(g, "contracts", earned, `${site.label}: final payment`);
         g.completedJobs = (g.completedJobs || 0) + 1;
+        // The moment the new-player protections lift, say what changes — once.
+        if (g.completedJobs === 1 && !g._competitionBriefed) {
+          g._competitionBriefed = true;
+          addImportantNotice(g,
+            `You're on the map now. Rivals compete for contracts on the board, and bigger firms may try to hire your idle crew — you'll get a warning and ${POACH_RESPONSE_DAYS} days to match their offer. Fair pay and loyalty make people turn offers down.`,
+            "orange", { actionLabel: "Crew", actionTab: "Crew" });
+        }
         if (!g.cityJobsWon) g.cityJobsWon = {};
         const completedCityKey = site.cityId || "salem";
         g.cityJobsWon[completedCityKey] = (g.cityJobsWon[completedCityKey] || 0) + 1;
@@ -5914,6 +5944,7 @@ export function gameTick(prev) {
 
     // ── Workforce systems ─────────────────────────────────────────────────────
     checkWorkerTurnover(g);
+    resolvePoachOffers(g);
     checkPromotion(g);
     checkWeeklyChallenge(g, "daily", 0);
     applyEquipmentAging(g);
@@ -6735,6 +6766,31 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       trackHire(g);
       addLog(g, `👷 ${applicant.name} hired as ${applicant.role}.`);
       repairCrewAssignments(g);
+    });
+  }, [update]);
+
+  // A rival's offer, answered from the worker's card (systems/crewPoaching.js).
+  const handleMatchOffer = useCallback((workerId) => {
+    fireHaptic("light");
+    update((g) => {
+      const w = (g.crew || []).find((x) => x.id === workerId);
+      if (!w?.poachOffer) return;
+      const rivalName = w.poachOffer.rivalName;
+      if (matchOffer(w, g.day)) {
+        addLog(g, `🤝 You matched ${rivalName}'s offer — ${w.name} stays on ${money(w.wagePerDay)}/day.`);
+        recordMemory(g, { tag: `kept_${w.id}_${g.day}`, kind: "crew", valence: "good", weight: 1, subject: w.name,
+          label: `Kept ${w.name} from ${rivalName}`, detail: `you matched a rival's offer to keep ${w.name}` });
+      }
+    });
+  }, [update]);
+
+  const handleLetWorkerGo = useCallback((workerId) => {
+    fireHaptic("light");
+    update((g) => {
+      const w = (g.crew || []).find((x) => x.id === workerId);
+      if (!w?.poachOffer) return;
+      w.poachOffer.expiresDay = g.day; // leaves now rather than after the window
+      resolvePoachOffers(g);
     });
   }, [update]);
 
@@ -8205,7 +8261,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const steps = [
             {
               num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.\n\nThis first job is held for you. After it, rivals bid on the same board — open contracts can go to someone else.`,
               cta: "Go to Bids", action: () => setTab("Bids"),
             },
             {
@@ -9875,6 +9931,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           onRaiseWage={handleRaiseWage}
           onLowerWage={handleLowerWage}
           onSetWage={handleSetWage}
+          onMatchOffer={handleMatchOffer}
+          onLetGo={handleLetWorkerGo}
           onBulkHire={handleBulkHire}
           onFireMany={handleFireMany}
           onGiveBonus={handleGiveBonus}
@@ -12959,7 +13017,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
 
 // ─── Crew Screen ─────────────────────────────────────────────────────────────
 
-function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch, onSetWage, onBulkHire, onFireMany }) {
+function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch, onSetWage, onBulkHire, onFireMany, onMatchOffer, onLetGo }) {
   const [specialtyFilter, setSpecialtyFilter] = useState("All");
   // Sprint 13, from the device: "drop downs are needed to reduce the amount of scrolling".
   // Every worker card rendered four stat bars, certificate badges and six buttons. At ten crew
@@ -13169,6 +13227,34 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
           borderLeftWidth: 4,
           borderLeftColor: risks.length > 0 ? toneColor(risks[0].tone, T) : toneColor(where.tone, T),
         }]}>
+          {/* ── A RIVAL'S OFFER ─────────────────────────────────────────────
+              Top of the card, above everything: it is the one thing here with a deadline. */}
+          {w.poachOffer && (
+            <View style={{ backgroundColor: alpha(T.red, 0.12), borderColor: T.red, borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: SPACING.sm }}>
+              <Text style={[TYPE.caption, { color: T.red, fontWeight: "800" }]}>
+                📨 {w.poachOffer.rivalName} offered {money(w.poachOffer.offerWage)}/day
+              </Text>
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>
+                You pay {money(w.wagePerDay)}/day. Decide by day {w.poachOffer.expiresDay}{Math.max(0, w.poachOffer.expiresDay - game.day) <= 1 ? " — that's today or tomorrow" : ""}, or they leave.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Match ${money(w.poachOffer.offerWage)} per day to keep ${w.name}`}
+                  onPress={() => onMatchOffer && onMatchOffer(w.id)}
+                  style={[styles.btn, { flex: 1, backgroundColor: T.green, borderColor: T.green, paddingVertical: 8 }]}>
+                  <Text style={[styles.btnText, { color: "#fff" }]}>Match {money(w.poachOffer.offerWage)}/day</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Let ${w.name} go`}
+                  onPress={() => onLetGo && onLetGo(w.id)}
+                  style={[styles.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border, paddingVertical: 8 }]}>
+                  <Text style={[styles.btnText, { color: T.sub }]}>Let them go</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           {/* ── WHERE THEY ARE ───────────────────────────────────────────────
               First line on the card, because "Dave is pouring the foundation at
               Riverside" and "Dave is sitting in the yard costing you $200 a day"
