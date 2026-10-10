@@ -74,6 +74,18 @@ describe("saveRecovery (pure)", () => {
     expect(r.unreadable).toBe("{not json");
   });
 
+  test("a failed storage read restores the backup instead of starting fresh", () => {
+    const good = JSON.stringify(establishedCompany());
+    const r = chooseSaveToLoad(null, good, now, deps, { primaryReadFailed: true });
+    expect(r.source).toBe("backup");
+    expect(r.game.companyName).toBe("Keep Me Construction");
+  });
+
+  test("a failed storage read with no backup is a fresh start", () => {
+    const r = chooseSaveToLoad(null, null, now, deps, { primaryReadFailed: true });
+    expect(r.source).toBe("fresh");
+  });
+
   test("a JSON value that is not a game object is rejected", () => {
     for (const raw of ["null", "42", "[]", '"text"']) {
       expect(() => restoreSavedGame(raw, now, deps)).toThrow();
@@ -131,6 +143,8 @@ describe("saveRecovery (mounted screen)", () => {
     expect(saved.companyName).toBe("Keep Me Construction");
     expect(saved.completedJobs).toBe(42);
     expect(await AsyncStorage.getItem(QUARANTINE_STORAGE_KEY)).toBe(good.slice(0, 200));
+    // The player is told, not silently rolled back.
+    expect(JSON.stringify(saved)).toContain("restored from its last good backup");
   });
 
   test("a corrupt save with no backup is quarantined before a fresh company is saved", async () => {

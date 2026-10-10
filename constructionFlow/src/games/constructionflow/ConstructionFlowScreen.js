@@ -6376,24 +6376,25 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       // A failed read must not look like "no save": that would start a fresh company and the
       // autosave would write it over the real one. Retry once before giving up.
       let raw = null;
+      let primaryReadFailed = false;
       try { raw = await AsyncStorage.getItem(STORAGE_KEY); }
-      catch (_) { try { raw = await AsyncStorage.getItem(STORAGE_KEY); } catch (_e) { raw = null; } }
+      catch (_) { try { raw = await AsyncStorage.getItem(STORAGE_KEY); } catch (_e) { raw = null; primaryReadFailed = true; } }
       let backupRaw = null;
       try { backupRaw = await AsyncStorage.getItem(BACKUP_STORAGE_KEY); } catch (_) { backupRaw = null; }
       const nowTs = Date.now();
       const choice = chooseSaveToLoad(raw, backupRaw, nowTs, {
         migrateState, computeOfflineProgress, applyOfflineProgress,
-      });
+      }, { primaryReadFailed });
       if (choice.rawToBackup) AsyncStorage.setItem(BACKUP_STORAGE_KEY, choice.rawToBackup).catch(() => {});
       if (choice.unreadable) AsyncStorage.setItem(QUARANTINE_STORAGE_KEY, choice.unreadable).catch(() => {});
       const g = choice.game || freshState();
       g.lastRealTimestamp = g.lastRealTimestamp || nowTs;
       registerSession(g, nowTs);
-      setGame(g);
-      setTheme(g.theme || "dark");
       if (choice.source === "backup") {
         addImportantNotice(g, "Your latest save couldn't be read, so your company was restored from its last good backup. Very recent progress may be missing.", "orange");
       }
+      setGame(g);
+      setTheme(g.theme || "dark");
       setLoaded(true);
     })();
   }, []);

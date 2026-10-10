@@ -40,7 +40,16 @@ export function runOfflineCatchUp(saved, nowTs, { computeOfflineProgress, applyO
 // Returns { game, source, rawToBackup } where source is "save", "backup" or "fresh".
 // game is null for "fresh" (the caller builds a new company); unreadable is the primary payload
 // to quarantine when neither copy could be loaded, so it is never simply overwritten.
-export function chooseSaveToLoad(raw, backupRaw, nowTs, deps) {
+// primaryReadFailed: storage threw on the save read itself (as opposed to there being no save).
+// That is not "no save", so the backup is tried before falling back to a fresh company.
+export function chooseSaveToLoad(raw, backupRaw, nowTs, deps, { primaryReadFailed = false } = {}) {
+  if (!raw && primaryReadFailed && backupRaw) {
+    try {
+      return { game: restoreSavedGame(backupRaw, nowTs, deps), source: "backup", rawToBackup: null, unreadable: null };
+    } catch (e) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) console.warn("[ConstructionFlow] backup failed to load:", e);
+    }
+  }
   if (!raw) return { game: null, source: "fresh", rawToBackup: null, unreadable: null };
   try {
     return { game: restoreSavedGame(raw, nowTs, deps), source: "save", rawToBackup: raw, unreadable: null };
