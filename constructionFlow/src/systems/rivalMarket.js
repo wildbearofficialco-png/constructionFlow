@@ -93,6 +93,7 @@ export function stepRivalLifecycle(rivalRecord, { rng = Math.random } = {}) {
           cash: Math.round(8000 + rng() * 12000),
           rep: Math.max(5, Math.round((Number.isFinite(rival.rep) ? rival.rep : 10) * 0.4)),
           activeJobs: 0,
+          jobBook: [],
         },
         news: { kind: "restructured", tone: "info" },
         trading: false,
@@ -105,7 +106,7 @@ export function stepRivalLifecycle(rivalRecord, { rng = Math.random } = {}) {
     const days = troubleDays + 1;
     if (days >= DAYS_TO_FAIL) {
       return {
-        changes: { status: RIVAL_STATUS.BANKRUPT, troubleDays: 0, activeJobs: 0 },
+        changes: { status: RIVAL_STATUS.BANKRUPT, troubleDays: 0, activeJobs: 0, jobBook: [] },
         news: { kind: "failed", tone: "hazard" },
         trading: false,
       };
@@ -233,6 +234,7 @@ export function createEntrant(gameState, rng = Math.random) {
     rep: Math.round(4 + rng() * 6),
     jobsCompleted: 0,
     activeJobs: 0,
+    jobBook: [],
     cash: Math.round(18000 + rng() * 14000),
     employees: 2,
     equipment: 1,

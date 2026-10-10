@@ -39,6 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
+import { rivalWinsContract, settleRivalDay, ensureJobBook } from "../../systems/rivalEconomy.js";
 import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
@@ -2855,7 +2856,7 @@ export function mobilizeSite(g, contractId, crewIds, equipIds, rng = Math.random
     if (winner && winner.id) {
       const rival = (g.rivals || []).find((r) => r.id === winner.id);
       if (rival) {
-        rival.activeJobs = (rival.activeJobs || 0) + 1;
+        rivalWinsContract(rival, c);
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
       }
     }
@@ -3600,21 +3601,12 @@ export function enhancedRivalDailyLogic(g) {
     // simulation rather than running a second one beside it.
     const moved = { hired: 0, machines: 0, jobsWon: 0, cityOpened: null };
 
-    const activeJobs = rival.activeJobs || 0;
+    const activeJobs = ensureJobBook(rival).activeJobs || 0;
 
-    // Cash flow: active jobs generate income — scaled higher so rivals can
-    // eventually challenge the player in late game
-    if (activeJobs > 0) {
-      const income = activeJobs * rand(12000, 40000);
-      const costs = activeJobs * rand(3000, 8000) + (rival.employees || 2) * rand(180, 280);
-      rival.cash = (rival.cash || 0) + income - costs;
-      rival.estimatedRevenue = (rival.estimatedRevenue || 0) + income;
-    } else {
-      // Overhead burns cash even without jobs
-      rival.cash = (rival.cash || 0) - rand(400, 1200) - (rival.employees || 2) * 100;
-      // Rep slowly decays when inactive
-      if (Math.random() < 0.15) rival.rep = Math.max(0, (rival.rep || 10) - 1);
-    }
+    // Cash flow comes from the contracts this firm actually won, paid as each finishes, less its
+    // overhead (systems/rivalEconomy.js). It used to be $12k–40k per open job per DAY.
+    const _day = settleRivalDay(rival);
+    if (activeJobs === 0 && Math.random() < 0.15) rival.rep = Math.max(0, (rival.rep || 10) - 1);
 
     // Bankruptcy is decided by stepRivalLifecycle at the top of this loop — one place, one
     // valuation formula, one meaning for `troubleDays`. The duplicate declaration that used
@@ -3625,10 +3617,9 @@ export function enhancedRivalDailyLogic(g) {
       rival.rep = Math.min(100, (rival.rep || 0) + (Math.random() * 0.08 + 0.02));
     }
 
-    // Complete active jobs
-    if (activeJobs > 0 && Math.random() < 0.18) {
-      rival.activeJobs = Math.max(0, activeJobs - 1);
-      rival.jobsCompleted = (rival.jobsCompleted || 0) + 1;
+    // Jobs finished today (settled above).
+    if (_day.completed > 0) {
+      rival.jobsCompleted = (rival.jobsCompleted || 0) + _day.completed;
       rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
     }
 
@@ -3697,7 +3688,7 @@ export function enhancedRivalDailyLogic(g) {
     for (const c of vulnerableContracts) {
       if (Math.random() < rival.aggression * 0.8 * stealPenalty) {
         c.status = "Taken";
-        rival.activeJobs = (rival.activeJobs || 0) + 1;
+        rivalWinsContract(rival, c);
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
         addLog(g, `🏗️ ${rival.name} won "${c.label}" before its window closed — open ${c.category} contracts don't wait.`);
         break;
@@ -3707,7 +3698,7 @@ export function enhancedRivalDailyLogic(g) {
     for (const c of expiredOpen) {
       if (Math.random() < rival.aggression * stealPenalty) {
         c.status = "Taken";
-        rival.activeJobs = (rival.activeJobs || 0) + 1;
+        rivalWinsContract(rival, c);
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
         addLog(g, `🏗️ ${rival.name} picked up "${c.label}" after it lapsed.`);
       }
@@ -3716,7 +3707,7 @@ export function enhancedRivalDailyLogic(g) {
     const _interestedContracts = g.contracts.filter(c => isRivalBiddable(c) && c.interestedRival === rival.name && g.day >= (c.rivalTakesDay || 999));
     for (const c of _interestedContracts) {
       c.status = "Taken";
-      rival.activeJobs = (rival.activeJobs || 0) + 1;
+      rivalWinsContract(rival, c);
       addLog(g, `🔥 ${rival.name} took "${c.label}" — they were watching it from the start.`);
     }
 
@@ -3780,7 +3771,10 @@ export function enhancedRivalDailyLogic(g) {
         ((rival.cash||0) + (rival.rep||0)*50000) >= ((r.cash||0) + (r.rep||0)*50000) * 5
       );
       if (_weakerRival) {
-        rival.activeJobs = (rival.activeJobs||0) + (_weakerRival.activeJobs||0);
+        ensureJobBook(rival); ensureJobBook(_weakerRival);
+        rival.jobBook = [...rival.jobBook, ..._weakerRival.jobBook].slice(-40);
+        rival.activeJobs = rival.jobBook.length;
+        _weakerRival.jobBook = []; _weakerRival.activeJobs = 0;
         rival.employees = (rival.employees||2) + Math.floor((_weakerRival.employees||2) * 0.5);
         rival.rep = Math.min(100, (rival.rep||0) + rand(2, 5));
         // Out of the market like a bankruptcy (status BANKRUPT keeps it out of every list), but it
@@ -3885,7 +3879,7 @@ export function enhancedRivalBidding(g, openContracts) {
     for (const c of targets) {
       if (Math.random() < rival.aggression * personality.focusBonus * cityPressure * playerEdge) {
         c.status = "Taken";
-        rival.activeJobs = (rival.activeJobs || 0) + 1;
+        rivalWinsContract(rival, c);
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
         pushMarketNews(g, { text: `🏗️ ${rival.name} claimed "${c.label}".`, tone: "neutral", rivalId: rival.id });
         break;
@@ -9884,7 +9878,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           </TouchableOpacity>
         </View>
         {/* Crew filter pills */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 12, marginTop: 8, marginBottom: 4 }} contentContainerStyle={{ gap: 8, flexDirection: "row" }}>
+        {/* flexGrow 0: a ScrollView grows by default, and on web this row expanded to fill the
+            screen and pushed the crew list out of view. Native already sizes it to its content. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, paddingHorizontal: 12, marginTop: 8, marginBottom: 4 }} contentContainerStyle={{ gap: 8, flexDirection: "row" }}>
           {["All", "Active", "Idle", "Resting", "Training", "Low Stamina"].map(f => (
             <TouchableOpacity
               key={f}

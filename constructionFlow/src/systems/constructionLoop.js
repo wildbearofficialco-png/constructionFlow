@@ -154,7 +154,12 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
   const firstContractGuaranteed = hasFirstContractGuarantee(game);
   const earnedContractGuaranteed = hasEarnedContractGuarantee(contract);
   const reservedGuaranteed = hasReservedGuarantee(contract);
-  const guaranteed = firstContractGuaranteed || earnedContractGuaranteed || reservedGuaranteed;
+  // A guarantee covers the FAIR price. It used to cover every style, so the first contract (and
+  // every earned or accepted job) made Premium a free +28% — the "free money" this module exists
+  // to prevent. Asking above the standard price on a held job is a negotiation at normal odds,
+  // and the card shows those odds like any other bid.
+  const heldJob = firstContractGuaranteed || earnedContractGuaranteed || reservedGuaranteed;
+  const guaranteed = heldJob && style.value <= 1;
   // Floors and ceilings so no public-market bid is ever hopeless or certain. The opening job
   // and earned chain opportunities are the two explicit guarantees.
   const winChance = guaranteed ? 1 : Math.max(0.25, Math.min(0.97, style.baseWinChance * competition));
@@ -164,7 +169,9 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
     styleKey: style.key,
     label: style.label,
     blurb: style.blurb,
-    detail: earnedContractGuaranteed
+    detail: heldJob && !guaranteed
+      ? "This job is held for you at the standard price. Asking for a premium reopens it to normal odds — lose and it goes to a rival."
+      : earnedContractGuaranteed
       ? "You earned this follow-up contract — once eligible, it is yours to accept."
       : reservedGuaranteed && !firstContractGuaranteed
         ? "You accepted this job — it is held for you until it expires."

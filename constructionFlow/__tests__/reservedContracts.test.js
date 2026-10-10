@@ -81,8 +81,9 @@ describe("jobs accepted on a decision card", () => {
     const c = added[0];
     expect(c.reservedForPlayer).toBe(true);
     expect(hasReservedGuarantee(c)).toBe(true);
-    expect(planBid(c, "premium", g).winChance).toBe(1);
-    expect(rollBidOutcome(c, "premium", g, () => 0.999).won).toBe(true);
+    expect(planBid(c, "standard", g).winChance).toBe(1);
+    expect(rollBidOutcome(c, "standard", g, () => 0.999).won).toBe(true);
+    expect(planBid(c, "premium", g).winChance).toBeLessThan(1); // a premium ask is negotiated
     // ...and rivals leave it alone.
     aggressive(g);
     Math.random = () => 0.001;
