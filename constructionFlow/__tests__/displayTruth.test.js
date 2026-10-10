@@ -67,10 +67,12 @@ describe("market share is one number", () => {
 });
 
 describe("the home city is the player's own town", () => {
-  test("home market shows the typed city name", () => {
-    const g = { ...freshState(), homeCityName: "Bend", startingCityId: "salem" };
-    expect(cityDisplayName(g, "salem")).toBe("Bend");
-    expect(cityDisplayName(g, undefined)).toBe("Bend");
+  test("home market shows the typed city name, whatever competition template setup chose", () => {
+    for (const startingCityId of ["salem", "portland", "phoenix"]) {
+      const g = { ...freshState(), homeCityName: "Bend", startingCityId };
+      expect(cityDisplayName(g, "salem")).toBe("Bend");
+      expect(cityDisplayName(g, undefined)).toBe("Bend");
+    }
   });
   test("other cities keep their names; no typed name falls back to the city", () => {
     const g = { ...freshState(), homeCityName: "Bend" };
@@ -79,11 +81,18 @@ describe("the home city is the player's own town", () => {
   });
 
   test("the Bids card names Bend, not Salem", async () => {
-    const tree = await mount((g) => { g.homeCityName = "Bend"; g.activeTab = "Bids"; });
+    // "Growing City" at setup sets the Portland template — the case the live replay caught.
+    const tree = await mount((g) => { g.homeCityName = "Bend"; g.startingCityId = "portland"; });
     try {
+      // Open the Bids tab: Home's header also reads "· Bend, OR", which would pass this vacuously.
+      const bidsTab = tree.root.findAll((n) => n.props?.children === "Bids").map((n) => { let x = n; while (x && typeof x.props?.onPress !== "function") x = x.parent; return x; }).filter(Boolean).pop();
+      await act(async () => { bidsTab.props.onPress(); });
       const text = screenText(tree);
+      expect(text).toMatch(/Fence Installation/);
       expect(text).toMatch(/· Bend/);
       expect(text).not.toMatch(/· Salem/);
+      // The held tutorial job says so, instead of counting down to an expiry that never comes.
+      expect(text).toMatch(/Held for you — rivals can't take this one/);
     } finally { await act(async () => { tree.unmount(); }); }
   });
 });

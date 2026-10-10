@@ -1172,14 +1172,16 @@ function buildContractorRankings(g) {
     .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
-// The name to SHOW for a city. The home market is simulated as one of the built-in cities
-// (startingCityId, "salem" by default) but the player typed their own town at setup — Bend, say —
-// and every contract and site card still read "Salem". The home market now shows the player's own
-// town wherever a city is named; other cities show their real names.
+// The name to SHOW for a city. Every home-market contract is generated in the built-in "salem"
+// market (pickContractCity), whatever competition template setup chose (startingCityId is
+// salem/portland/phoenix by market size and drives competition only). The player typed their own
+// town — Bend, say — and every contract and site card still read "Salem". The home market now
+// shows the player's own town; cities the company expands into show their real names.
+export const HOME_MARKET_ID = "salem";
+
 export function cityDisplayName(g, cityId) {
-  const id = cityId || "salem";
-  const home = g?.startingCityId || "salem";
-  if (id === home && g?.homeCityName) return g.homeCityName;
+  const id = cityId || HOME_MARKET_ID;
+  if (id === HOME_MARKET_ID && g?.homeCityName) return g.homeCityName;
   return CITIES.find((c) => c.id === id)?.name || "";
 }
 
@@ -3697,7 +3699,7 @@ export function enhancedRivalDailyLogic(g) {
         c.status = "Taken";
         rival.activeJobs = (rival.activeJobs || 0) + 1;
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-        addLog(g, `🏗️ ${rival.name} outbid you on "${c.label}" — act faster on ${c.category} contracts.`);
+        addLog(g, `🏗️ ${rival.name} won "${c.label}" before its window closed — open ${c.category} contracts don't wait.`);
         break;
       }
     }
@@ -3707,7 +3709,7 @@ export function enhancedRivalDailyLogic(g) {
         c.status = "Taken";
         rival.activeJobs = (rival.activeJobs || 0) + 1;
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-        addLog(g, `🏗️ ${rival.name} snagged "${c.label}" before you — move faster next time.`);
+        addLog(g, `🏗️ ${rival.name} picked up "${c.label}" after it lapsed.`);
       }
     }
     // R15-3: Rival takes an "interested" contract it was watching if it's still Open
@@ -3715,7 +3717,7 @@ export function enhancedRivalDailyLogic(g) {
     for (const c of _interestedContracts) {
       c.status = "Taken";
       rival.activeJobs = (rival.activeJobs || 0) + 1;
-      addLog(g, `🔥 ${rival.name} moved fast — they snagged "${c.label}" before you did.`);
+      addLog(g, `🔥 ${rival.name} took "${c.label}" — they were watching it from the start.`);
     }
 
     // City expansion
@@ -12580,7 +12582,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   </View>
                   <Text style={[styles.sub, subCol]}>{c.client}{(() => {
                     const bidCity = CITIES.find(ct => ct.id === (c.cityId || "salem"));
-                    const isHome = (c.cityId || "salem") === (game.startingCityId || "salem");
+                    const isHome = (c.cityId || HOME_MARKET_ID) === HOME_MARKET_ID;
                     return bidCity ? ` · ${cityDisplayName(game, c.cityId)}${isHome ? " 🏠" : ""}` : "";
                   })()}</Text>
                   {/* Phase visual preview */}
@@ -12633,6 +12635,11 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                 </Text>
               )}
               {(() => {
+                // The tutorial's opening job does not lapse while it is held, so a countdown
+                // ("⚠ Expires today" on day 6) would be a false alarm.
+                if (c.tutorialContract && hasFirstContractGuarantee(game)) {
+                  return <Text style={[styles.sub, { color: T.green, marginTop: 4, fontWeight: "700" }]}>{"🔒 Held for you — rivals can't take this one"}</Text>;
+                }
                 const daysLeft = (c.expiresDay || 0) - (game.day || 0);
                 if (daysLeft > 7) return null;
                 const color = daysLeft <= 2 ? T.red : daysLeft <= 4 ? T.orange : T.yellow;
