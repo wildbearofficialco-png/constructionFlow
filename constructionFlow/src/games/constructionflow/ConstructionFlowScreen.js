@@ -39,6 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
+import { homeSectionVisibility } from "../../systems/homeLayout.js";
 import { rivalWinsContract, settleRivalDay, ensureJobBook } from "../../systems/rivalEconomy.js";
 import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
@@ -7905,6 +7906,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
   function renderHome() {
     const activeSites = getActiveSites(game);
+    // Sections arrive as the company grows (systems/homeLayout.js); "Show full dashboard" reveals all.
+    const homeVis = homeSectionVisibility(game);
     const idleCrew = getIdleCrew(game);
     const idleEquip = getIdleEquipment(game);
     const valuation = computeValuation(game);
@@ -8321,7 +8324,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         })()}
 
         {/* ── COMPANY LEVEL ─────────────────────────────────────────────── */}
-        <Card T={T} tone="steel">
+        {homeVis.level && (<Card T={T} tone="steel">
           <SectionLabel
             T={T}
             tone="steel"
@@ -8357,10 +8360,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               })}
             </View>
           )}
-        </Card>
+        </Card>)}
 
         {/* ── COMPANY HEALTH ────────────────────────────────────────────── */}
-        {game.tutorialDone && (() => {
+        {homeVis.health && game.tutorialDone && (() => {
           const hs = computeHealthScore(game);
           const tone = hs.colorKey === "green" ? "safe" : hs.colorKey === "red" ? "hazard" : "caution";
           const hc = toneColor(tone, T);
@@ -8386,7 +8389,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         })()}
 
         {/* ── On-Time Streak ───────────────────────────────────────────────── */}
-        {((game.onTimeStreak||0) >= 1 || (game.bestStreak||0) >= 3) && (
+        {homeVis.streak && ((game.onTimeStreak||0) >= 1 || (game.bestStreak||0) >= 3) && (
           <CollapsibleSection
             title="🔥 On-Time Streak"
             summary={`${game.onTimeStreak||0} in a row · best ${game.bestStreak||0}`}
@@ -8413,7 +8416,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         )}
 
         {/* ── Weekly Challenge ─────────────────────────────────────────────── */}
-        {game.weeklyChallenge && (() => {
+        {homeVis.weeklyChallenge && game.weeklyChallenge && (() => {
           const wc = game.weeklyChallenge;
           const pct = wc.progress < 0 ? 0 : Math.min(100, Math.round(((wc.progress||0) / wc.target) * 100));
           const daysLeft = Math.max(0, 7 - ((game.day - (wc.startDay||0)) % 7));
@@ -8456,7 +8459,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         })()}
 
         {/* ── Weekly Site Report ───────────────────────────────────────────── */}
-        {game.weeklyReport && (() => {
+        {homeVis.weeklyReport && game.weeklyReport && (() => {
           const wr = game.weeklyReport;
           const net = (wr.revenue||0) - (wr.expenses||0);
           return (
@@ -8496,7 +8499,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             It is now a card at the same level as everything else it competes with, and it
             leads with the thing the player can act on: who is about to become more valuable,
             and what that is already worth. */}
-        {game.tutorialDone && (() => {
+        {homeVis.clients && game.tutorialDone && (() => {
           const rels = game.clientRelationships || {};
           const activeClients = CLIENT_ROSTER.filter(c => rels[c.id]?.jobsDone > 0);
           if (activeClients.length === 0) return null;
@@ -8548,7 +8551,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         })()}
 
         {/* Today's Priorities */}
-        <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
+        {homeVis.priorities && (<View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
           <Text style={[styles.sectionTitle, col]}>Today&apos;s Priorities</Text>
           {sitesNeedingMats.length > 0 && (
             <Text style={[styles.sub, { color: T.orange }]}>⚠ Materials needed on {sitesNeedingMats.length} site{sitesNeedingMats.length > 1 ? "s" : ""}</Text>
@@ -8565,10 +8568,10 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           {sitesNeedingMats.length === 0 && burningOutCrew.length === 0 && overdueSites.length === 0 && !rivalOutpacing && (
             <Text style={[styles.sub, { color: T.green }]}>✅ Operations running smoothly</Text>
           )}
-        </View>
+        </View>)}
 
         {/* CEO Executive Dashboard */}
-        {(() => {
+        {homeVis.executive && (() => {
           const equipVal = Math.round((game.equipment||[]).reduce((s,e)=>s+e.price*(e.condition/100)*0.6,0));
           const realEstVal = Math.round((game.properties||[]).reduce((s,p)=>{
             const def=PROPERTY_TYPES.find(t=>t.id===p.typeId); return s+(def?def.cost*(def.resaleRate||0.8):0);
@@ -8667,8 +8670,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           </TouchableOpacity>
         )}
 
-        {/* Legacy Score Card (Feature 4) */}
-        {(() => {
+        {/* Legacy Score Card (Feature 4) — grouped with the executive dashboard for visibility. */}
+        {homeVis.executive && (() => {
           const legacy = getLegacyScore(game);
           const nextTiers = [
             { min: 80, label: "Industry Legend", icon: "trophy" },
@@ -8711,12 +8714,12 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Active Sites and Crew Idle used to sit here as well as in the hero
             card at the top of the screen. These four are the figures the hero
             does NOT already carry, so nothing is stated twice. */}
-        <View style={{ flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md - 2 }}>
+        {homeVis.standing && (<View style={{ flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md - 2 }}>
           <StatTile T={T} label="Jobs done" value={`${game.completedJobs || 0}`} tone="safe" />
           <StatTile T={T} label="Reputation" value={`${game.reputation || 0}`} sub={repTier.label} tone="accent" />
           <StatTile T={T} label="Credit" value={`${game.creditScore || 600}`} sub={getCreditLabel(game.creditScore || 600).label} tone={(game.creditScore || 600) >= 680 ? "safe" : (game.creditScore || 600) >= 600 ? "caution" : "hazard"} />
           <StatTile T={T} label="Safety" value={`${Math.round(game.safetyScore || 0)}`} tone={(game.safetyScore || 0) >= 70 ? "safe" : (game.safetyScore || 0) >= 45 ? "caution" : "hazard"} />
-        </View>
+        </View>)}
 
         {/* Market Event Banner */}
         {game.activeMarketEvent && (() => {
@@ -8790,7 +8793,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         )}
 
         {/* This Week P&L */}
-        {(() => {
+        {homeVis.thisWeek && (() => {
           const ws = game.weeklyStats || {};
           const income = ws.revenue || 0;
           const expenses = ws.expenses || 0;
@@ -8837,7 +8840,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         )}
 
         {/* Ops Feed */}
-        {(() => {
+        {homeVis.opsFeed && (() => {
           const FEED_EMOJI = { green: "✅", red: "🔴", orange: "⚠️", cyan: "🔵", yellow: "⭐", purple: "🔷", sub: "·" };
           return (
             <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border }]}>
@@ -8857,7 +8860,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             Rival activity in its own feed. It used to go through addLog, which caps the
             player's `logs` at 25 and `opsFeed` at 20 — so a rival buying a digger pushed
             the player's own site events out of their own history. */}
-        {(game.marketNews || []).length > 0 && (
+        {homeVis.marketNews && (game.marketNews || []).length > 0 && (
           <Card T={T} tone="info">
             <SectionLabel T={T} tone="info" right={
               <Text style={[TYPE.caption, { color: T.sub }]}>
@@ -8886,7 +8889,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         )}
 
         {/* Rival Activity */}
-        {game.rivals && game.rivals.length > 0 && (() => {
+        {homeVis.rivals && game.rivals && game.rivals.length > 0 && (() => {
           const topRivals = [...game.rivals]
             .filter(r => !(game.acquiredRivals||[]).includes(r.id))
             .sort((a,b) => (b.rep||0) - (a.rep||0))
@@ -8932,6 +8935,18 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
             </View>
           );
         })()}
+
+        {/* Everything a new company does not need yet is one tap away, never gone. */}
+        {(homeVis.hiddenCount > 0 || homeVis.showAll) && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => update((g) => { g.homeShowAll = !g.homeShowAll; })}
+            style={[styles.btn, { backgroundColor: T.panel2, borderColor: T.border, marginBottom: 8 }]}>
+            <Text style={[styles.btnText, { color: T.sub }]}>
+              {homeVis.showAll ? "Show the essentials only" : `Show full dashboard (${homeVis.hiddenCount} more)`}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Theme / Settings */}
         <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>

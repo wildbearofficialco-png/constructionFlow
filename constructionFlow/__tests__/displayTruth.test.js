@@ -99,7 +99,7 @@ describe("the home city is the player's own town", () => {
 
 describe("rival reputation is shown in whole points", () => {
   test("no raw fractions on Home", async () => {
-    const tree = await mount((g) => { g.rivals = g.rivals.map((r) => ({ ...r, rep: 58.39506779108726 })); });
+    const tree = await mount((g) => { g.homeShowAll = true; g.rivals = g.rivals.map((r) => ({ ...r, rep: 58.39506779108726 })); });
     try {
       const text = screenText(tree);
       expect(text).not.toMatch(/58\.39/);
