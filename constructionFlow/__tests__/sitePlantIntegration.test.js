@@ -254,12 +254,9 @@ describe("the requirement is visible before the player commits", () => {
     expect(calls).toBeGreaterThanOrEqual(1);
   });
 
-  test("the bid card warns when the plant is missing", () => {
-    expect(CODE).toContain("plant you do not have");
-  });
-
-  test("and confirms when it is not", () => {
-    expect(CODE).toContain("Plant on hand for all");
+  test("the bid card's plant line comes from describePlantPlan", () => {
+    // The wording itself is unit-tested in sitePlant.test.js; this pins that the card uses it.
+    expect(CODE).toContain("describePlantPlan(plan)");
   });
 });
 

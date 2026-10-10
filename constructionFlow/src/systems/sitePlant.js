@@ -187,3 +187,28 @@ export const STALL_FACTOR = 0.55;
 export function plantProgressFactor(phaseName, machines, contractMinTier = null) {
   return satisfies(phaseName, machines, contractMinTier) ? 1.0 : STALL_FACTOR;
 }
+
+// The one-line plant summary on a Bids card, from plantPlanFor()'s plan. It says what a gap
+// DOES — only the first phase is a hard gate (canStartWithPlant); a later phase without its
+// plant runs at STALL_FACTOR speed — and counts honestly ("all 2 phases" on a three-phase job
+// read like a miscount). Returns null when no phase needs plant.
+export function describePlantPlan(plan) {
+  const all = arr(plan);
+  const needed = all.filter((p) => p && p.required);
+  if (needed.length === 0) return null;
+  const short = needed.filter((p) => !p.satisfied);
+  if (short.length > 0) {
+    const types = [...new Set(short.flatMap((p) => p.required.anyOf))].join("/");
+    if (all[0] && all[0].required && !all[0].satisfied) {
+      return { tone: "warning", text: `⚠ Can't start without ${types} plant` };
+    }
+    const slowPct = Math.round((1 - STALL_FACTOR) * 100);
+    const phases = short.length === 1 ? "1 phase runs" : `${short.length} phases run`;
+    return { tone: "warning", text: `⚠ No ${types} plant: ${phases} ${slowPct}% slower` };
+  }
+  const types = [...new Set(needed.flatMap((p) => p.required.anyOf))].join("/");
+  const coverage = needed.length === all.length
+    ? `all ${all.length} phase${all.length === 1 ? "" : "s"}`
+    : `the ${needed.length} phase${needed.length === 1 ? "" : "s"} that need${needed.length === 1 ? "s" : ""} it`;
+  return { tone: "ok", text: `🚜 Plant on hand for ${coverage} (${types})` };
+}

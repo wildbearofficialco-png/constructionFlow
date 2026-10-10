@@ -2,7 +2,15 @@
 // Simulates competing companies with expansion, contract bidding, pricing competition,
 // acquisitions, and bankruptcies. Works across all business types.
 
-import { uid, rand, pick, clamp, addLog, money } from "./utils.js";
+import { uid, rand, pick, clamp, money } from "./utils.js";
+
+// Construction Flow review sprint: these background competitors are a market model that
+// demandPricing and territorySystem read. They are never shown anywhere in this game — the
+// rivals the player sees are game.rivals (rivalMarket.js). They used to write to the player's
+// Ops Feed anyway ("BlueStar Freight outbid you on a contract", "…now 6 vehicles") and to take
+// 1–3 reputation off the player on a "won" bid for a contract that did not exist: a hidden
+// penalty with no counterplay. They now stay silent and never touch the player's reputation.
+function addLog() {}
 
 const COMPETITOR_NAMES = [
   "Apex Logistics", "BlueStar Freight", "Meridian Delivery", "Nova Transit",
@@ -125,7 +133,6 @@ function tryBidOnContract(competitor, game) {
     competitor.reputation = clamp(competitor.reputation + rand(1, 4), 0, 100);
     competitor.weeklyRevenue += rand(200, 800);
     competitor.marketShare = clamp(competitor.marketShare + rand(0, 2), 0, 100);
-    game.reputation = clamp(playerRep - rand(1, 3), 0, 100);
     addLog(game, `${competitor.name} outbid you on a contract — market share up.`);
   } else {
     competitor.contractsLost += 1;
