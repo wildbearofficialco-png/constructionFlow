@@ -39,6 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
+import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
   earnChainOpportunity, openReadyChainOpportunities, hasLiveChainOpportunity, chainReadiness, CHAIN_LOCKED, CHAIN_OFFER_DAYS,
 } from "../../systems/chainOpportunities.js";
@@ -3907,27 +3908,6 @@ function checkChainEvents(site, game, lastEventType) {
   return false;
 }
 
-// ─── Save Integrity ────────────────────────────────────────────────────────────
-
-function checkSaveIntegrity(savedData) {
-  const issues = [];
-  if (!savedData || typeof savedData !== "object") {
-    return { valid: false, issues: ["Save data is not a valid object."], migrationNeeded: false };
-  }
-  if (!Number.isFinite(savedData.cash))                  issues.push("g.cash is missing or not finite.");
-  if (!Number.isInteger(savedData.day) || savedData.day < 1) issues.push("g.day is missing or invalid.");
-  if (!Array.isArray(savedData.crew))                    issues.push("g.crew is missing.");
-  if (!Array.isArray(savedData.equipment))               issues.push("g.equipment is missing.");
-  if (!Array.isArray(savedData.contracts))               issues.push("g.contracts is missing.");
-  if (!Array.isArray(savedData.activeSites))             issues.push("g.activeSites is missing.");
-  const migrationNeeded = (
-    savedData.cityOffices === undefined || savedData.properties === undefined ||
-    savedData.projectManagers === undefined || savedData.acquiredRivals === undefined ||
-    savedData.empireGoalsCompleted === undefined || savedData.trainingQueue === undefined
-  );
-  return { valid: issues.length === 0, issues, migrationNeeded };
-}
-
 // Contracts were the only unbounded collection in the save: every contract the player won
 // and every contract a rival took stayed in g.contracts forever, while logs, opsFeed,
 // eventLog and ledger are all capped. Measured growth was linear — 745 entries and a 446 KB
@@ -6393,39 +6373,28 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
   // ── Persist ────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const integrity = checkSaveIntegrity(parsed);
-          if (!integrity.valid) {
-            // Save has issues - will be fixed by migrateState
-          }
-          const saved = migrateState(parsed);
-          const nowTs = Date.now();
-          const offlineInfo = computeOfflineProgress(saved, nowTs);
-          if (offlineInfo && offlineInfo.ticksToRun > 0) {
-            const progressed = applyOfflineProgress(saved, offlineInfo.ticksToRun);
-            registerSession(progressed, nowTs);
-            setGame(progressed);
-            setTheme(progressed.theme || "dark");
-          } else {
-            saved.lastRealTimestamp = nowTs;
-            registerSession(saved, nowTs);
-            setGame(saved);
-            setTheme(saved.theme || "dark");
-          }
-        } else {
-          const fs = freshState();
-          fs.lastRealTimestamp = Date.now();
-          registerSession(fs, fs.lastRealTimestamp);
-          setGame(fs);
-        }
-      } catch (_) {
-        const fs = freshState();
-        fs.lastRealTimestamp = Date.now();
-        setGame(fs);
+      // A failed read must not look like "no save": that would start a fresh company and the
+      // autosave would write it over the real one. Retry once before giving up.
+      let raw = null;
+      let primaryReadFailed = false;
+      try { raw = await AsyncStorage.getItem(STORAGE_KEY); }
+      catch (_) { try { raw = await AsyncStorage.getItem(STORAGE_KEY); } catch (_e) { raw = null; primaryReadFailed = true; } }
+      let backupRaw = null;
+      try { backupRaw = await AsyncStorage.getItem(BACKUP_STORAGE_KEY); } catch (_) { backupRaw = null; }
+      const nowTs = Date.now();
+      const choice = chooseSaveToLoad(raw, backupRaw, nowTs, {
+        migrateState, computeOfflineProgress, applyOfflineProgress,
+      }, { primaryReadFailed });
+      if (choice.rawToBackup) AsyncStorage.setItem(BACKUP_STORAGE_KEY, choice.rawToBackup).catch(() => {});
+      if (choice.unreadable) AsyncStorage.setItem(QUARANTINE_STORAGE_KEY, choice.unreadable).catch(() => {});
+      const g = choice.game || freshState();
+      g.lastRealTimestamp = g.lastRealTimestamp || nowTs;
+      registerSession(g, nowTs);
+      if (choice.source === "backup") {
+        addImportantNotice(g, "Your latest save couldn't be read, so your company was restored from its last good backup. Very recent progress may be missing.", "orange");
       }
+      setGame(g);
+      setTheme(g.theme || "dark");
       setLoaded(true);
     })();
   }, []);
@@ -6534,14 +6503,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         setGame((prevGame) => {
           if (!prevGame) return prevGame;
           const nowTs = Date.now();
-          const offlineInfo = computeOfflineProgress(prevGame, nowTs);
-          if (offlineInfo && offlineInfo.ticksToRun > 0) {
-            const progressed = applyOfflineProgress(prevGame, offlineInfo.ticksToRun);
-            registerSession(progressed, nowTs);
-            saveGame(progressed);
-            return progressed;
-          }
-          const updated = { ...clone(prevGame), lastRealTimestamp: nowTs };
+          // A throw during catch-up returns the game un-progressed instead of crashing the
+          // screen (whose remount would then run the load path over the same failure).
+          const updated = runOfflineCatchUp(clone(prevGame), nowTs, { computeOfflineProgress, applyOfflineProgress });
           registerSession(updated, nowTs);
           saveGame(updated);
           return updated;
@@ -7011,6 +6975,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         setGame(fresh);
         setTheme("dark");
         AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+        // A deliberate reset must not leave the old company behind as a recovery backup.
+        AsyncStorage.removeItem(BACKUP_STORAGE_KEY).catch(() => {});
         AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {});
       }},
     ]);
