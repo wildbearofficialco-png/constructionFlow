@@ -21,10 +21,17 @@ export const POACH_MARKET_PREMIUM = 0.1;
 
 function num(v, f = 0) { return Number.isFinite(v) ? v : f; }
 
-// A brand-new company gets to finish one job before anyone comes for its people. Short by
-// design: the review asked for warnings and a chance to respond, not a long immunity.
+// A brand-new company gets to finish one job, plus a few days to hire and settle, before anyone
+// comes for its people. Short by design: warnings and a chance to respond, not a long immunity.
+// The first replay had an offer land the same day the first job finished.
+export const POACH_GRACE_DAYS_AFTER_FIRST_JOB = 5;
+
 export function poachingAllowed(game) {
-  return num(game?.completedJobs, 0) >= 1;
+  if (num(game?.completedJobs, 0) < 1) return false;
+  const firstDay = game?.firstJobCompletedDay;
+  // Saves from before this field existed are past their first job already: no new grace.
+  if (!Number.isFinite(firstDay)) return true;
+  return num(game?.day, 1) >= firstDay + POACH_GRACE_DAYS_AFTER_FIRST_JOB;
 }
 
 // How attractive a worker is to approach: unhappy and underpaid people take calls; loyal,

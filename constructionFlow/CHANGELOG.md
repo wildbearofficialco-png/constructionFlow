@@ -5,6 +5,27 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+### Review sprint — fair hiring, true numbers, new-player protection (PR #32)
+
+From the independent build-14 playtest. Save-compatible; no build bump.
+
+- **Hiring:** job-ad applicants asked $18–45/day (below the $90 floor, ~1/5 of market) and every
+  hire quit for being "Badly underpaid". They now ask their market rate; the card shows wage vs
+  market; bulk hire charges the signing bonus. Saves: waiting applicants repriced, mis-priced
+  hires moved to market once with a notice.
+- **50-day raise** fired on day 1–2 (it read the loyalty score); it now needs 50 days employed.
+- **True numbers:** one market share; rival rep in whole points; Job Complete leads with profit
+  and labels the final payment; build vs safety inspections named apart; plant line counts only
+  phases that need plant and says what a gap does; home-market cards show the player's town;
+  a bought rival is not announced as bankrupt; "outbid you" no longer used when you never bid.
+- **Hidden penalty removed:** the unseen background competitor model took 1–3 player reputation
+  for contracts that did not exist. It is now silent and leaves player reputation alone.
+- **New players:** the tutorial's opening job is held (rivals cannot take it, it does not lapse
+  while you are on your first job); jobs accepted on decision cards are reserved and guaranteed.
+- **Poaching is an offer:** none until 5 days after the first completed job; loyal, well-paid
+  crew often refuse on their own; otherwise a warning and 3 days to match or let them go.
+  `systems/crewPoaching.js`.
+
 ## 1.0.0 (build 14) — save-data safety
 
 TestFlight build for physical-device testing. Save-compatible with builds 1–13; the first launch

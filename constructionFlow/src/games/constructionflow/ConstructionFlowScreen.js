@@ -39,7 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
-import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS } from "../../systems/crewPoaching.js";
+import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
   earnChainOpportunity, openReadyChainOpportunities, hasLiveChainOpportunity, chainReadiness, CHAIN_LOCKED, CHAIN_OFFER_DAYS,
@@ -4952,10 +4952,11 @@ export function gameTick(prev) {
         if (earned > 0) recordTransaction(g, "contracts", earned, `${site.label}: final payment`);
         g.completedJobs = (g.completedJobs || 0) + 1;
         // The moment the new-player protections lift, say what changes — once.
+        if (!Number.isFinite(g.firstJobCompletedDay)) g.firstJobCompletedDay = g.day;
         if (g.completedJobs === 1 && !g._competitionBriefed) {
           g._competitionBriefed = true;
           addImportantNotice(g,
-            `You're on the map now. Rivals compete for contracts on the board, and bigger firms may try to hire your idle crew — you'll get a warning and ${POACH_RESPONSE_DAYS} days to match their offer. Fair pay and loyalty make people turn offers down.`,
+            `You're on the map now. Rivals compete for contracts on the board, and from day ${g.firstJobCompletedDay + POACH_GRACE_DAYS_AFTER_FIRST_JOB} bigger firms may try to hire your idle crew — you'll get a warning and ${POACH_RESPONSE_DAYS} days to match their offer. Fair pay and loyalty make people turn offers down.`,
             "orange", { actionLabel: "Crew", actionTab: "Crew" });
         }
         if (!g.cityJobsWon) g.cityJobsWon = {};
@@ -7534,6 +7535,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       (_s.assignedEquipmentIds||[]).forEach(eid => { const _e=(g.equipment||[]).find(e=>e.id===eid); if(_e){_e.assignedSiteId=null;_e.status="Idle";} });
       g.activeSites = (g.activeSites||[]).filter(s => s.id !== siteId);
       g.completedJobs = (g.completedJobs||0) + 1;
+      if (!Number.isFinite(g.firstJobCompletedDay)) g.firstJobCompletedDay = g.day;
       addLog(g, `🤝 Settled ${_s.label} — ${money(_partial)} partial payout, rep -${_repLoss}.`);
       addImportantNotice(g, `🤝 Settled "${_s.label}" early — partial payout of ${money(_partial)}, reputation -${_repLoss}.`, "orange");
     });

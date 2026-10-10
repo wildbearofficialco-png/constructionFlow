@@ -10,7 +10,7 @@ import ConstructionFlowScreen, {
 } from "../src/games/constructionflow/ConstructionFlowScreen.js";
 import {
   poachingAllowed, poachWeight, declineChance, makePoachOffer, approachCrew, matchOffer,
-  expiredOffers, POACH_RESPONSE_DAYS,
+  expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB,
 } from "../src/systems/crewPoaching.js";
 import { marketRateFor } from "../src/systems/crewPayroll.js";
 
@@ -20,9 +20,15 @@ jest.setTimeout(30000);
 const worker = (over = {}) => ({ id: "w1", name: "Reed Hall", role: "Carpenter", skill: 90, certifications: [], status: "Idle", loyalty: 50, mood: 70, ...over, wagePerDay: over.wagePerDay ?? marketRateFor({ role: "Carpenter", skill: 90 }) });
 
 describe("the rules", () => {
-  test("no approaches until the first job is done", () => {
-    expect(poachingAllowed({ completedJobs: 0 })).toBe(false);
-    expect(poachingAllowed({ completedJobs: 1 })).toBe(true);
+  test("no approaches until five days after the first job", () => {
+    expect(poachingAllowed({ completedJobs: 0, day: 30 })).toBe(false);
+    expect(poachingAllowed({ completedJobs: 1, firstJobCompletedDay: 8, day: 8 })).toBe(false);
+    expect(poachingAllowed({ completedJobs: 1, firstJobCompletedDay: 8, day: 12 })).toBe(false);
+    expect(poachingAllowed({ completedJobs: 1, firstJobCompletedDay: 8, day: 8 + POACH_GRACE_DAYS_AFTER_FIRST_JOB })).toBe(true);
+  });
+
+  test("a save from before the grace field, already past its first job, carries on", () => {
+    expect(poachingAllowed({ completedJobs: 4, day: 60 })).toBe(true);
   });
 
   test("underpaid, disloyal people are approached far more than loyal, well-paid ones", () => {
@@ -96,6 +102,21 @@ describe("in the game", () => {
     }
     expect(offered).not.toBeNull();
     expect(JSON.stringify(g)).toMatch(/Match it in Crew by day/);
+  });
+
+  test("the five days after the first job stay quiet; offers can come after", () => {
+    const { withSeed } = require("../scripts/playtest/firstHourHarness.js");
+    const g = withSeed(42, () => ({ ...freshState(), setupDone: true, completedJobs: 1 }));
+    bigRivals(g);
+    g.firstJobCompletedDay = g.day;
+    Math.random = () => 0.025;
+    for (let d = 1; d < POACH_GRACE_DAYS_AFTER_FIRST_JOB; d++) {
+      g.day += 1; enhancedRivalDailyLogic(g);
+      expect(g.crew.some((w) => w.poachOffer)).toBe(false);
+    }
+    let offered = false;
+    for (let d = 0; d < 30 && !offered; d++) { g.day += 1; enhancedRivalDailyLogic(g); offered = g.crew.some((w) => w.poachOffer); }
+    expect(offered).toBe(true);
   });
 
   test("ignored, they leave when the window closes; matched, they stay", () => {
