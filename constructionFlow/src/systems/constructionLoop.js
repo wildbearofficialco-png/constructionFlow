@@ -136,6 +136,13 @@ export function hasEarnedContractGuarantee(contract = {}) {
   return contract.chainGuaranteed === true || contract.isChainUnlock === true;
 }
 
+// A job the player said yes to on a decision card ("Take the rush job", a referral, a returning
+// client) is theirs once they mobilise. It used to land on the public board as an ordinary bid —
+// rivals could take it and the player could lose the roll on a job they had already accepted.
+export function hasReservedGuarantee(contract = {}) {
+  return contract.reservedForPlayer === true && contract.status !== "Locked";
+}
+
 // The full picture the player is shown BEFORE committing, so a lost bid is never a surprise:
 // what it pays, how likely it is, and who else wants it. The screen renders exactly this
 // object, and `rollBidOutcome` consumes exactly this `winChance` — so what is promised and
@@ -146,7 +153,8 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
   const competition = getBidCompetition(game, contract);
   const firstContractGuaranteed = hasFirstContractGuarantee(game);
   const earnedContractGuaranteed = hasEarnedContractGuarantee(contract);
-  const guaranteed = firstContractGuaranteed || earnedContractGuaranteed;
+  const reservedGuaranteed = hasReservedGuarantee(contract);
+  const guaranteed = firstContractGuaranteed || earnedContractGuaranteed || reservedGuaranteed;
   // Floors and ceilings so no public-market bid is ever hopeless or certain. The opening job
   // and earned chain opportunities are the two explicit guarantees.
   const winChance = guaranteed ? 1 : Math.max(0.25, Math.min(0.97, style.baseWinChance * competition));
@@ -158,6 +166,8 @@ export function planBid(contract = {}, styleKey = DEFAULT_BID_STYLE, game = {}) 
     blurb: style.blurb,
     detail: earnedContractGuaranteed
       ? "You earned this follow-up contract — once eligible, it is yours to accept."
+      : reservedGuaranteed && !firstContractGuaranteed
+        ? "You accepted this job — it is held for you until it expires."
       : firstContractGuaranteed
         ? "Your first contract is yours — nobody outbids a new firm on its opening job."
         : style.detail,

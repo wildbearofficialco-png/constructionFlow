@@ -19,6 +19,7 @@ import {
   canStartWithPlant,
   plantPlanFor,
   plantProgressFactor,
+  describePlantPlan,
 } from "../src/systems/sitePlant.js";
 
 const machine = (over = {}) => ({ id: "m1", type: "Earthwork", tier: 2, status: "Idle", ...over });
@@ -239,5 +240,43 @@ describe("the contract's own minTier is the authority", () => {
     // the player time, not the contract.
     expect(STALL_FACTOR).toBeGreaterThanOrEqual(0.5);
     expect(STALL_FACTOR).toBeLessThan(1);
+  });
+});
+
+describe("describePlantPlan — the Bids card's plant line", () => {
+  const req = (anyOf) => ({ anyOf, minTier: 1 });
+  test("nothing needs plant → no line", () => {
+    expect(describePlantPlan([{ phase: "A", required: null, satisfied: true }])).toBeNull();
+  });
+  test("a missing first-phase machine is a hard gate", () => {
+    const out = describePlantPlan([
+      { phase: "Site Prep", required: req(["Earthwork"]), satisfied: false },
+      { phase: "Framing", required: req(["Lifting"]), satisfied: true },
+    ]);
+    expect(out).toEqual({ tone: "warning", text: "⚠ Can't start without Earthwork plant" });
+  });
+  test("a missing later-phase machine only slows that phase", () => {
+    const out = describePlantPlan([
+      { phase: "Site Prep", required: req(["Earthwork"]), satisfied: true },
+      { phase: "Framing", required: req(["Lifting", "Utility"]), satisfied: false },
+      { phase: "Finishes", required: null, satisfied: true },
+    ]);
+    expect(out.tone).toBe("warning");
+    expect(out.text).toBe("⚠ No Lifting/Utility plant: 1 phase runs 45% slower");
+  });
+  test("counts only the phases that need plant, and says so", () => {
+    const out = describePlantPlan([
+      { phase: "Site Prep", required: req(["Earthwork"]), satisfied: true },
+      { phase: "Framing", required: req(["Lifting"]), satisfied: true },
+      { phase: "Finishes", required: null, satisfied: true },
+    ]);
+    expect(out.text).toBe("🚜 Plant on hand for the 2 phases that need it (Earthwork/Lifting)");
+  });
+  test("every phase covered reads 'all N phases'", () => {
+    const out = describePlantPlan([
+      { phase: "A", required: req(["Earthwork"]), satisfied: true },
+      { phase: "B", required: req(["Utility"]), satisfied: true },
+    ]);
+    expect(out.text).toBe("🚜 Plant on hand for all 2 phases (Earthwork/Utility)");
   });
 });

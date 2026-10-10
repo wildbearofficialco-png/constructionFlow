@@ -39,6 +39,7 @@ import { equipmentRepairEventCost, fuelSurgeEventCost } from "../../systems/even
 import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
+import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
   earnChainOpportunity, openReadyChainOpportunities, hasLiveChainOpportunity, chainReadiness, CHAIN_LOCKED, CHAIN_OFFER_DAYS,
@@ -110,6 +111,7 @@ import {
   satisfies as plantSatisfies,
   isUsable,
   STALL_FACTOR,
+  describePlantPlan,
 } from "../../systems/sitePlant.js";
 import {
   isLicensedOperator,
@@ -137,6 +139,8 @@ import {
   planBulkFire,
   WAGE_FLOOR,
   WAGE_CEILING,
+  applicantAskingWage,
+  isMispricedWage,
 } from "../../systems/crewPayroll.js";
 import {
   MINS_PER_TICK,
@@ -236,6 +240,7 @@ import {
   planProgressPayment,
   finalPaymentDue,
   summarizeSitePayments,
+  hasFirstContractGuarantee,
 } from "../../systems/constructionLoop.js";
 import {
   THEMES,
@@ -971,7 +976,7 @@ const EMPIRE_GOALS = [
   { id:"valuation_5m",     title:"$5M Company",              desc:"Reach $5 million company valuation",                     check:(g)=>computeValuation(g)>=5000000,                                                                                              cashReward:400000,repReward:50 },
   { id:"construction_empire",title:"Construction Empire",     desc:"Reach $10M company valuation",                          check:(g)=>computeValuation(g)>=10000000,                                                                                             cashReward:600000,repReward:75 },
   { id:"number_one",       title:"#1 in America",            desc:"Reach $20M valuation and national rank #1",              check:(g)=>computeValuation(g)>=20000000&&(g.nationalRank||99)<=1,                                                                    cashReward:1000000,repReward:100 },
-  { id:"salem_dominant",   title:"Salem Dominator",          desc:"Win 15+ jobs in your home city",                        check:(g)=>((g.cityJobsWon||{})["salem"]||0)>=15,                                                                                     cashReward:16000, repReward:8  },
+  { id:"salem_dominant",   title:"Home Turf Dominator",          desc:"Win 15+ jobs in your home city",                        check:(g)=>((g.cityJobsWon||{})["salem"]||0)>=15,                                                                                     cashReward:16000, repReward:8  },
   { id:"oregon_leader",    title:"Oregon Leader",            desc:"Rep 70+ and active jobs in Portland, Eugene & Salem",   check:(g)=>g.reputation>=70&&((g.cityJobsWon||{}).portland||0)>0&&((g.cityJobsWon||{}).eugene||0)>0&&((g.cityJobsWon||{}).salem||0)>=5, cashReward:60000, repReward:18 },
 ];
 
@@ -1005,11 +1010,20 @@ function computeNationalRank(g) {
   return 99;
 }
 
-function computeMarketShare(g) {
-  const cities = (g.cityOffices||[]).length + 1; // +1 for home city
-  const base = cities / CITIES.length;
-  const repBonus = (g.reputation||0) / 2000;
-  return Math.min(35, Math.round((base + repBonus) * 100));
+// One market share, everywhere. There used to be two numbers with the same label on the same
+// screen: this function (offices-per-city plus a reputation bonus — a footprint, not a share; a
+// one-city company read 13%) and the Rankings card's share of industry value (1.0%). Market
+// share is now the company's slice of the whole industry's value — the Rankings definition —
+// and every "Market Share" tile reads it from here.
+function rivalIndustryValue(r) {
+  return (r.cash || 0) + (r.rep || 0) * 50000 + ((r.cityPresence || ["salem"]).length) * 100000 + (r.jobsCompleted || 0) * 15000;
+}
+
+export function computeMarketShare(g, valuation = computeValuation(g)) {
+  const active = (g.rivals || []).filter((r) => r && !(g.acquiredRivals || []).includes(r.id) && r.status !== "Bankrupt");
+  const total = active.reduce((sum, r) => sum + rivalIndustryValue(r), Math.max(0, valuation));
+  const pct = total > 0 ? (Math.max(0, valuation) / total) * 100 : 100;
+  return pct < 10 ? Math.round(pct * 10) / 10 : Math.round(pct);
 }
 
 function computeHealthScore(g) {
@@ -1156,6 +1170,19 @@ function buildContractorRankings(g) {
   return [...rivalRows, playerRow]
     .sort((a, b) => b.value - a.value)
     .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+// The name to SHOW for a city. Every home-market contract is generated in the built-in "salem"
+// market (pickContractCity), whatever competition template setup chose (startingCityId is
+// salem/portland/phoenix by market size and drives competition only). The player typed their own
+// town — Bend, say — and every contract and site card still read "Salem". The home market now
+// shows the player's own town; cities the company expands into show their real names.
+export const HOME_MARKET_ID = "salem";
+
+export function cityDisplayName(g, cityId) {
+  const id = cityId || HOME_MARKET_ID;
+  if (id === HOME_MARKET_ID && g?.homeCityName) return g.homeCityName;
+  return CITIES.find((c) => c.id === id)?.name || "";
 }
 
 function getCityPlayerShare(g, cityId) {
@@ -1555,7 +1582,7 @@ export const DECISION_EVENTS = [
     title: "⚡ Emergency Contract", tone: "yellow",
     desc: "A client needs urgent repair work — double the going rate but the deadline is 4 days with heavy penalties.",
     options: [
-      { label: "Take the rush job", sub: "2× value, 4-day deadline, 3× penalty/day", apply: (g) => { const base = CONTRACT_DEFS.find(d => d.category === "Commercial" && d.minTier <= 2); if (base) { const c = createContract(g); c.value = Math.round(c.value * 2.0); c.deadline = g.day + 5; c.expiresDay = g.day + 2; c.penaltyPerDay = (c.penaltyPerDay || 200) * 3; c.label = "⚡ " + c.label; g.contracts.push(c); addLog(g, `⚡ Emergency contract added — high value, tight window.`); addImportantNotice(g, "Rush contract added — tight deadline, 2× payout. Check Bids.", "orange"); } } },
+      { label: "Take the rush job", sub: "2× value, 4-day deadline, 3× penalty/day", apply: (g) => { const base = CONTRACT_DEFS.find(d => d.category === "Commercial" && d.minTier <= 2); if (base) { const c = createContract(g); c.value = Math.round(c.value * 2.0); c.deadline = g.day + 5; c.expiresDay = g.day + 2; c.penaltyPerDay = (c.penaltyPerDay || 200) * 3; c.label = "⚡ " + c.label; c.reservedForPlayer = true; g.contracts.push(c); addLog(g, `⚡ Emergency contract added — high value, tight window.`); addImportantNotice(g, "Rush contract added — tight deadline, 2× payout. Check Bids.", "orange"); } } },
       { label: "Turn it down", sub: "Too risky right now", apply: (g) => { addImportantNotice(g, "Emergency contract declined — too risky.", "neutral"); } },
     ],
   },
@@ -1748,7 +1775,7 @@ export const DECISION_EVENTS = [
     desc: "A developer just called — a competitor dropped out and they need someone to start a $45,000 job tomorrow. Tight 5-day deadline.",
     options: [
       { label: "Take the emergency job", sub: "~$45k contract added · 5-day deadline", apply: (g) => {
-        const c=createContract(g); c.value=Math.round(45000*computeInflation(g)); c.deadline=g.day+5; c.expiresDay=g.day+2; c.penaltyPerDay=Math.round(c.value*0.06); c.label="🚨 Emergency: "+c.label; g.contracts.push(c);
+        const c=createContract(g); c.value=Math.round(45000*computeInflation(g)); c.deadline=g.day+5; c.expiresDay=g.day+2; c.penaltyPerDay=Math.round(c.value*0.06); c.label="🚨 Emergency: "+c.label; c.reservedForPlayer = true; g.contracts.push(c);
         addLog(g,"🚨 Emergency contract added — $45k, 5-day window.");
         addImportantNotice(g,"Emergency contract available! Tight deadline — check Bids.","orange");
       }},
@@ -2029,7 +2056,7 @@ export const DECISION_EVENTS = [
       { label: "Take it at their number", sub: "A contract added to Bids, reputation +3",
         apply: (g) => {
           const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore || 600, marketState: g.marketState || "Normal", equipment: g.equipment || [], contracts: g.contracts || [], _milestones: g._milestones || {}, cityOffices: g.cityOffices || [], properties: g.properties || [] });
-          if (ref) g.contracts.push(ref);
+          if (ref) { ref.reservedForPlayer = true; g.contracts.push(ref); }
           g.reputation = Math.min(100, (g.reputation || 0) + 3);
           recordMemory(g, { tag: `client_repeat_${g.day}`, kind: "client", valence: "good", weight: 2, label: "A client came back", detail: "a client you delivered for came back to you before going to market" });
           addLog(g, "🤝 Repeat client brought work straight to you.");
@@ -2158,7 +2185,7 @@ const EMPLOYEE_EVENTS = [
     desc: "A crew member's contact needs construction work done. A new contract has been added to your Bids.",
     options: [
       { label: "Great — thanks!", sub: "New contract added · loyalty +8",
-        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) w.loyalty = Math.min(100,(w.loyalty ?? 50)+8); const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore||600, marketState: g.marketState||"Normal", equipment: g.equipment||[], contracts: g.contracts||[], _milestones: g._milestones||{}, cityOffices: g.cityOffices||[], properties: g.properties||[] }); if (ref) g.contracts.push(ref); addLog(g, `📋 ${w?.name||"Worker"} brought in a referral — new contract available!`); addImportantNotice(g, `${w?.name||"Worker"} brought in a referral — new contract added to Bids!`, "green"); } },
+        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) w.loyalty = Math.min(100,(w.loyalty ?? 50)+8); const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore||600, marketState: g.marketState||"Normal", equipment: g.equipment||[], contracts: g.contracts||[], _milestones: g._milestones||{}, cityOffices: g.cityOffices||[], properties: g.properties||[] }); if (ref) { ref.reservedForPlayer = true; g.contracts.push(ref); } addLog(g, `📋 ${w?.name||"Worker"} brought in a referral — new contract available!`); addImportantNotice(g, `${w?.name||"Worker"} brought in a referral — new contract added to Bids!`, "green"); } },
     ],
   },
 ];
@@ -2345,9 +2372,10 @@ function buildBorrowerProfile(g, product) {
 // ─── Job Postings ────────────────────────────────────────────────────────────────
 
 const JOB_POSTINGS = [
-  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  wageMin: 18, wageMax: 26, desc: "Finds a reliable labourer or tradesperson." },
-  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, wageMin: 24, wageMax: 34, desc: "Attracts experienced tradespeople." },
-  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, wageMin: 30, wageMax: 45, desc: "Top-tier tradespeople. Foreman-quality." },
+  // Wages are no longer set here: applicants ask their own market rate (crewPayroll.applicantAskingWage).
+  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  desc: "Finds a reliable labourer or tradesperson." },
+  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, desc: "Attracts experienced tradespeople." },
+  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, desc: "Top-tier tradespeople. Foreman-quality." },
 ];
 
 const CREW_ROLES = ["Labourer", "Carpenter", "Electrician", "Plumber", "Concreter", "Steelworker"];
@@ -2456,16 +2484,17 @@ function createWorker(role, overrides = {}) {
   };
 }
 
-function createApplicant(boost = {}) {
+export function createApplicant(boost = {}) {
   const trait = pick(CREW_TRAITS);
   const role = boost.role || pick(CREW_ROLES);
+  const skill = rand(boost.skillMin ?? 75, boost.skillMax ?? 105);
   return {
     id: uid(),
     name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
     role,
     specialty: boost.specialty || pick(CREW_SPECIALTIES),
-    desiredWage: rand(boost.wageMin ?? 18, boost.wageMax ?? 32),
-    skill: rand(boost.skillMin ?? 75, boost.skillMax ?? 105),
+    desiredWage: applicantAskingWage({ role, skill }, boost.tierId),
+    skill,
     mood: rand(58, 88),
     loyalty: rand(50, 78),
     stamina: rand(65, 95),
@@ -2473,6 +2502,14 @@ function createApplicant(boost = {}) {
     signingBonus: rand(50, 200),
     quality: boost.quality || null,
   };
+}
+
+// The wage a hire actually starts on. Regional wage pressure can only raise the ask: the pay
+// position bands (crewPayroll.payPosition) compare against the national market rate, so a
+// discount here would start a new hire "below market" through no choice of the player's.
+export function hireWageFor(applicant, g) {
+  const ask = Math.max(WAGE_FLOOR, Math.round(Number(applicant?.desiredWage) || 0));
+  return Math.max(ask, applyRegionalWage(ask, g));
 }
 
 function createSupportStaff(role) {
@@ -3311,7 +3348,11 @@ export function checkWorkerTurnover(g) {
 
     // Loyalty milestone events
     const loyaltyMilestone = Math.floor((w.loyalty ?? 0));
-    if (loyaltyMilestone >= 50 && !(w._loyalty50Done) && w.status !== "Active") {
+    // The 50-day raise. It used to fire on the loyalty SCORE reaching 50 — and starting crew begin
+    // at 55–80 loyalty — so every new company handed its whole crew a 10% raise "for 50 days of
+    // loyalty" on day 1 or 2. It now needs 50 days actually on the books, as the message says.
+    const daysEmployed = (g.day || 1) - (Number.isFinite(w.hireDay) ? w.hireDay : 0);
+    if (daysEmployed >= 50 && loyaltyMilestone >= 50 && !(w._loyalty50Done) && w.status !== "Active") {
       w._loyalty50Done = true;
       const raiseAmt = Math.round(w.wagePerDay * 0.10);
       if (g.cash > raiseAmt * 30) {
@@ -3616,13 +3657,9 @@ export function enhancedRivalDailyLogic(g) {
     // event and belongs in their ops log. A rival opening a yard, winning an award or buying
     // another firm is market news and belongs in `marketNews` — the ops log is capped at 25
     // entries and rival activity fires far more often than the player's own.
-    // Rivals occasionally poach your crew if they're struggling
+    // Rivals court unhappy crew. Was an instant removal; now an offer the player can answer.
     if ((rival.rep || 0) > 20 && Math.random() < 0.02) {
-      const poachTarget = g.crew.find(w => w.mood < 50 && w.loyalty < 40);
-      if (poachTarget) {
-        g.crew = g.crew.filter(w => w.id !== poachTarget.id);
-        addLog(g, `👋 ${poachTarget.name} was poached by ${rival.name}. Low morale cost you a worker.`);
-      }
+      rivalCourtsCrew(g, rival, (g.crew || []).filter((w) => (w.mood ?? 70) < 50 && (w.loyalty ?? 50) < 40));
     }
 
     // Hire workers when growing and profitable
@@ -3662,7 +3699,7 @@ export function enhancedRivalDailyLogic(g) {
         c.status = "Taken";
         rival.activeJobs = (rival.activeJobs || 0) + 1;
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-        addLog(g, `🏗️ ${rival.name} outbid you on "${c.label}" — act faster on ${c.category} contracts.`);
+        addLog(g, `🏗️ ${rival.name} won "${c.label}" before its window closed — open ${c.category} contracts don't wait.`);
         break;
       }
     }
@@ -3672,15 +3709,15 @@ export function enhancedRivalDailyLogic(g) {
         c.status = "Taken";
         rival.activeJobs = (rival.activeJobs || 0) + 1;
         rival.rep = Math.min(100, (rival.rep || 0) + rand(1, 3));
-        addLog(g, `🏗️ ${rival.name} snagged "${c.label}" before you — move faster next time.`);
+        addLog(g, `🏗️ ${rival.name} picked up "${c.label}" after it lapsed.`);
       }
     }
     // R15-3: Rival takes an "interested" contract it was watching if it's still Open
-    const _interestedContracts = g.contracts.filter(c => c.status === "Open" && c.interestedRival === rival.name && g.day >= (c.rivalTakesDay || 999));
+    const _interestedContracts = g.contracts.filter(c => isRivalBiddable(c) && c.interestedRival === rival.name && g.day >= (c.rivalTakesDay || 999));
     for (const c of _interestedContracts) {
       c.status = "Taken";
       rival.activeJobs = (rival.activeJobs || 0) + 1;
-      addLog(g, `🔥 ${rival.name} moved fast — they snagged "${c.label}" before you did.`);
+      addLog(g, `🔥 ${rival.name} took "${c.label}" — they were watching it from the start.`);
     }
 
     // City expansion
@@ -3717,17 +3754,11 @@ export function enhancedRivalDailyLogic(g) {
     g.cityStats[_rivalCity].rivalJobs = (g.cityStats[_rivalCity].rivalJobs || 0) + 1;
 
     // ── Rival War: Employee poaching (Feature 7) ────────────────────────────
+    // A bigger rival makes one of your idle people an offer (systems/crewPoaching.js). It used to
+    // take them on the spot — on day 2 of a new company, in the build-14 playtest.
     if ((rival.valuation || rival.cash || 0) > (g.companyValuation||0) * 1.8 && Math.random() < 0.03) {
       const _idleCrew = (g.crew||[]).filter(w => w.status === "Idle");
-      if (_idleCrew.length > 1) {
-        const _target = _idleCrew[Math.floor(Math.random() * _idleCrew.length)];
-        // Remove from all site assignments before removing from crew
-        for (const _site of (g.activeSites||[])) {
-          _site.assignedCrewIds = (_site.assignedCrewIds||[]).filter(id => id !== _target.id);
-        }
-        g.crew = g.crew.filter(w => w.id !== _target.id);
-        addLog(g, `⚠️ ${rival.name} poached ${_target.name} from your crew!`);
-      }
+      if (_idleCrew.length > 1) rivalCourtsCrew(g, rival, _idleCrew);
     }
 
     // ── Rival War: cityJobs tracking ─────────────────────────────────────────
@@ -3752,7 +3783,11 @@ export function enhancedRivalDailyLogic(g) {
         rival.activeJobs = (rival.activeJobs||0) + (_weakerRival.activeJobs||0);
         rival.employees = (rival.employees||2) + Math.floor((_weakerRival.employees||2) * 0.5);
         rival.rep = Math.min(100, (rival.rep||0) + rand(2, 5));
+        // Out of the market like a bankruptcy (status BANKRUPT keeps it out of every list), but it
+        // was BOUGHT — the story below used to announce it as a collapse on the same day the news
+        // said it was acquired.
         _weakerRival.status = RIVAL_STATUS.BANKRUPT;
+        _weakerRival.acquiredBy = rival.name;
         _weakerRival.troubleDays = 0;
         pushMarketNews(g, { text: `🤝 ${rival.name} acquired ${_weakerRival.name} — the market is consolidating.`, tone: "caution", rivalId: rival.id });
       }
@@ -3769,8 +3804,44 @@ export function enhancedRivalDailyLogic(g) {
 // A contract the open market can take. An earned chain opportunity is a private offer to the
 // player — the reward for finishing its prerequisite — so no rival can bid it away. Sprint 1 found
 // rivals claiming one on the very day it opened.
+// Rivals never take a contract that is the player's by agreement: an earned chain offer, the
+// tutorial's opening job, or a job the player said yes to on a decision card ("Take the rush
+// job"). In the build-14 playtest a rival took the very fence the tutorial pointed at, and
+// another "outbid" the player on a rush job they had just accepted.
+// A rival approaches someone in `pool`. Loyal, well-paid people may refuse on their own (told to
+// the player as good news); otherwise the player is warned and has POACH_RESPONSE_DAYS to match.
+function rivalCourtsCrew(g, rival, pool) {
+  if (!poachingAllowed(g)) return null;
+  const res = approachCrew({ day: g.day, crew: pool }, rival);
+  if (!res) return null;
+  const w = res.worker;
+  if (res.kind === "declined") {
+    addLog(g, `🤝 ${w.name} turned down an offer from ${rival.name} — they're staying with you.`);
+    addImportantNotice(g, `${rival.name} tried to hire ${w.name}. They said no — loyalty and fair pay keep people.`, "green");
+  } else {
+    addLog(g, `📨 ${rival.name} offered ${w.name} ${money(res.offer.offerWage)}/day to leave (you pay ${money(w.wagePerDay)}).`);
+    addImportantNotice(g,
+      `${rival.name} offered ${w.name} ${money(res.offer.offerWage)}/day. Match it in Crew by day ${res.offer.expiresDay}, or they leave.`,
+      "red", { actionLabel: "Respond", actionTab: "Crew" });
+  }
+  return res;
+}
+
+// Offers left unanswered: the worker takes the job.
+export function resolvePoachOffers(g) {
+  for (const w of expiredOffers(g)) {
+    const to = w.poachOffer?.rivalName || "a rival";
+    for (const site of (g.activeSites || [])) {
+      site.assignedCrewIds = (site.assignedCrewIds || []).filter((id) => id !== w.id);
+    }
+    g.crew = (g.crew || []).filter((x) => x.id !== w.id);
+    addLog(g, `👋 ${w.name} left for ${to}.`);
+    addImportantNotice(g, `${w.name} took the offer from ${to} and has left the company.`, "orange", { actionLabel: "Hire", actionTab: "Crew" });
+  }
+}
+
 function isRivalBiddable(c) {
-  return !!c && c.status === "Open" && !c.isChainUnlock;
+  return !!c && c.status === "Open" && !c.isChainUnlock && !c.reservedForPlayer;
 }
 
 export function enhancedRivalBidding(g, openContracts) {
@@ -3999,7 +4070,8 @@ export function freshState() {
     crew: [startWorker1, startWorker2, startWorker3],
     officeStaff: [],
     applicants: [],
-    contracts: baseContracts,
+    // The opening job is the tutorial's step 1: rivals cannot take it (isRivalBiddable).
+    contracts: baseContracts.map((c, i) => (i === 0 ? { ...c, reservedForPlayer: true, tutorialContract: true, interestedRival: undefined, rivalTakesDay: undefined } : c)),
     activeSites: [],
     completedJobs: 0,
     onTimeStreak: 0,
@@ -4156,6 +4228,39 @@ export function migrateState(saved) {
     equipment: Number.isFinite(r.equipment) ? r.equipment : (Number.isFinite(r.equipCount) ? r.equipCount : 1),
     cityPresence: Array.isArray(r.cityPresence) ? r.cityPresence : ["salem"],
   }));
+  // Sprint: hiring fix. Applicants still waiting were priced on the old $18–45 ad bands: they ask
+  // their market rate now. Anyone already HIRED on one of those wages (only possible through the
+  // bug — setWage clamps to WAGE_FLOOR) is moved to their market rate once, with a notice, rather
+  // than left to keep losing morale and quit over a price the player never chose.
+  if (Array.isArray(g.applicants)) {
+    g.applicants = g.applicants.map((a) => (a && isMispricedWage(a.desiredWage)
+      ? { ...a, desiredWage: applicantAskingWage(a, "standard", () => 0.5) }
+      : a));
+  }
+  if (!g._wageScaleFixed && Array.isArray(g.crew)) {
+    const corrected = [];
+    g.crew = g.crew.map((w) => {
+      if (!w || !isMispricedWage(w.wagePerDay)) return w;
+      corrected.push(w.name);
+      return { ...w, wagePerDay: marketRateFor(w), underpaidDays: 0 };
+    });
+    g._wageScaleFixed = true;
+    if (corrected.length) {
+      addImportantNotice(g, `Pay correction: ${corrected.join(", ")} ${corrected.length === 1 ? "was" : "were"} hired on a mis-priced wage and ${corrected.length === 1 ? "is" : "are"} now on the market rate. Check Crew for the new payroll.`, "orange", { actionLabel: "Review pay", actionTab: "Crew" });
+    }
+  }
+  // A company still on its first job gets its opening contract held for it. Saves from before
+  // this could already have lost the tutorial fence to a rival, leaving step 1 pointing at
+  // nothing; they get a fresh one, reserved.
+  if (Array.isArray(g.contracts) && hasFirstContractGuarantee(g)
+      && !g.contracts.some((c) => c && c.tutorialContract && c.status === "Open")) {
+    const _openFence = g.contracts.find((c) => c && c.status === "Open" && c.defId === "fence");
+    if (_openFence) Object.assign(_openFence, { reservedForPlayer: true, tutorialContract: true });
+    else {
+      const _fence = createContract(g, "fence");
+      if (_fence) g.contracts.push({ ..._fence, reservedForPlayer: true, tutorialContract: true });
+    }
+  }
   if (!Array.isArray(g.marketNews)) g.marketNews = [];
   if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
   if (g.activeMarketEvent === undefined)    g.activeMarketEvent = null;
@@ -4846,6 +4951,14 @@ export function gameTick(prev) {
         g.weeklyStats.revenue += earned;
         if (earned > 0) recordTransaction(g, "contracts", earned, `${site.label}: final payment`);
         g.completedJobs = (g.completedJobs || 0) + 1;
+        // The moment the new-player protections lift, say what changes — once.
+        if (!Number.isFinite(g.firstJobCompletedDay)) g.firstJobCompletedDay = g.day;
+        if (g.completedJobs === 1 && !g._competitionBriefed) {
+          g._competitionBriefed = true;
+          addImportantNotice(g,
+            `You're on the map now. Rivals compete for contracts on the board, and from day ${g.firstJobCompletedDay + POACH_GRACE_DAYS_AFTER_FIRST_JOB} bigger firms may try to hire your idle crew — you'll get a warning and ${POACH_RESPONSE_DAYS} days to match their offer. Fair pay and loyalty make people turn offers down.`,
+            "orange", { actionLabel: "Crew", actionTab: "Crew" });
+        }
         if (!g.cityJobsWon) g.cityJobsWon = {};
         const completedCityKey = site.cityId || "salem";
         g.cityJobsWon[completedCityKey] = (g.cityJobsWon[completedCityKey] || 0) + 1;
@@ -4948,7 +5061,7 @@ export function gameTick(prev) {
         const penaltyNote = penalty > 0 ? ` (${money(penalty)} late penalty)` : "";
         addLog(g, `✅ ${site.label} complete — earned ${money(earned + qualityBonus)}${penaltyNote}!`);
         const _qualLabel = effectiveQuality >= 1.15 ? "Premium" : effectiveQuality >= 1.05 ? "High" : effectiveQuality < 0.95 ? "Below Standard" : "Standard";
-        g.jobHistory = [...(g.jobHistory || []), { label: site.label, client: site.client, value: earned + qualityBonus, day: g.day, quality: _qualLabel, daysLate }].slice(-20);
+        g.jobHistory = [...(g.jobHistory || []), { label: site.label, client: site.client, value: earned + qualityBonus, contractValue: economics.grossRevenue, profit: economics.netProfit, day: g.day, quality: _qualLabel, daysLate }].slice(-20);
         // On-time streak tracking
         if (daysLate === 0) {
           g.onTimeStreak = (g.onTimeStreak || 0) + 1;
@@ -5459,7 +5572,10 @@ export function gameTick(prev) {
       addLog(g, `🔓 ${_opened.label} is open to bid — you have what it needs now. ${CHAIN_OFFER_DAYS} days to take it.`);
       addImportantNotice(g, `${_opened.label} is open to bid now that your company can take it. The offer runs ${CHAIN_OFFER_DAYS} days.`, "green", { actionLabel: "Bid", actionTab: "Bids" });
     }
-    g.contracts = g.contracts.filter((c) => c.status !== "Open" || c.expiresDay >= g.day);
+    // The tutorial's opening job waits for a new player who is still reading; it lapses
+    // normally once the company has started or finished any job.
+    const _stillLearning = hasFirstContractGuarantee(g);
+    g.contracts = g.contracts.filter((c) => c.status !== "Open" || c.expiresDay >= g.day || (c.tutorialContract && _stillLearning));
     while (g.contracts.filter((c) => c.status === "Open").length < _board.floor) {
       g.contracts.push(createContract(g));
     }
@@ -5587,7 +5703,9 @@ export function gameTick(prev) {
         } else {
           g.cash -= _res.fine;
           g.expenses += _res.fine;
-          recordTransaction(g, "fines", -_res.fine, `Safety inspection — ${_site.label}`);
+          // Named as a fine for findings: the build inspection in a job's final phase is a separate
+          // check, and a same-day pair used to read as "fined $800 for passing".
+          recordTransaction(g, "fines", -_res.fine, `Safety inspection fine — ${_site.label} (${_res.findings.length} finding${_res.findings.length === 1 ? "" : "s"})`);
           g.reputation = Math.max(0, (g.reputation || 0) - _res.reputationHit);
           addLog(g, `🚨 Safety inspection at ${_site.label} — ${_res.findings.length} finding(s), ${money(_res.fine)} in penalties.`);
           addImportantNotice(g,
@@ -5829,6 +5947,7 @@ export function gameTick(prev) {
 
     // ── Workforce systems ─────────────────────────────────────────────────────
     checkWorkerTurnover(g);
+    resolvePoachOffers(g);
     checkPromotion(g);
     checkWeeklyChallenge(g, "daily", 0);
     applyEquipmentAging(g);
@@ -6053,7 +6172,9 @@ export function gameTick(prev) {
     const justBankrupt = (g.rivals || []).find(r => r.status === "Bankrupt" && !(g._stories || []).includes(`bankrupt_${r.id}`));
     if (justBankrupt) {
       g._stories = [...(g._stories || []), `bankrupt_${justBankrupt.id}`];
-      g.pendingStory = g.pendingStory || { icon: "trending-down", title: `${justBankrupt.name} Collapses!`, body: `${justBankrupt.name} has gone bankrupt. Their contracts and market share are now up for grabs.` };
+      g.pendingStory = g.pendingStory || (justBankrupt.acquiredBy
+        ? { icon: "business", title: `${justBankrupt.acquiredBy} Buys ${justBankrupt.name}`, body: `${justBankrupt.name} has been taken over by ${justBankrupt.acquiredBy}. One fewer firm bidding against you — and a bigger one.` }
+        : { icon: "trending-down", title: `${justBankrupt.name} Collapses!`, body: `${justBankrupt.name} has gone bankrupt. Their contracts and market share are now up for grabs.` });
     }
 
     // ── First city expansion story ────────────────────────────────────────────
@@ -6636,7 +6757,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const _newWorker = {
         ...createWorker(applicant.role),
         id: uid(), name: applicant.name, role: applicant.role,
-        skill: applicant.skill, wagePerDay: applyRegionalWage(applicant.desiredWage, g),
+        skill: applicant.skill, wagePerDay: hireWageFor(applicant, g),
         mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
         hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
         status: "Idle",
@@ -6648,6 +6769,31 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       trackHire(g);
       addLog(g, `👷 ${applicant.name} hired as ${applicant.role}.`);
       repairCrewAssignments(g);
+    });
+  }, [update]);
+
+  // A rival's offer, answered from the worker's card (systems/crewPoaching.js).
+  const handleMatchOffer = useCallback((workerId) => {
+    fireHaptic("light");
+    update((g) => {
+      const w = (g.crew || []).find((x) => x.id === workerId);
+      if (!w?.poachOffer) return;
+      const rivalName = w.poachOffer.rivalName;
+      if (matchOffer(w, g.day)) {
+        addLog(g, `🤝 You matched ${rivalName}'s offer — ${w.name} stays on ${money(w.wagePerDay)}/day.`);
+        recordMemory(g, { tag: `kept_${w.id}_${g.day}`, kind: "crew", valence: "good", weight: 1, subject: w.name,
+          label: `Kept ${w.name} from ${rivalName}`, detail: `you matched a rival's offer to keep ${w.name}` });
+      }
+    });
+  }, [update]);
+
+  const handleLetWorkerGo = useCallback((workerId) => {
+    fireHaptic("light");
+    update((g) => {
+      const w = (g.crew || []).find((x) => x.id === workerId);
+      if (!w?.poachOffer) return;
+      w.poachOffer.expiresDay = g.day; // leaves now rather than after the window
+      resolvePoachOffers(g);
     });
   }, [update]);
 
@@ -6692,7 +6838,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.expenses += posting.cost;
       recordTransaction(g, "payroll", -posting.cost, "Recruitment job advert");
       for (let i = 0; i < posting.count; i++) {
-        g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, wageMin: posting.wageMin, wageMax: posting.wageMax, quality: posting.quality }));
+        g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, tierId: posting.id, quality: posting.quality }));
       }
       addLog(g, `📢 Job ad posted — ${posting.count} applicant(s) added.`);
     });
@@ -7225,7 +7371,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         crewCap: getTotalCrewCap(g),
         currentCrew: (g.crew || []).length,
         cash: g.cash,
-        hireCostFor: (a) => Math.round((a.desiredWage || 200) * 5),
+        // The same signing bonus a single hire pays. This used to be five days' wages, which only
+        // looked comparable while the ad wage bands were a fifth of the market rate.
+        hireCostFor: (a) => Math.round(a.signingBonus || 0),
       });
       if (_plan.count === 0) {
         fireHaptic("error");
@@ -7235,7 +7383,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       for (const a of _plan.hiring) {
         const _w = createWorker(a.role, {
           name: a.name, skill: a.skill, specialty: a.specialty,
-          wagePerDay: a.desiredWage || 200, hireDay: g.day,
+          wagePerDay: hireWageFor(a, g), hireDay: g.day,
         });
         g.crew.push(_w);
       }
@@ -7387,6 +7535,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       (_s.assignedEquipmentIds||[]).forEach(eid => { const _e=(g.equipment||[]).find(e=>e.id===eid); if(_e){_e.assignedSiteId=null;_e.status="Idle";} });
       g.activeSites = (g.activeSites||[]).filter(s => s.id !== siteId);
       g.completedJobs = (g.completedJobs||0) + 1;
+      if (!Number.isFinite(g.firstJobCompletedDay)) g.firstJobCompletedDay = g.day;
       addLog(g, `🤝 Settled ${_s.label} — ${money(_partial)} partial payout, rep -${_repLoss}.`);
       addImportantNotice(g, `🤝 Settled "${_s.label}" early — partial payout of ${money(_partial)}, reputation -${_repLoss}.`, "orange");
     });
@@ -8116,7 +8265,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const steps = [
             {
               num: "1 of 4", title: "Accept Your First Contract",
-              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.`,
+              body: `You start with ${money(game.cash)}, 1 truck, ${(game.crew || []).length} crew, and 20 lumber already in inventory.\n\nGo to Bids → accept the Fence Installation — your lumber is already covered. Assign crew + truck, then tap Mobilise.\n\nThis first job is held for you. After it, rivals bid on the same board — open contracts can go to someone else.`,
               cta: "Go to Bids", action: () => setTab("Bids"),
             },
             {
@@ -8452,7 +8601,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <View style={{ flexDirection:"row", gap:6, marginBottom:6 }}>
                 {[
                   { label:"National Rank", val: rank<=3?`#${rank} 🏆`:`#${rank}`, color: rank<=3?T.yellow:rank<=10?T.green:T.sub },
-                  { label:"Market Share",  val: `${game.marketShare||1}%`,         color: T.blue },
+                  { label:"Market Share",  val: `${computeMarketShare(game)}%`,         color: T.blue },
                   { label:"Cities Active", val: `${cityCount}`,                    color: T.orange },
                 ].map(k=>(
                   <View key={k.label} style={[styles.kpi,{flex:1,backgroundColor:T.panel,borderColor:T.border}]}>
@@ -8758,8 +8907,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 const statusLabel = r.status || RIVAL_STATUS.ACTIVE;
                 const statusColor = statusLabel === RIVAL_STATUS.BANKRUPT ? T.dim
                   : statusLabel === RIVAL_STATUS.STRUGGLING ? T.caution : T.safe;
-                const myRep = game.reputation || 0;
-                const theirRep = r.rep || 0;
+                // Whole points: rival rep drifts in fractions and was printed raw ("58.39506779108726").
+                const myRep = Math.round(game.reputation || 0);
+                const theirRep = Math.round(r.rep || 0);
                 const maxRep = Math.max(myRep, theirRep, 1);
                 const myPct = Math.round((myRep / maxRep) * 100);
                 const ahead = myRep >= theirRep;
@@ -8932,7 +9082,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                           : null;
                         return (
                           <Text style={[TYPE.caption, { color: T.dim, marginTop: 2 }]} numberOfLines={1}>
-                            📍 {siteCity.name}{_weatherRisk && !site.currentWeather ? ` · ${_weatherRisk}` : ""}
+                            📍 {cityDisplayName(game, contract.cityId)}{_weatherRisk && !site.currentWeather ? ` · ${_weatherRisk}` : ""}
                           </Text>
                         );
                       })()}
@@ -9648,7 +9798,13 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     <Text style={[styles.sub, subCol]}>{job.client} · Day {job.day}</Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 13 }]}>{money(job.value)}</Text>
+                    {/* Profit on the job, not the final payment (which left out the deposit and
+                        phase payments). Entries saved before this have only the final payment. */}
+                    {Number.isFinite(job.profit) ? (
+                      <Text style={[styles.sub, { color: job.profit >= 0 ? T.green : T.red, fontWeight: "700", fontSize: 13 }]}>{job.profit >= 0 ? "+" : "−"}{money(Math.abs(job.profit))} profit</Text>
+                    ) : (
+                      <Text style={[styles.sub, { color: T.green, fontWeight: "700", fontSize: 13 }]}>{money(job.value)} final payment</Text>
+                    )}
                     {job.quality && <Text style={[styles.sub, { color: T.sub, fontSize: 12 }]}>{job.quality} quality</Text>}
                   </View>
                 </View>
@@ -9779,6 +9935,8 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           onRaiseWage={handleRaiseWage}
           onLowerWage={handleLowerWage}
           onSetWage={handleSetWage}
+          onMatchOffer={handleMatchOffer}
+          onLetGo={handleLetWorkerGo}
           onBulkHire={handleBulkHire}
           onFireMany={handleFireMany}
           onGiveBonus={handleGiveBonus}
@@ -10206,7 +10364,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={[styles.sub, subCol]}>National Rank</Text>
             </View>
             <View style={{ alignItems: "flex-end" }}>
-              <Text style={[styles.cashBig, { color: T.blue }]}>{game.marketShare || 1}%</Text>
+              <Text style={[styles.cashBig, { color: T.blue }]}>{computeMarketShare(game)}%</Text>
               <Text style={[styles.sub, subCol]}>Market Share</Text>
             </View>
           </View>
@@ -10453,7 +10611,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         <View style={[styles.card, { backgroundColor: T.panel, borderColor: T.border, marginTop: 8 }]}>
           <Text style={[styles.sectionTitle, col]}>Market Position</Text>
           {[
-            { label: "Market Share",      val: `${game.marketShare||1}%`,                                          color: T.blue },
+            { label: "Market Share",      val: `${computeMarketShare(game)}%`,                                          color: T.blue },
             { label: "National Rank",     val: `#${rank}`,                                                         color: rank<=3?T.yellow:rank<=10?T.green:T.sub },
             { label: "Cities with Offices",val: `${(game.cityOffices||[]).length + 1}`,                            color: T.orange },
             { label: "Acquired Rivals",   val: `${(game.acquiredRivals||[]).length}`,                              color: T.purple },
@@ -10491,10 +10649,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         {/* Rankings Card — Area 3 */}
         {(() => {
           const activeRivals = (game.rivals||[]).filter(r=>!(game.acquiredRivals||[]).includes(r.id)&&r.status!=="Bankrupt");
-          const totalMarket = activeRivals.reduce((s,r)=>{
-            return s + (r.cash||0)+(r.rep||0)*50000+((r.cityPresence||["salem"]).length)*100000+(r.jobsCompleted||0)*15000;
-          }, valuation);
-          const marketSharePct = totalMarket > 0 ? ((valuation / totalMarket)*100) : 100;
+          const marketSharePct = computeMarketShare(game, valuation);
 
           // Revenue rank: count rivals with higher weeklyRevenue estimate (val × 0.1)
           const weeklyRev = (game.weeklyStats?.revenue||0);
@@ -10521,7 +10676,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               {[
                 { label: "Revenue Rank",    val: `#${revenueRank} / ${totalRivals+1}`, color: revenueRank<=3?T.yellow:revenueRank<=Math.ceil((totalRivals+1)/2)?T.green:T.sub },
                 { label: "Reputation Rank", val: `#${repRank} / ${totalRivals+1}`,    color: repRank<=3?T.yellow:repRank<=Math.ceil((totalRivals+1)/2)?T.green:T.sub },
-                { label: "Market Share",    val: `${marketSharePct.toFixed(1)}%`,       color: marketSharePct>=50?T.green:marketSharePct>=25?T.cyan:T.sub },
+                { label: "Market Share",    val: `${marketSharePct}%`,       color: marketSharePct>=50?T.green:marketSharePct>=25?T.cyan:T.sub },
                 { label: "Company Value",   val: `#${valRank} / ${totalRivals+1}`,     color: valRank<=3?T.yellow:valRank<=Math.ceil((totalRivals+1)/2)?T.green:T.sub },
               ].map(row=>(
                 <View key={row.label} style={[styles.finRow,{borderBottomColor:T.border}]}>
@@ -10745,7 +10900,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       {entry.isPlayer ? "★ " : ""}{entry.name}{entry.acquired ? " ✅" : ""}
                     </Text>
                     <Text style={[styles.sub, subCol]}>
-                      Rep {entry.rep} · {entry.cities} {entry.cities === 1 ? "city" : "cities"}{entry.status === "Bankrupt" ? " · 💀 Bankrupt" : ""}
+                      Rep {Math.round(entry.rep || 0)} · {entry.cities} {entry.cities === 1 ? "city" : "cities"}{entry.status === "Bankrupt" ? " · 💀 Bankrupt" : ""}
                     </Text>
                     {rival && (() => {
                       const focusIcon = rival.focus === "residential" ? "🏠" : rival.focus === "commercial" ? "🏢" : "🔧";
@@ -11677,8 +11832,23 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
               <Text style={{ fontSize: 48, marginBottom: 8 }}>{game.pendingCelebration.isMajor ? "🏆" : game.pendingCelebration.isOnTime ? "✅" : "✔️"}</Text>
               <Text style={[styles.h2, col, { textAlign: "center", marginBottom: 4 }]}>{game.pendingCelebration.isMajor ? "MAJOR CONTRACT COMPLETE!" : "Job Complete!"}</Text>
               <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 12 }]}>{game.pendingCelebration.label}</Text>
-              <Text style={{ fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }}>{money(game.pendingCelebration.earned)}</Text>
-              <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>paid by {game.pendingCelebration.client}</Text>
+              {/* The headline is what the job MADE. It used to be the final payment alone — a
+                  $47,139 contract that cleared $41,990 led with "$12,161", because the deposit
+                  and phase payments had already arrived. The final payment is still shown. */}
+              {game.pendingCelebration.economics ? (
+                <>
+                  <Text style={{ fontSize: 36, fontWeight: "900", color: game.pendingCelebration.economics.netProfit >= 0 ? T.green : T.red, marginBottom: 2 }}>
+                    {game.pendingCelebration.economics.netProfit >= 0 ? "+" : "−"}{money(Math.abs(game.pendingCelebration.economics.netProfit))}
+                  </Text>
+                  <Text style={[styles.sub, subCol]}>profit on this job</Text>
+                  <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>Final payment {money(game.pendingCelebration.earned)} from {game.pendingCelebration.client}</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 36, fontWeight: "900", color: T.green, marginBottom: 4 }}>{money(game.pendingCelebration.earned)}</Text>
+                  <Text style={[styles.sub, subCol, { marginBottom: 8 }]}>paid by {game.pendingCelebration.client}</Text>
+                </>
+              )}
 
               {/* ── Project P&L ──────────────────────────────────────────────
                   A payout is not a profit. This is the one screen where the player can
@@ -11705,7 +11875,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                       </Text>
                     </View>
                     <Text style={[styles.sub, { color: T.sub, fontSize: 11, marginTop: 2 }]}>
-                      {ec.marginPercent}% margin{ec.depositPaid > 0 ? ` · ${money(ec.depositPaid)} of this arrived as the deposit at mobilisation` : ""}
+                      {ec.marginPercent}% margin{ec.depositPaid > 0 ? ` · ${money(ec.depositPaid)} was paid before completion (deposit and phase payments)` : ""}
                     </Text>
                     {game.pendingCelebration.costsPartial && (
                       <Text style={[styles.sub, { color: T.orange, fontSize: 11, marginTop: 6 }]}>
@@ -11882,11 +12052,11 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                 {game.pendingInspection.outcome === "pass" ? "✅" : game.pendingInspection.outcome === "minor" ? "🔍" : "❌"}
               </Text>
               <Text style={[styles.h2, col, { textAlign: "center", marginBottom: 4 }]}>
-                {game.pendingInspection.outcome === "pass" ? "Inspection Passed!" : game.pendingInspection.outcome === "minor" ? "Minor Corrections Required" : "Major Inspection Failure"}
+                {game.pendingInspection.outcome === "pass" ? "Build Inspection Passed!" : game.pendingInspection.outcome === "minor" ? "Build Inspection: Minor Corrections" : "Build Inspection Failed"}
               </Text>
               <Text style={[styles.label, { color: T.sub, textAlign: "center", marginBottom: 8 }]}>{game.pendingInspection.phaseName} · {game.pendingInspection.siteLabel}</Text>
               {game.pendingInspection.outcome === "pass" && (
-                <Text style={[styles.sub, { color: T.green, textAlign: "center", marginBottom: 12 }]}>Work passed all checks. Reputation +2, Credit +1.</Text>
+                <Text style={[styles.sub, { color: T.green, textAlign: "center", marginBottom: 12 }]}>The finished work passed every quality check. Reputation +2, Credit +1.</Text>
               )}
               {game.pendingInspection.outcome === "minor" && (
                 <Text style={[styles.sub, { color: T.yellow, textAlign: "center", marginBottom: 12 }]}>
@@ -12414,8 +12584,8 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                   </View>
                   <Text style={[styles.sub, subCol]}>{c.client}{(() => {
                     const bidCity = CITIES.find(ct => ct.id === (c.cityId || "salem"));
-                    const isHome = (c.cityId || "salem") === (game.startingCityId || "salem");
-                    return bidCity ? ` · ${bidCity.name}${isHome ? " 🏠" : ""}` : "";
+                    const isHome = (c.cityId || HOME_MARKET_ID) === HOME_MARKET_ID;
+                    return bidCity ? ` · ${cityDisplayName(game, c.cityId)}${isHome ? " 🏠" : ""}` : "";
                   })()}</Text>
                   {/* Phase visual preview */}
                   <View style={{ flexDirection: "row", gap: 2, marginTop: 4 }}>
@@ -12430,15 +12600,11 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                       one that blocks, so nothing is a surprise at phase four either. */}
                   {(() => {
                     const plan = plantPlanFor(c.phases || [], game.equipment || [], CONTRACT_DEFS.find((d) => d.id === c.defId)?.minTier);
-                    const needed = plan.filter((p) => p.required);
-                    if (needed.length === 0) return null;
-                    const short = needed.filter((p) => !p.satisfied);
-                    const types = [...new Set(needed.flatMap((p) => p.required.anyOf))];
+                    const summary = describePlantPlan(plan);
+                    if (!summary) return null;
                     return (
-                      <Text style={[styles.sub, { color: short.length > 0 ? T.orange : T.sub, marginTop: 3, fontSize: 11 }]}>
-                        {short.length > 0
-                          ? `⚠ Needs ${[...new Set(short.flatMap((p) => p.required.anyOf))].join("/")} plant you do not have`
-                          : `🚜 Plant on hand for all ${needed.length} phase${needed.length === 1 ? "" : "s"} (${types.join("/")})`}
+                      <Text style={[styles.sub, { color: summary.tone === "warning" ? T.orange : T.sub, marginTop: 3, fontSize: 11 }]}>
+                        {summary.text}
                       </Text>
                     );
                   })()}
@@ -12471,6 +12637,11 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
                 </Text>
               )}
               {(() => {
+                // The tutorial's opening job does not lapse while it is held, so a countdown
+                // ("⚠ Expires today" on day 6) would be a false alarm.
+                if (c.tutorialContract && hasFirstContractGuarantee(game)) {
+                  return <Text style={[styles.sub, { color: T.green, marginTop: 4, fontWeight: "700" }]}>{"🔒 Held for you — rivals can't take this one"}</Text>;
+                }
                 const daysLeft = (c.expiresDay || 0) - (game.day || 0);
                 if (daysLeft > 7) return null;
                 const color = daysLeft <= 2 ? T.red : daysLeft <= 4 ? T.orange : T.yellow;
@@ -12855,7 +13026,7 @@ function BidsScreen({ game, T, col, subCol, openContracts, allOpenCount, categor
 
 // ─── Crew Screen ─────────────────────────────────────────────────────────────
 
-function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch, onSetWage, onBulkHire, onFireMany }) {
+function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSubcontractor, onHirePM, onFirePM, onTrain, onPromote, onRaiseWage, onLowerWage, onGiveBonus, onRest, onRestAllTired, onBuyLunch, onSetWage, onBulkHire, onFireMany, onMatchOffer, onLetGo }) {
   const [specialtyFilter, setSpecialtyFilter] = useState("All");
   // Sprint 13, from the device: "drop downs are needed to reduce the amount of scrolling".
   // Every worker card rendered four stat bars, certificate badges and six buttons. At ten crew
@@ -12922,7 +13093,9 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.label, col]} numberOfLines={1}>{a.name}</Text>
                   <Text style={[styles.sub, subCol]}>{a.role} · {a.trait.label}</Text>
-                  <Text style={[styles.sub, subCol]}>Skill {a.skill} · {money(a.desiredWage)}/day</Text>
+                  {/* The wage they will actually start on, against what the trade pays — so the
+                      payroll cost of a hire is visible before the button, not after. */}
+                  <Text style={[styles.sub, subCol]}>Skill {a.skill} · {money(hireWageFor(a, game))}/day · market {money(marketRateFor(a))}</Text>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                     <Text style={[styles.chip, { color: T.purple, borderColor: T.purple }]}>{a.specialty || "General"}</Text>
                     {a.quality && <Text style={[styles.chip, { color: T.yellow, borderColor: T.yellow }]}>{a.quality}</Text>}
@@ -13063,6 +13236,34 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
           borderLeftWidth: 4,
           borderLeftColor: risks.length > 0 ? toneColor(risks[0].tone, T) : toneColor(where.tone, T),
         }]}>
+          {/* ── A RIVAL'S OFFER ─────────────────────────────────────────────
+              Top of the card, above everything: it is the one thing here with a deadline. */}
+          {w.poachOffer && (
+            <View style={{ backgroundColor: alpha(T.red, 0.12), borderColor: T.red, borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: SPACING.sm }}>
+              <Text style={[TYPE.caption, { color: T.red, fontWeight: "800" }]}>
+                📨 {w.poachOffer.rivalName} offered {money(w.poachOffer.offerWage)}/day
+              </Text>
+              <Text style={[TYPE.caption, { color: T.sub, marginTop: 2 }]}>
+                You pay {money(w.wagePerDay)}/day. Decide by day {w.poachOffer.expiresDay}{Math.max(0, w.poachOffer.expiresDay - game.day) <= 1 ? " — that's today or tomorrow" : ""}, or they leave.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Match ${money(w.poachOffer.offerWage)} per day to keep ${w.name}`}
+                  onPress={() => onMatchOffer && onMatchOffer(w.id)}
+                  style={[styles.btn, { flex: 1, backgroundColor: T.green, borderColor: T.green, paddingVertical: 8 }]}>
+                  <Text style={[styles.btnText, { color: "#fff" }]}>Match {money(w.poachOffer.offerWage)}/day</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Let ${w.name} go`}
+                  onPress={() => onLetGo && onLetGo(w.id)}
+                  style={[styles.btn, { flex: 1, backgroundColor: T.panel2, borderColor: T.border, paddingVertical: 8 }]}>
+                  <Text style={[styles.btnText, { color: T.sub }]}>Let them go</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           {/* ── WHERE THEY ARE ───────────────────────────────────────────────
               First line on the card, because "Dave is pouring the foundation at
               Riverside" and "Dave is sitting in the yard costing you $200 a day"

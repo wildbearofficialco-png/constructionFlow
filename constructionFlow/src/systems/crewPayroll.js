@@ -105,6 +105,29 @@ export function marketRateFor(worker) {
   return Math.max(WAGE_FLOOR, Math.round(base * Math.max(0.5, skillFactor) * certFactor));
 }
 
+// What a job-ad applicant asks for. The ad tiers used to carry their own flat wage bands
+// ($18–45/day) from before this module existed, so every hire through Crew > Post Job Ads
+// arrived "Badly underpaid" — below WAGE_FLOOR, losing mood daily and quitting after the grace
+// period, through no decision of the player's. The ask is now the applicant's own market rate,
+// with a small premium that rises with the ad tier (better ads reach people who know their worth).
+export const APPLICANT_ASK = Object.freeze({
+  basic: [0.98, 1.06],
+  standard: [1.0, 1.1],
+  premium: [1.04, 1.16],
+});
+
+export function applicantAskingWage(applicant, tierId, rng = Math.random) {
+  const [lo, hi] = APPLICANT_ASK[tierId] || APPLICANT_ASK.standard;
+  const mult = lo + (hi - lo) * rng();
+  return Math.max(WAGE_FLOOR, Math.round(marketRateFor(applicant) * mult));
+}
+
+// A wage below the floor can only have come from the old ad bands: setWage clamps to the floor
+// and starting crew are priced from the market rate.
+export function isMispricedWage(wage) {
+  return num(Number(wage), 0) < WAGE_FLOOR;
+}
+
 export function payRatio(worker) {
   const market = marketRateFor(worker);
   if (market <= 0) return 1;
