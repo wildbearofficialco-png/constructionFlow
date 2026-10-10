@@ -137,6 +137,8 @@ import {
   planBulkFire,
   WAGE_FLOOR,
   WAGE_CEILING,
+  applicantAskingWage,
+  isMispricedWage,
 } from "../../systems/crewPayroll.js";
 import {
   MINS_PER_TICK,
@@ -2345,9 +2347,10 @@ function buildBorrowerProfile(g, product) {
 // ─── Job Postings ────────────────────────────────────────────────────────────────
 
 const JOB_POSTINGS = [
-  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  wageMin: 18, wageMax: 26, desc: "Finds a reliable labourer or tradesperson." },
-  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, wageMin: 24, wageMax: 34, desc: "Attracts experienced tradespeople." },
-  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, wageMin: 30, wageMax: 45, desc: "Top-tier tradespeople. Foreman-quality." },
+  // Wages are no longer set here: applicants ask their own market rate (crewPayroll.applicantAskingWage).
+  { id: "basic",    label: "Basic Ad",    cost: 120,  count: 1, skillMin: 75,  skillMax: 95,  desc: "Finds a reliable labourer or tradesperson." },
+  { id: "standard", label: "Standard Ad", cost: 300,  count: 2, skillMin: 90,  skillMax: 110, desc: "Attracts experienced tradespeople." },
+  { id: "premium",  label: "Premium Ad",  cost: 650,  count: 3, skillMin: 105, skillMax: 130, desc: "Top-tier tradespeople. Foreman-quality." },
 ];
 
 const CREW_ROLES = ["Labourer", "Carpenter", "Electrician", "Plumber", "Concreter", "Steelworker"];
@@ -2456,16 +2459,17 @@ function createWorker(role, overrides = {}) {
   };
 }
 
-function createApplicant(boost = {}) {
+export function createApplicant(boost = {}) {
   const trait = pick(CREW_TRAITS);
   const role = boost.role || pick(CREW_ROLES);
+  const skill = rand(boost.skillMin ?? 75, boost.skillMax ?? 105);
   return {
     id: uid(),
     name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
     role,
     specialty: boost.specialty || pick(CREW_SPECIALTIES),
-    desiredWage: rand(boost.wageMin ?? 18, boost.wageMax ?? 32),
-    skill: rand(boost.skillMin ?? 75, boost.skillMax ?? 105),
+    desiredWage: applicantAskingWage({ role, skill }, boost.tierId),
+    skill,
     mood: rand(58, 88),
     loyalty: rand(50, 78),
     stamina: rand(65, 95),
@@ -2473,6 +2477,14 @@ function createApplicant(boost = {}) {
     signingBonus: rand(50, 200),
     quality: boost.quality || null,
   };
+}
+
+// The wage a hire actually starts on. Regional wage pressure can only raise the ask: the pay
+// position bands (crewPayroll.payPosition) compare against the national market rate, so a
+// discount here would start a new hire "below market" through no choice of the player's.
+export function hireWageFor(applicant, g) {
+  const ask = Math.max(WAGE_FLOOR, Math.round(Number(applicant?.desiredWage) || 0));
+  return Math.max(ask, applyRegionalWage(ask, g));
 }
 
 function createSupportStaff(role) {
@@ -3311,7 +3323,11 @@ export function checkWorkerTurnover(g) {
 
     // Loyalty milestone events
     const loyaltyMilestone = Math.floor((w.loyalty ?? 0));
-    if (loyaltyMilestone >= 50 && !(w._loyalty50Done) && w.status !== "Active") {
+    // The 50-day raise. It used to fire on the loyalty SCORE reaching 50 — and starting crew begin
+    // at 55–80 loyalty — so every new company handed its whole crew a 10% raise "for 50 days of
+    // loyalty" on day 1 or 2. It now needs 50 days actually on the books, as the message says.
+    const daysEmployed = (g.day || 1) - (Number.isFinite(w.hireDay) ? w.hireDay : 0);
+    if (daysEmployed >= 50 && loyaltyMilestone >= 50 && !(w._loyalty50Done) && w.status !== "Active") {
       w._loyalty50Done = true;
       const raiseAmt = Math.round(w.wagePerDay * 0.10);
       if (g.cash > raiseAmt * 30) {
@@ -4156,6 +4172,27 @@ export function migrateState(saved) {
     equipment: Number.isFinite(r.equipment) ? r.equipment : (Number.isFinite(r.equipCount) ? r.equipCount : 1),
     cityPresence: Array.isArray(r.cityPresence) ? r.cityPresence : ["salem"],
   }));
+  // Sprint: hiring fix. Applicants still waiting were priced on the old $18–45 ad bands: they ask
+  // their market rate now. Anyone already HIRED on one of those wages (only possible through the
+  // bug — setWage clamps to WAGE_FLOOR) is moved to their market rate once, with a notice, rather
+  // than left to keep losing morale and quit over a price the player never chose.
+  if (Array.isArray(g.applicants)) {
+    g.applicants = g.applicants.map((a) => (a && isMispricedWage(a.desiredWage)
+      ? { ...a, desiredWage: applicantAskingWage(a, "standard", () => 0.5) }
+      : a));
+  }
+  if (!g._wageScaleFixed && Array.isArray(g.crew)) {
+    const corrected = [];
+    g.crew = g.crew.map((w) => {
+      if (!w || !isMispricedWage(w.wagePerDay)) return w;
+      corrected.push(w.name);
+      return { ...w, wagePerDay: marketRateFor(w), underpaidDays: 0 };
+    });
+    g._wageScaleFixed = true;
+    if (corrected.length) {
+      addImportantNotice(g, `Pay correction: ${corrected.join(", ")} ${corrected.length === 1 ? "was" : "were"} hired on a mis-priced wage and ${corrected.length === 1 ? "is" : "are"} now on the market rate. Check Crew for the new payroll.`, "orange", { actionLabel: "Review pay", actionTab: "Crew" });
+    }
+  }
   if (!Array.isArray(g.marketNews)) g.marketNews = [];
   if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
   if (g.activeMarketEvent === undefined)    g.activeMarketEvent = null;
@@ -6636,7 +6673,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       const _newWorker = {
         ...createWorker(applicant.role),
         id: uid(), name: applicant.name, role: applicant.role,
-        skill: applicant.skill, wagePerDay: applyRegionalWage(applicant.desiredWage, g),
+        skill: applicant.skill, wagePerDay: hireWageFor(applicant, g),
         mood: applicant.mood, loyalty: applicant.loyalty, trait: applicant.trait,
         hireDay: g.day, jobHistory: [], attendanceStrikes: 0,
         status: "Idle",
@@ -6692,7 +6729,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       g.expenses += posting.cost;
       recordTransaction(g, "payroll", -posting.cost, "Recruitment job advert");
       for (let i = 0; i < posting.count; i++) {
-        g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, wageMin: posting.wageMin, wageMax: posting.wageMax, quality: posting.quality }));
+        g.applicants.push(createApplicant({ skillMin: posting.skillMin, skillMax: posting.skillMax, tierId: posting.id, quality: posting.quality }));
       }
       addLog(g, `📢 Job ad posted — ${posting.count} applicant(s) added.`);
     });
@@ -7225,7 +7262,9 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
         crewCap: getTotalCrewCap(g),
         currentCrew: (g.crew || []).length,
         cash: g.cash,
-        hireCostFor: (a) => Math.round((a.desiredWage || 200) * 5),
+        // The same signing bonus a single hire pays. This used to be five days' wages, which only
+        // looked comparable while the ad wage bands were a fifth of the market rate.
+        hireCostFor: (a) => Math.round(a.signingBonus || 0),
       });
       if (_plan.count === 0) {
         fireHaptic("error");
@@ -7235,7 +7274,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       for (const a of _plan.hiring) {
         const _w = createWorker(a.role, {
           name: a.name, skill: a.skill, specialty: a.specialty,
-          wagePerDay: a.desiredWage || 200, hireDay: g.day,
+          wagePerDay: hireWageFor(a, g), hireDay: g.day,
         });
         g.crew.push(_w);
       }
@@ -12922,7 +12961,9 @@ function CrewScreen({ game, T, col, subCol, onHire, onFire, onPostJob, onHireSub
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.label, col]} numberOfLines={1}>{a.name}</Text>
                   <Text style={[styles.sub, subCol]}>{a.role} · {a.trait.label}</Text>
-                  <Text style={[styles.sub, subCol]}>Skill {a.skill} · {money(a.desiredWage)}/day</Text>
+                  {/* The wage they will actually start on, against what the trade pays — so the
+                      payroll cost of a hire is visible before the button, not after. */}
+                  <Text style={[styles.sub, subCol]}>Skill {a.skill} · {money(hireWageFor(a, game))}/day · market {money(marketRateFor(a))}</Text>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                     <Text style={[styles.chip, { color: T.purple, borderColor: T.purple }]}>{a.specialty || "General"}</Text>
                     {a.quality && <Text style={[styles.chip, { color: T.yellow, borderColor: T.yellow }]}>{a.quality}</Text>}
