@@ -40,6 +40,7 @@ import { penaltyFor } from "../../systems/penalties.js";
 import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materialPricing.js";
 import { registerSession } from "../../systems/sessionStreak.js";
 import { homeSectionVisibility } from "../../systems/homeLayout.js";
+import { offerChoice, resolveChoice, crewDayCost, weatherFactor, overtimeFactor, forecastLateBy, rollMidJobChoice } from "../../systems/siteChoices.js";
 import { rivalWinsContract, settleRivalDay, ensureJobBook } from "../../systems/rivalEconomy.js";
 import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
@@ -157,6 +158,7 @@ import {
   chancePerTick,
   describePace,
   MAX_OFFLINE_TICKS,
+  ticksPerDay,
 } from "../../systems/gameClock.js";
 import {
   EVENT_CATEGORIES,
@@ -1234,7 +1236,7 @@ function checkEmpireGoals(g) {
 // Which Finance line a site event's cash lands on. Anything unlisted is "Miscellaneous" — still
 // named after the event, never silent.
 const CHAOS_LEDGER_CATEGORY = {
-  safety: "fines", inspection: "fines", injury: "payroll", breakdown: "maintenance",
+  safety: "fines", inspection: "fines", injury: "payroll", breakdown: "maintenance", ground: "materials",
   fuel_cost: "fuel", client_dispute: "contracts", equipment_recall: "maintenance",
 };
 
@@ -1251,10 +1253,31 @@ export const CHAOS_EVENTS = [
   { id: "weather",    label: "Weather Delay",         prob: 0.035,tone: "blue",   icon: "🌧️",
     apply: (site, game) => {
       const days = rand(1, 3);
+      // A decision on the site card when this job still has one to give (systems/siteChoices.js).
+      if (offerChoice(site, "weather", { day: game.day, days })) {
+        announceSiteChoice(game, site);
+        return { text: `Heavy rain forecast — your call on the site card.`, type: "weather_choice" };
+      }
+      // Otherwise the honest default. This used to say work stopped while progress carried on at
+      // full speed, making a weather delay a free deadline extension.
       site.deadlineDay += days;
-      site.currentWeather = { icon: "rainy", label: "Weather Delay", endsDay: (game.day || 1) + days };
-      addLog(game, `🌧️ ${site.label}: Weather delay — deadline pushed ${days} day(s).`);
-      return { text: `Weather stopped work for ${days} day(s). Deadline extended.`, type: "weather" };
+      site.currentWeather = { icon: "rainy", label: "Rain — work stopped", endsDay: (game.day || 1) + days, stopsWork: true };
+      addLog(game, `🌧️ ${site.label}: Rain stopped work for ${days} day(s) — deadline pushed ${days} day(s).`);
+      return { text: `Rain stopped work for ${days} day(s). Deadline extended.`, type: "weather" };
+    }
+  },
+  { id: "ground",     label: "Ground Conditions",     prob: 0.02, tone: "orange", icon: "⛏️",
+    apply: (site, game) => {
+      if (offerChoice(site, "ground", { day: game.day, reputation: game.reputation })) {
+        announceSiteChoice(game, site);
+        return { text: `Unexpected ground conditions — your call on the site card.`, type: "ground_choice" };
+      }
+      // Decision already spent on this job: the safe default, priced off the job.
+      const cost = Math.max(500, Math.round((site.totalValue || 0) * 0.03));
+      game.cash -= cost; game.expenses += cost;
+      site.deadlineDay += 1;
+      addLog(game, `⛏️ ${site.label}: Hit rock the survey missed — engineer redesign ${money(cost)}, deadline +1 day.`);
+      return { text: `Unexpected ground — engineer redesign ${money(cost)}.`, type: "ground" };
     }
   },
   { id: "breakdown",  label: "Equipment Breakdown",   prob: 0.03, tone: "red",    icon: "🔧",
@@ -2558,6 +2581,28 @@ function applyIncident(g, severity, contractValue = 0) {
   if (netCost > 0) recordTransaction(g, "fines", -netCost, `Safety incident (level ${severity})`);
   g.incidentHistory.push({ day: g.day, severity, desc: "Safety incident level " + severity });
   if (g.incidentHistory.length > 50) g.incidentHistory = g.incidentHistory.slice(-50);
+}
+
+// One notice when a site needs a decision — the choice itself lives on the site card.
+function announceSiteChoice(g, site) {
+  addImportantNotice(g, `${site.label}: ${site.pendingChoice?.title || "a decision"} — choose on the site card, or it goes ahead with the safe option tomorrow.`, "orange", { actionLabel: "Decide", actionTab: "Sites" });
+}
+
+// Carries out what siteChoices.resolveChoice says happened, outside the site itself.
+export function applySiteChoiceResult(g, site, res) {
+  if (!res) return;
+  if (res.cash > 0) {
+    g.cash -= res.cash; g.expenses += res.cash;
+    recordTransaction(g, res.kind === "behind" ? "payroll" : "materials", -res.cash, `${site.label}: ${res.log}`);
+  }
+  if (res.machineWear) {
+    for (const e of (g.equipment || [])) {
+      if ((site.assignedEquipmentIds || []).includes(e.id)) e.condition = Math.max(0, (e.condition || 100) - res.machineWear);
+    }
+  }
+  if (res.reputation) g.reputation = Math.max(0, Math.min(100, (g.reputation || 0) + res.reputation));
+  if (res.incident) applyIncident(g, res.incident, site.totalValue);
+  addLog(g, `${res.defaulted ? "⏭️" : "✅"} ${site.label}: ${res.defaulted ? "no answer, so " : "you "}${res.log}.`);
 }
 
 function applyInspectionPass(g) {
@@ -4809,6 +4854,10 @@ export function gameTick(prev) {
         workshopHours: _inShop.length ? Math.max(1, Math.ceil(Math.max(..._inShop.map((e) => Number(e.repairMinsLeft) || 0)) / 60)) : null });
     }
     if (stratMod < 1) _rateFactors.push({ key: "site_mode", factor: stratMod, mode: site.siteMode });
+    // Weather and the overtime a decision bought (systems/siteChoices.js).
+    const _weatherFactor = weatherFactor(site, g.day);
+    if (_weatherFactor < 1) _rateFactors.push({ key: "weather", factor: _weatherFactor, label: site.currentWeather?.label, endsDay: site.currentWeather?.endsDay });
+    const _overtimeFactor = site.siteMode === "overtime" ? 1 : overtimeFactor(site, g.day);
     const progressRate = (3.0 * (avgSkill / 100) * avgSpeed * Math.min(crewCount / (site.crewMin || 2), 1.5)) * (MINS_PER_TICK / 60) * subBonus * pmBonus * pmSpeedBonus * teamLeaderBonus * equipTypeBonus * crewSpecialtyBonus * mismatchPenalty * stratMod * _certBonus * engineBonus
       // Sprint 12: required plant missing mid-phase crawls rather than halting. A machine
       // breaking through no fault of the player must be a setback, never a dead save.
@@ -4818,7 +4867,7 @@ export function gameTick(prev) {
       // working machine on a phase that needs one, and charged it once on phases the plant table
       // says are hand-tool work (Inspection, Finish Work), contradicting that table. The phase
       // requirement is the one rule; a site with no machine is simply a site that fails it.
-      * _plantFactor;
+      * _plantFactor * _weatherFactor * _overtimeFactor;
     site._progressRate = progressRate;
     // Exactly the multipliers below 1 that were just applied, for the card to explain.
     site.rateFactors = _rateFactors;
@@ -5480,6 +5529,24 @@ export function gameTick(prev) {
     for (const site of g.activeSites) {
       if (site.currentWeather && site.currentWeather.endsDay <= g.day) {
         site.currentWeather = null;
+      }
+    }
+
+    // Site decisions (systems/siteChoices.js): one left unanswered goes ahead with its safe
+    // default; a job the forecast says will run late asks once what to do about it.
+    for (const site of g.activeSites) {
+      const _choiceCtx = { day: g.day, reputation: g.reputation, crewDayCost: crewDayCost(site, g.crew) };
+      if (site.pendingChoice && g.day >= site.pendingChoice.expiresDay) {
+        applySiteChoiceResult(g, site, resolveChoice(site, site.pendingChoice.defaultId, { ..._choiceCtx, defaulted: true }));
+      }
+      const _midKind = site.status !== "Paused" ? rollMidJobChoice(site) : null;
+      if (_midKind && offerChoice(site, _midKind, { ..._choiceCtx, days: rand(1, 3) })) announceSiteChoice(g, site);
+      if (!site._behindOffered && (site.currentPhaseIdx || 0) >= 1 && site.status !== "Paused") {
+        const _lateBy = forecastLateBy(site, g.day, ticksPerDay("1x"));
+        if (_lateBy >= 1 && offerChoice(site, "behind", { ..._choiceCtx, lateBy: _lateBy })) {
+          site._behindOffered = true;
+          announceSiteChoice(g, site);
+        }
       }
     }
 
@@ -6789,6 +6856,16 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       if (!w?.poachOffer) return;
       w.poachOffer.expiresDay = g.day; // leaves now rather than after the window
       resolvePoachOffers(g);
+    });
+  }, [update]);
+
+  const handleSiteChoice = useCallback((siteId, optionId) => {
+    fireHaptic("light");
+    update((g) => {
+      const site = (g.activeSites || []).find((x) => x.id === siteId);
+      if (!site?.pendingChoice) return;
+      const res = resolveChoice(site, optionId, { day: g.day, reputation: g.reputation, crewDayCost: crewDayCost(site, g.crew) });
+      applySiteChoiceResult(g, site, res);
     });
   }, [update]);
 
@@ -9566,6 +9643,28 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                           </View>
                         ))}
                       </View>
+                    </View>
+                  )}
+
+                  {/* A decision this job is waiting on (systems/siteChoices.js). On the card, not a
+                      pop-up: the player meets it where they are already looking. */}
+                  {site.pendingChoice && (
+                    <View style={{ borderWidth: 1, borderColor: T.orange, backgroundColor: alpha(T.orange, 0.10), borderRadius: 12, padding: 12, marginBottom: SPACING.sm }}>
+                      <Text style={[TYPE.label, { color: T.text, fontWeight: "800" }]}>{site.pendingChoice.title}</Text>
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 2, marginBottom: 8 }]}>
+                        {`${site.pendingChoice.body} If you don't choose by day ${site.pendingChoice.expiresDay}, the highlighted option goes ahead.`}
+                      </Text>
+                      {site.pendingChoice.options.map((o) => (
+                        <TouchableOpacity
+                          key={o.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${o.label}. ${o.sub}`}
+                          onPress={() => handleSiteChoice(site.id, o.id)}
+                          style={{ borderWidth: 1, borderColor: o.id === site.pendingChoice.defaultId ? T.orange : T.border, backgroundColor: T.panel, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, marginTop: 6 }}>
+                          <Text style={[TYPE.caption, { color: T.text, fontWeight: "700" }]}>{o.label}</Text>
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]}>{o.sub}</Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
                   )}
 
