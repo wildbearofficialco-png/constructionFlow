@@ -107,6 +107,9 @@ describe("one-time market correction for old saves", () => {
     const g = load(save, Date.now());
     expect(g.day).toBeGreaterThan(60);          // catch-up really ran
     expect(g.marketNews[0].text).toMatch(/Market correction/);
+    // And Home shows it whatever stage the company is at.
+    const { homeSectionVisibility } = require("../src/systems/homeLayout.js");
+    expect(homeSectionVisibility({ ...g, completedJobs: 1, companyLevel: 1, cityOffices: [], homeShowAll: false }).marketNews).toBe(true);
     expect(g.marketNews.filter((n) => /Market correction/.test(n.text))).toHaveLength(1);
   });
 

@@ -2081,7 +2081,7 @@ export const DECISION_EVENTS = [
     options: [
       { label: "Take it at their number", sub: "A contract added to Bids, reputation +3",
         apply: (g) => {
-          const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore || 600, marketState: g.marketState || "Normal", equipment: g.equipment || [], contracts: g.contracts || [], _milestones: g._milestones || {}, cityOffices: g.cityOffices || [], properties: g.properties || [] });
+          const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore || 600, marketState: g.marketState || "Normal", equipment: g.equipment || [], contracts: g.contracts || [], _milestones: g._milestones || {}, cityOffices: g.cityOffices || [], properties: g.properties || [], contractValueScale: g.contractValueScale });
           if (ref) { ref.reservedForPlayer = true; g.contracts.push(ref); }
           g.reputation = Math.min(100, (g.reputation || 0) + 3);
           recordMemory(g, { tag: `client_repeat_${g.day}`, kind: "client", valence: "good", weight: 2, label: "A client came back", detail: "a client you delivered for came back to you before going to market" });
@@ -2211,7 +2211,7 @@ const EMPLOYEE_EVENTS = [
     desc: "A crew member's contact needs construction work done. A new contract has been added to your Bids.",
     options: [
       { label: "Great — thanks!", sub: "New contract added · loyalty +8",
-        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) w.loyalty = Math.min(100,(w.loyalty ?? 50)+8); const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore||600, marketState: g.marketState||"Normal", equipment: g.equipment||[], contracts: g.contracts||[], _milestones: g._milestones||{}, cityOffices: g.cityOffices||[], properties: g.properties||[] }); if (ref) { ref.reservedForPlayer = true; g.contracts.push(ref); } addLog(g, `📋 ${w?.name||"Worker"} brought in a referral — new contract available!`); addImportantNotice(g, `${w?.name||"Worker"} brought in a referral — new contract added to Bids!`, "green"); } },
+        apply: (g) => { const w = (g.crew||[]).find(c => c.id === g.pendingDecision?.context?.workerId); if (w) w.loyalty = Math.min(100,(w.loyalty ?? 50)+8); const ref = createContract({ cash: g.cash, day: g.day, creditScore: g.creditScore||600, marketState: g.marketState||"Normal", equipment: g.equipment||[], contracts: g.contracts||[], _milestones: g._milestones||{}, cityOffices: g.cityOffices||[], properties: g.properties||[], contractValueScale: g.contractValueScale }); if (ref) { ref.reservedForPlayer = true; g.contracts.push(ref); } addLog(g, `📋 ${w?.name||"Worker"} brought in a referral — new contract available!`); addImportantNotice(g, `${w?.name||"Worker"} brought in a referral — new contract added to Bids!`, "green"); } },
     ],
   },
 ];
@@ -2678,11 +2678,17 @@ export function createContract(state, forcedDefId) {
   const baseDeadline = state.day + def.durationDays + rand(2, 6);
   const seasonMult = state.seasonContractMult || 1.0;
   const regionAdjustedBase = applyRegionalContractValue(def.baseValue, state);
+  // New games pay 80% of the authored contract values (NEW_GAME_CONTRACT_VALUE_SCALE); saves from
+  // before that change carry no scale and keep full values, so nobody's running company is squeezed.
+  const valueScale = Number.isFinite(state.contractValueScale) ? state.contractValueScale : 1;
+  // NOTE: enhanceContractValue recomputes from def.baseValue and ignores `value`, so the regional
+  // and season multipliers above have never reached the price. Left as-is (fixing it rebalances
+  // the economy); the new-game scale is applied to the result instead.
   const enhanced = enhanceContractValue(def, state, { value: Math.round(regionAdjustedBase * seasonMult), deadline: baseDeadline });
 
   const contract = {
     id: uid(), defId: def.id, label: def.label, category: def.category || "Commercial",
-    client: pick(CLIENTS), value: enhanced.value, phases: [...def.phases],
+    client: pick(CLIENTS), value: Math.round(enhanced.value * valueScale), phases: [...def.phases],
     minTier: def.minTier, crewMin: def.crewMin, equipMin: def.equipMin,
     materials: { ...def.materials }, penaltyPerDay: def.penaltyPerDay,
     durationDays: def.durationDays, deadline: enhanced.deadline,
@@ -4081,6 +4087,11 @@ function cleanStaleState(g) {
 // the start, so this shapes the first week, not the game.
 export const STARTING_CASH = 65000;
 
+// Contract values for new games, as a share of the authored values. At 1.0 a careful player held
+// ~$190k by day 37 with nothing left to spend it on; 0.8 puts that near $130k with no frozen
+// days, softlocks or forced borrowing across repeated simulations (see the sprint report).
+export const NEW_GAME_CONTRACT_VALUE_SCALE = 0.8;
+
 export function freshState() {
   const startEquip = createEquipment(EQUIPMENT_SHOP[0]); // Basic Pickup Truck
   const startWorker1 = createWorker("Labourer");
@@ -4091,9 +4102,9 @@ export function freshState() {
   // Installation job, whose 20-lumber requirement matches the starting inventory exactly.
   // Leaving this to random draw meant the referenced contract was often missing entirely.
   const baseContracts = [
-    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }, "fence"),
-    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
-    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[], contractValueScale: NEW_GAME_CONTRACT_VALUE_SCALE }, "fence"),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[], contractValueScale: NEW_GAME_CONTRACT_VALUE_SCALE }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[], contractValueScale: NEW_GAME_CONTRACT_VALUE_SCALE }),
   ];
 
   return {
@@ -4113,6 +4124,7 @@ export function freshState() {
     // phantom $160 "balance transfer" on day one of every new company.
     _ledgerSnapshot: { cash: STARTING_CASH, revenue: 0, expenses: 0, day: 1 },
     _rivalMarketCorrectedV1: true, // a new company starts in the new economy
+    contractValueScale: NEW_GAME_CONTRACT_VALUE_SCALE, // absent on older saves → full values
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
     savings: 0,
     creditLine: null,
@@ -4314,6 +4326,9 @@ export function migrateState(saved) {
   }
   if (!Array.isArray(g.marketNews)) g.marketNews = [];
   // Saves from the old rival economy: bring overgrown rivals back to the new limits, once.
+  // Contract value scale: read from the SAVE, like the flag below. `g` carries freshState's 0.8,
+  // and a save from before the change must keep full contract values.
+  if (!Number.isFinite(saved?.contractValueScale)) g.contractValueScale = 1;
   // Read the flag from the SAVE: `g` already carries freshState's default (true) for new games.
   if (!saved?.[MARKET_CORRECTION_FLAG]) {
     g[MARKET_CORRECTION_FLAG] = false;
@@ -4321,7 +4336,7 @@ export function migrateState(saved) {
     if (_corrected.length) {
       // Held on the save and posted after offline catch-up (deliverPendingMarketNews): posted
       // here, a few days of catch-up news would push it off the capped feed before it is seen.
-      queueMarketNews(g, { text: `📉 Market correction: a construction slowdown has revalued ${_corrected.length === 1 ? _corrected[0] : `${_corrected.length} overextended firms`} — the field is closer than it looked.`, tone: "info" });
+      queueMarketNews(g, { text: `📉 Market correction: a construction slowdown has revalued ${_corrected.length === 1 ? _corrected[0] : `${_corrected.length} overextended firms`} — the field is closer than it looked.`, tone: "info", pinDays: 7 });
     }
   }
   if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
@@ -9236,6 +9251,30 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                     style={{ marginBottom: SPACING.sm }}
                   />
 
+                  {/* A decision this job is waiting on (systems/siteChoices.js). On the card, not a
+                      pop-up: the player meets it where they are already looking. Sits at the top of the card,
+                      under the progress bar: below the crew and plant lists it was off-screen on a phone. */}
+                  {site.pendingChoice && (
+                    <View style={{ borderWidth: 1, borderColor: T.orange, backgroundColor: alpha(T.orange, 0.10), borderRadius: 12, padding: 12, marginBottom: SPACING.sm }}>
+                      <Text style={[TYPE.label, { color: T.text, fontWeight: "800" }]}>{site.pendingChoice.title}</Text>
+                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 2, marginBottom: 8 }]}>
+                        {`${site.pendingChoice.body} If you don't choose by day ${site.pendingChoice.expiresDay}, the highlighted option goes ahead.`}
+                      </Text>
+                      {site.pendingChoice.options.map((o) => (
+                        <TouchableOpacity
+                          key={o.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${o.label}. ${o.sub}`}
+                          onPress={() => handleSiteChoice(site.id, o.id)}
+                          style={{ borderWidth: 1, borderColor: o.id === site.pendingChoice.defaultId ? T.orange : T.border, backgroundColor: T.panel, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, marginTop: 6 }}>
+                          <Text style={[TYPE.caption, { color: T.text, fontWeight: "700" }]}>{o.label}</Text>
+                          <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]}>{o.sub}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+
                   {/* Deadline urgency */}
                   {!isOverdue && site.status !== "Paused" && (() => {
                     const daysLeft = site.deadlineDay - game.day;
@@ -9682,28 +9721,6 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                           </View>
                         ))}
                       </View>
-                    </View>
-                  )}
-
-                  {/* A decision this job is waiting on (systems/siteChoices.js). On the card, not a
-                      pop-up: the player meets it where they are already looking. */}
-                  {site.pendingChoice && (
-                    <View style={{ borderWidth: 1, borderColor: T.orange, backgroundColor: alpha(T.orange, 0.10), borderRadius: 12, padding: 12, marginBottom: SPACING.sm }}>
-                      <Text style={[TYPE.label, { color: T.text, fontWeight: "800" }]}>{site.pendingChoice.title}</Text>
-                      <Text style={[TYPE.caption, { color: T.sub, marginTop: 2, marginBottom: 8 }]}>
-                        {`${site.pendingChoice.body} If you don't choose by day ${site.pendingChoice.expiresDay}, the highlighted option goes ahead.`}
-                      </Text>
-                      {site.pendingChoice.options.map((o) => (
-                        <TouchableOpacity
-                          key={o.id}
-                          accessibilityRole="button"
-                          accessibilityLabel={`${o.label}. ${o.sub}`}
-                          onPress={() => handleSiteChoice(site.id, o.id)}
-                          style={{ borderWidth: 1, borderColor: o.id === site.pendingChoice.defaultId ? T.orange : T.border, backgroundColor: T.panel, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, marginTop: 6 }}>
-                          <Text style={[TYPE.caption, { color: T.text, fontWeight: "700" }]}>{o.label}</Text>
-                          <Text style={[TYPE.caption, { color: T.sub, marginTop: 1 }]}>{o.sub}</Text>
-                        </TouchableOpacity>
-                      ))}
                     </View>
                   )}
 

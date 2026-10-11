@@ -33,6 +33,10 @@ export function homeSectionVisibility(g) {
   const stage = homeStage(g);
   const shown = new Set(g?.homeShowAll ? ALL_OPTIONAL_SECTIONS : STAGE_SECTIONS[stage]);
   const vis = { stage, showAll: Boolean(g?.homeShowAll) };
+  // A pinned news item (the one-time market correction) shows Market News at any stage while
+  // the pin lasts, so a player whose rivals were just revalued is told why.
+  const day = num(g?.day, 0);
+  if ((Array.isArray(g?.marketNews) ? g.marketNews : []).some((n) => n && num(n.pinUntilDay, -1) >= day)) shown.add("marketNews");
   for (const key of ALL_OPTIONAL_SECTIONS) vis[key] = shown.has(key);
   vis.hiddenCount = ALL_OPTIONAL_SECTIONS.filter((k) => !vis[k]).length;
   return vis;

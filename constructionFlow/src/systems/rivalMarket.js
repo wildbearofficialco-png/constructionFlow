@@ -291,6 +291,9 @@ export function pushMarketNews(game, item) {
       tone: item.tone || "neutral",
       day: Number.isFinite(game.day) ? game.day : 1,
       rivalId: item.rivalId || null,
+      // A pinned item keeps Market News on Home for a few days even before the company has
+      // grown into that section (homeLayout.js) — used for the one-time market correction.
+      ...(Number.isFinite(item.pinDays) ? { pinUntilDay: (Number.isFinite(game.day) ? game.day : 1) + item.pinDays } : {}),
     },
     ...game.marketNews,
   ].slice(0, MARKET_NEWS_CAP);
