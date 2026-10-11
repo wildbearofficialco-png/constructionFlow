@@ -180,6 +180,8 @@ import {
   describeNoticeAge,
   summarizeInbox,
   noticeTone,
+  resolveNotice,
+  dropStaleLegacyActions,
 } from "../../systems/noticeInbox.js";
 import {
   tickConstructionKPIs,
@@ -4070,11 +4072,14 @@ function cleanStaleState(g) {
 
 // ─── Initial State ────────────────────────────────────────────────────────────
 
-// Opening balance. Was $75,000. First-hour simulations (32 seeds each) at $75k / $50k / $40k / $30k
-// all finished both opening jobs with no forced borrowing; at $50k the first machine is
-// affordable on day 1 and the first office upgrade on days 2–4 instead of day 1, so the early
-// spending order is a choice rather than a formality. See the sprint report for the full table.
-export const STARTING_CASH = 50000;
+// Opening balance. Was $75,000. First-hour simulations (32 seeds each) at $75k / $65k / $50k /
+// $40k all finished both opening jobs with no forced borrowing. Below $75k the first office
+// upgrade comes on days 2–4 instead of day 1, so the early spending order is a choice rather
+// than a formality. $50k was tested and rejected: a company that takes no work burns ~$700/day,
+// and at $50k it could be overdrawn by day 60 (gameClockIntegration "a passive company is not
+// bankrupted"); at $65k the worst of 30 runs still held $13k. By day 37 cash converges whatever
+// the start, so this shapes the first week, not the game.
+export const STARTING_CASH = 65000;
 
 export function freshState() {
   const startEquip = createEquipment(EQUIPMENT_SHOP[0]); // Basic Pickup Truck
@@ -4314,7 +4319,9 @@ export function migrateState(saved) {
     g[MARKET_CORRECTION_FLAG] = false;
     const _corrected = applyMarketCorrection(g, { playerValue: computeValuation(g), valueOf: rivalValuation });
     if (_corrected.length) {
-      pushMarketNews(g, { text: `📉 Market correction: a construction slowdown has revalued ${_corrected.length === 1 ? _corrected[0] : `${_corrected.length} overextended firms`} — the field is closer than it looked.`, tone: "info" });
+      // Held on the save and posted after offline catch-up (deliverPendingMarketNews): posted
+      // here, a few days of catch-up news would push it off the capped feed before it is seen.
+      queueMarketNews(g, { text: `📉 Market correction: a construction slowdown has revalued ${_corrected.length === 1 ? _corrected[0] : `${_corrected.length} overextended firms`} — the field is closer than it looked.`, tone: "info" });
     }
   }
   if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
@@ -4371,6 +4378,7 @@ export function migrateState(saved) {
     g.inbox = [];
   }
   if (!Number.isFinite(g._noticeSeq)) g._noticeSeq = g.inbox.length;
+  dropStaleLegacyActions(g);
   expireNotices(g);
   g.importantNotice = topNotice(g);
   // Sprint 7. Counters start at zero rather than being inferred from completedJobs: a returning
@@ -4722,6 +4730,7 @@ export function gameTick(prev) {
     const _hasMissingMats = _siteDef?.materials && Object.entries(_siteDef.materials).some(
       ([matId, needed]) => ((site.materialsFulfilled || {})[matId] || 0) < needed
     );
+    if (!_hasMissingMats) resolveNotice(g, `materials:${site.id}`);
     if (_hasMissingMats) {
       // THE THIRD FREEZE, and the same shape as the fuel and exhaustion ones. A site short of
       // materials stops dead — correctly, you cannot build without them — but the ONLY signal
@@ -4750,7 +4759,7 @@ export function gameTick(prev) {
         if (_due == null) {
           addImportantNotice(g,
             `${site.label} has stopped: short ${_summary} and nothing on order. The crew are being paid to stand still.`,
-            "action", { actionLabel: "Order materials", actionTab: "Sites" });
+            "action", { actionLabel: "Order materials", actionTab: "Sites", key: `materials:${site.id}`, siteId: site.id });
         }
       }
       continue;
@@ -4774,11 +4783,12 @@ export function gameTick(prev) {
         addLog(g, `🐌 ${site.label}: ${site.plantWarning}`);
         addImportantNotice(g,
           `${site.label} is running slow. ${site.plantWarning} Assign the right machine or the deadline will go.`,
-          "action", { actionLabel: "Assign plant", actionTab: "Sites" });
+          "action", { actionLabel: "Assign plant", actionTab: "Sites", key: `plant:${site.id}`, siteId: site.id });
       }
     } else {
       site.plantWarning = null;
       site._plantWarnedPhase = null;
+      resolveNotice(g, `plant:${site.id}`);
     }
 
     // Progress rate: base 2% per tick, modified by crew skill & trait
@@ -6328,10 +6338,11 @@ export function gameTick(prev) {
         // the save.
         addImportantNotice(g,
           `Bankruptcy in ${5 - g.bankruptcyDays} day${5 - g.bankruptcyDays === 1 ? "" : "s"}: the account is ${money(Math.abs(g.cash))} overdrawn. Get cash back above -$10,000 — finish a job, sell a machine or borrow.`,
-          "action", { actionLabel: "Open Finance", actionTab: "Finance" });
+          "action", { actionLabel: "Open Finance", actionTab: "Finance", key: "bankruptcy" });
       }
-    } else if (g.cash >= 0) {
-      g.bankruptcyDays = 0;
+    } else {
+      resolveNotice(g, "bankruptcy");
+      if (g.cash >= 0) g.bankruptcyDays = 0;
     }
 
     tickEmployeePersonalities(g);
@@ -6436,6 +6447,18 @@ function getLegacyScore(g) {
 // The offline conversion constants that used to live here are now in systems/gameClock.js,
 // derived from the same MINS_PER_TICK and TICK_MS the live tick uses.
 
+function queueMarketNews(g, item) {
+  g._pendingMarketNews = [...(Array.isArray(g._pendingMarketNews) ? g._pendingMarketNews : []), item];
+}
+
+// Called once a save has loaded and caught up, so a migration's news lands on top of the feed.
+export function deliverPendingMarketNews(g) {
+  if (!g || !Array.isArray(g._pendingMarketNews)) return g;
+  for (const item of g._pendingMarketNews) pushMarketNews(g, item);
+  delete g._pendingMarketNews;
+  return g;
+}
+
 export function computeOfflineProgress(savedGame, nowTimestamp) {
   const lastTs = savedGame.lastRealTimestamp;
   if (!lastTs || !nowTimestamp) return null;
@@ -6521,6 +6544,9 @@ export function applyOfflineProgress(savedGame, ticksToRun) {
   return g;
 }
 
+// What the app loads a save with. Exported so tests load saves exactly the way the app does.
+export const SAVE_LOAD_DEPS = { migrateState, computeOfflineProgress, applyOfflineProgress, afterLoad: deliverPendingMarketNews };
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function ConstructionFlowScreen({ onBackToHub }) {
@@ -6580,9 +6606,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
       let backupRaw = null;
       try { backupRaw = await AsyncStorage.getItem(BACKUP_STORAGE_KEY); } catch (_) { backupRaw = null; }
       const nowTs = Date.now();
-      const choice = chooseSaveToLoad(raw, backupRaw, nowTs, {
-        migrateState, computeOfflineProgress, applyOfflineProgress,
-      }, { primaryReadFailed });
+      const choice = chooseSaveToLoad(raw, backupRaw, nowTs, SAVE_LOAD_DEPS, { primaryReadFailed });
       if (choice.rawToBackup) AsyncStorage.setItem(BACKUP_STORAGE_KEY, choice.rawToBackup).catch(() => {});
       if (choice.unreadable) AsyncStorage.setItem(QUARANTINE_STORAGE_KEY, choice.unreadable).catch(() => {});
       const g = choice.game || freshState();

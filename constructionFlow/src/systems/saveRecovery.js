@@ -14,13 +14,14 @@ export const QUARANTINE_STORAGE_KEY = "constructionflow_v1_unreadable";
 // Parses and migrates one raw payload. Throws if the payload cannot become a game.
 // Offline catch-up is attempted separately: if it throws, the player gets their save back
 // without the catch-up rather than losing the save over it.
-export function restoreSavedGame(raw, nowTs, { migrateState, computeOfflineProgress, applyOfflineProgress }) {
+export function restoreSavedGame(raw, nowTs, { migrateState, computeOfflineProgress, applyOfflineProgress, afterLoad }) {
   const parsed = JSON.parse(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Save payload is not a game object");
   }
   const saved = migrateState(parsed);
-  return runOfflineCatchUp(saved, nowTs, { computeOfflineProgress, applyOfflineProgress });
+  const game = runOfflineCatchUp(saved, nowTs, { computeOfflineProgress, applyOfflineProgress });
+  return afterLoad ? afterLoad(game) : game;
 }
 
 // Runs offline catch-up, falling back to the un-progressed state if the simulation throws.

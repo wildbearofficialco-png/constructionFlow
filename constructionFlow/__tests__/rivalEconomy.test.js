@@ -52,7 +52,11 @@ test("a save from before job books gets one entry per open job", () => {
 });
 
 describe("one-time market correction for old saves", () => {
-  const { freshState, migrateState } = require("../src/games/constructionflow/ConstructionFlowScreen.js");
+  const { freshState, migrateState, SAVE_LOAD_DEPS } = require("../src/games/constructionflow/ConstructionFlowScreen.js");
+  const { chooseSaveToLoad } = require("../src/systems/saveRecovery.js");
+  // Loads a save the way the app does: migrate, offline catch-up, then post any queued news.
+  const load = (save, nowTs = save.lastRealTimestamp || Date.now()) =>
+    chooseSaveToLoad(JSON.stringify(save), null, nowTs, SAVE_LOAD_DEPS).game;
   const { rivalValuation } = require("../src/systems/rivalMarket.js");
   const { rivalValueLimit, MARKET_CORRECTION_FLAG } = require("../src/systems/rivalEconomy.js");
 
@@ -81,30 +85,43 @@ describe("one-time market correction for old saves", () => {
   });
 
   test("it says so once, in one news line, and never runs again", () => {
-    const g = migrateState(oldSave());
+    const g = load(oldSave());
     const lines = (g.marketNews || []).filter((n) => /Market correction/.test(n.text));
     expect(lines).toHaveLength(1);
     expect(g[MARKET_CORRECTION_FLAG]).toBe(true);
+    expect(g._pendingMarketNews).toBeUndefined();
     // Loaded again (and again), and with rivals grown huge again in play: no second correction.
     g.rivals[0].cash = 90_000_000;
-    const again = migrateState(JSON.parse(JSON.stringify(g)));
-    const again2 = migrateState(JSON.parse(JSON.stringify(again)));
+    const again = load(JSON.parse(JSON.stringify(g)));
+    const again2 = load(JSON.parse(JSON.stringify(again)));
     expect(again2.rivals[0].cash).toBe(90_000_000);
     expect((again2.marketNews || []).filter((n) => /Market correction/.test(n.text))).toHaveLength(1);
+  });
+
+  test("the news line survives offline catch-up and is the newest item when the player returns", () => {
+    // Found in a live replay of a real build-14 save: posted during migration, ten days of
+    // catch-up rival news pushed the line off the capped feed before the player could see it.
+    const save = oldSave();
+    save.lastRealTimestamp = Date.now() - 14 * 24 * 3600 * 1000; // away two weeks
+    save.marketNews = Array.from({ length: 30 }, (_, i) => ({ id: `old-${i}`, text: `old news ${i}`, tone: "neutral", day: 50 }));
+    const g = load(save, Date.now());
+    expect(g.day).toBeGreaterThan(60);          // catch-up really ran
+    expect(g.marketNews[0].text).toMatch(/Market correction/);
+    expect(g.marketNews.filter((n) => /Market correction/.test(n.text))).toHaveLength(1);
   });
 
   test("a save whose rivals are within the limits is left alone, silently", () => {
     const g0 = freshState();
     delete g0[MARKET_CORRECTION_FLAG];
     const before = JSON.stringify(g0.rivals);
-    const g = migrateState(JSON.parse(JSON.stringify(g0)));
+    const g = load(JSON.parse(JSON.stringify(g0)));
     expect((g.marketNews || []).some((n) => /Market correction/.test(n.text))).toBe(false);
     expect(g[MARKET_CORRECTION_FLAG]).toBe(true);
     expect(g.rivals.map((r) => r.cash)).toEqual(JSON.parse(before).map((r) => r.cash));
   });
 
   test("a new game never sees it", () => {
-    const g = migrateState(JSON.parse(JSON.stringify(freshState())));
+    const g = load(JSON.parse(JSON.stringify(freshState())));
     expect((g.marketNews || []).some((n) => /Market correction/.test(n.text))).toBe(false);
   });
 });
