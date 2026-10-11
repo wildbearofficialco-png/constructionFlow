@@ -327,11 +327,13 @@ describe("the bid is a decision, not a formality", () => {
     // The tutorial points at a specific job. Losing it would fail the first-minute rule.
     const g = freshState();
     const c = createContract(g);
-    for (const s of BID_STYLES) {
+    for (const s of BID_STYLES.filter((x) => x.value <= 1)) {
       const plan = planBid(c, s.key, g);
       expect(plan.guaranteed).toBe(true);
       expect(plan.winPercent).toBe(100);
     }
+    // Premium is not free money even here.
+    expect(planBid(c, "premium", g).guaranteed).toBe(false);
   });
 
   test("every style is reachable and none is free money", () => {

@@ -108,6 +108,10 @@ export function pushNotice(game, message, toneOrLevel = "info", options = {}) {
     // dismiss button that hides the problem.
     actionLabel: options.actionLabel ? String(options.actionLabel) : null,
     actionTab: options.actionTab ? String(options.actionTab) : null,
+    // What the notice is about, so it can be withdrawn when that is dealt with (resolveNotice)
+    // or when its site no longer exists (expireNotices).
+    key: options.key ? String(options.key) : null,
+    siteId: options.siteId != null ? options.siteId : null,
     read: false,
   };
 
@@ -123,8 +127,12 @@ export function pushNotice(game, message, toneOrLevel = "info", options = {}) {
 export function expireNotices(game) {
   if (!game) return game;
   const day = dayOf(game);
+  const sites = Array.isArray(game.activeSites) ? new Set(game.activeSites.map((x) => x && x.id)) : null;
   game.inbox = arr(game.inbox).filter((n) => {
     if (!n) return false;
+    // A decision about a site that has finished or gone is no longer a decision. Build 14 left
+    // "Deck Build is running slow — assign plant" at the top of Home 32 days after the job ended.
+    if (n.siteId != null && sites && !sites.has(n.siteId)) return false;
     if (n.level === "action") return true;
     const ttl = NOTICE_TTL_DAYS[n.level];
     if (!Number.isFinite(ttl)) return true;
@@ -164,6 +172,27 @@ export function actionCount(game) {
 export function dismissNotice(game, id) {
   if (!game) return game;
   game.inbox = arr(game.inbox).filter((n) => n && n.id !== id);
+  return game;
+}
+
+// The problem behind a notice was fixed: withdraw it. Action items wait for the decision, not
+// forever after it was made.
+export function resolveNotice(game, key) {
+  if (!game || !key) return game;
+  const before = arr(game.inbox);
+  if (!before.some((n) => n && n.key === key)) return game;
+  game.inbox = before.filter((n) => n && n.key !== key);
+  return game;
+}
+
+// Saves from before notices carried keys: an action item more than this many days old cannot be
+// matched to its problem any more, and in practice was always about something long finished.
+export const LEGACY_ACTION_MAX_AGE_DAYS = 14;
+export function dropStaleLegacyActions(game) {
+  if (!game) return game;
+  const day = dayOf(game);
+  game.inbox = arr(game.inbox).filter((n) => !(n && n.level === "action" && !n.key
+    && Number.isFinite(n.day) && day - n.day > LEGACY_ACTION_MAX_AGE_DAYS));
   return game;
 }
 

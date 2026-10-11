@@ -181,8 +181,11 @@ describe("the market keeps living", () => {
     for (const r of g.rivals) r.status = RIVAL_STATUS.BANKRUPT;
     g.lastEntrantDay = -999;
 
-    for (let i = 0; i < 400; i++) { g.day += 1; enhancedRivalDailyLogic(g); }
-    const entrant = g.rivals.find((r) => r.isEntrant);
+    // Stop as soon as one arrives: rivals pay overhead out of the jobs they win (rivalEconomy.js),
+    // so an entrant left for hundreds of days on an empty board goes under, which is correct.
+    const liveEntrant = () => g.rivals.find((r) => r.isEntrant && r.status !== RIVAL_STATUS.BANKRUPT);
+    for (let i = 0; i < 400 && !liveEntrant(); i++) { g.day += 1; enhancedRivalDailyLogic(g); }
+    const entrant = liveEntrant();
     expect(entrant).toBeTruthy();
     expect(entrant.personality).toBeTruthy();
 
@@ -203,8 +206,11 @@ describe("the market keeps living", () => {
     for (const r of g.rivals) r.status = RIVAL_STATUS.BANKRUPT;
     g.lastEntrantDay = -999;
 
-    for (let i = 0; i < 400; i++) { g.day += 1; enhancedRivalDailyLogic(g); }
-    const entrant = g.rivals.find((r) => r.isEntrant);
+    // Stop as soon as one arrives: rivals pay overhead out of the jobs they win (rivalEconomy.js),
+    // so an entrant left for hundreds of days on an empty board goes under, which is correct.
+    const liveEntrant = () => g.rivals.find((r) => r.isEntrant && r.status !== RIVAL_STATUS.BANKRUPT);
+    for (let i = 0; i < 400 && !liveEntrant(); i++) { g.day += 1; enhancedRivalDailyLogic(g); }
+    const entrant = liveEntrant();
     expect(entrant).toBeTruthy();
 
     // Put contracts in its focus category in front of it and let it bid.

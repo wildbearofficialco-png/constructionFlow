@@ -92,7 +92,8 @@ describe("bid styles are a real decision", () => {
     // first-minute rule outright — a new company at 0 reputation would lose a standard bid
     // 31% of the time.
     const brandNew = game({ reputation: 0, completedJobs: 0, activeSites: [] });
-    for (const style of BID_STYLES) {
+    // At the standard price or below. Premium on a held job is negotiated (see the next test).
+    for (const style of BID_STYLES.filter((x) => x.value <= 1)) {
       const plan = planBid(contract(), style.key, brandNew);
       expect(plan.guaranteed).toBe(true);
       expect(plan.winChance).toBe(1);
@@ -106,8 +107,17 @@ describe("bid styles are a real decision", () => {
   test("the guarantee is honest: a guaranteed bid always wins, whatever the roll", () => {
     const brandNew = game({ completedJobs: 0, activeSites: [] });
     for (const roll of [0, 0.5, 0.999999]) {
-      expect(rollBidOutcome(contract(), "premium", brandNew, () => roll).won).toBe(true);
+      expect(rollBidOutcome(contract(), "standard", brandNew, () => roll).won).toBe(true);
     }
+  });
+
+  test("premium on a held job is not free money: it is negotiated at normal odds", () => {
+    const brandNew = game({ completedJobs: 0, activeSites: [] });
+    const plan = planBid(contract(), "premium", brandNew);
+    expect(plan.guaranteed).toBe(false);
+    expect(plan.winChance).toBeLessThan(1);
+    expect(plan.detail).toMatch(/held for you at the standard price/);
+    expect(rollBidOutcome(contract(), "premium", brandNew, () => 0.999).won).toBe(false);
   });
 
   test("the guarantee lifts the moment the player has a company of their own", () => {

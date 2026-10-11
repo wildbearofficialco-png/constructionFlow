@@ -18,7 +18,7 @@ describe("earned chain contract bidding", () => {
       chainGuaranteed: true,
       locked: false,
     };
-    const plan = planBid(contract, "premium", establishedCompany);
+    const plan = planBid(contract, "standard", establishedCompany);
     expect(plan.guaranteed).toBe(true);
     expect(plan.winChance).toBe(1);
     expect(plan.winPercent).toBe(100);
@@ -34,7 +34,7 @@ describe("earned chain contract bidding", () => {
       chainGuaranteed: true,
       locked: false,
     };
-    const result = rollBidOutcome(contract, "premium", establishedCompany, () => 0.999999);
+    const result = rollBidOutcome(contract, "standard", establishedCompany, () => 0.999999);
     expect(result.won).toBe(true);
     expect(result.guaranteed).toBe(true);
   });
@@ -85,9 +85,11 @@ describe("earned chain contract bidding", () => {
 
     openReadyChainOpportunities([offer], big, 30);
     expect(offer.status).toBe("Open");
-    const plan = planBid(offer, "premium", establishedCompany);
+    const plan = planBid(offer, "standard", establishedCompany);
     expect(plan.guaranteed).toBe(true);
     expect(plan.winChance).toBe(1);
-    expect(rollBidOutcome(offer, "premium", establishedCompany, () => 0.999999).won).toBe(true);
+    expect(rollBidOutcome(offer, "standard", establishedCompany, () => 0.999999).won).toBe(true);
+    // Held at the fair price; a premium ask is a gamble at normal odds.
+    expect(planBid(offer, "premium", establishedCompany).guaranteed).toBe(false);
   });
 });

@@ -45,12 +45,17 @@ function startedFence(seed = 1) {
 }
 
 // Run with a seeded RNG, answering decision cards, until `done` or the day budget runs out.
+// Like the harness's attentive player, it re-orders materials when the card says the site is
+// short with nothing on order — a later shortage event is the card's job to name, not a dead end.
 function run(g, { days = 30, seed = 7, each = null, done = (s) => s.activeSites.length === 0 } = {}) {
   return withSeed(seed, () => {
     let s = g;
     for (let i = 0; i < TPD * days; i++) {
       s = gameTick(s);
       s.pendingDecision = null;
+      for (const site of s.activeSites || []) {
+        if (site.stopReason?.key === "materials_short" && !(site.pendingDeliveries || []).length) orderSiteMaterials(s, site.id);
+      }
       if (each) each(s, i);
       if (done(s)) return { g: s, finished: true, day: s.day };
     }

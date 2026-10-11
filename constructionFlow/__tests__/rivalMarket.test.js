@@ -40,6 +40,7 @@ import {
   acquisitionCost,
   planAcquisition,
   acquisitionBlockReason,
+  RIVAL_MACHINE_VALUE, RIVAL_REP_VALUE, RIVAL_OFFICE_VALUE,
 } from "../src/systems/rivalMarket.js";
 
 const rival = (over = {}) => ({
@@ -57,15 +58,22 @@ const game = (over = {}) => ({
 const fixed = (v) => () => v;
 
 describe("one valuation formula", () => {
-  test("cash, reputation and geography all count", () => {
-    expect(rivalValuation(rival({ cash: 0, rep: 0, cityPresence: ["salem"] }))).toBe(100000);
-    expect(rivalValuation(rival({ cash: 5000, rep: 1, cityPresence: ["salem"] }))).toBe(155000);
-    expect(rivalValuation(rival({ cityPresence: ["a", "b"] }))).toBeGreaterThan(rivalValuation(rival()));
+  // Same basis as the player's computeValuation: cash, machines, offices beyond home, work in
+  // hand, and reputation at $1,500 a point (it was $50,000 — 33x the player's rate).
+  test("cash, machines, reputation, offices and work in hand all count", () => {
+    expect(rivalValuation(rival({ cash: 0, rep: 0, equipment: 0, cityPresence: ["salem"] }))).toBe(0);
+    expect(rivalValuation(rival({ cash: 5000, rep: 1, equipment: 3, cityPresence: ["salem"] }))).toBe(5000 + 3 * RIVAL_MACHINE_VALUE + RIVAL_REP_VALUE);
+    expect(rivalValuation(rival({ cityPresence: ["a", "b"] }))).toBe(rivalValuation(rival()) + RIVAL_OFFICE_VALUE);
+    expect(rivalValuation(rival({ jobBook: [100000] }))).toBe(rivalValuation(rival()) + 40000);
+  });
+
+  test("reputation is worth what it is worth to the player, not 33x more", () => {
+    expect(rivalValuation(rival({ rep: 41 })) - rivalValuation(rival({ rep: 40 }))).toBe(1500);
   });
 
   test("a company with no geography still counts as having one base", () => {
-    expect(rivalValuation({ cash: 0, rep: 0 })).toBe(100000);
-    expect(rivalValuation({ cash: 0, rep: 0, cityPresence: [] })).toBe(100000);
+    expect(rivalValuation({ cash: 0, rep: 0, equipment: 0 })).toBe(0);
+    expect(rivalValuation({ cash: 0, rep: 0, equipment: 0, cityPresence: [] })).toBe(0);
   });
 
   test("garbage never produces NaN — including a literal null in the rivals array", () => {

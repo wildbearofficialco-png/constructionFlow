@@ -5,6 +5,25 @@ parity work; 1.0.0 build 1 is the TestFlight build that preceded it.
 
 ## Unreleased
 
+## 1.0.0 (build 15) — gameplay sprint (PR #33)
+
+Save-compatible. New-game balance (starting cash, contract values) applies to new games only;
+existing saves keep their cash and full contract values.
+
+- **Bugs fixed:** premium bids on held jobs were a free win (now reopen to normal odds); rivals
+  were paid per open job per day whatever the job was worth (now earn a 22–35% margin on what they
+  win, minus overhead); weather "stopped work" while progress continued; rival reputation was
+  valued 33× the player's; web crew filter pushed the list off screen; "needs a decision" cards
+  stayed for finished jobs; correction news could be lost to offline catch-up.
+- **First session:** Home leads with Getting Started; other sections arrive as the company grows
+  (all available via "Show full dashboard").
+- **Decisions during a job:** rain, ground conditions and running late ask on the site card (top of
+  the card), with a fair default. At most one per job (two on 10+ day jobs).
+- **Rivals:** top rival now ~1.3–2.4× the player instead of ~100×. Old saves get a one-time market
+  correction, explained by one pinned news line; it never runs twice.
+- **New games:** $65,000 starting cash (was $75,000) and 80% contract values. Sims: first hour
+  32/32 with no forced borrowing; day-37 cash ~$151k (was ~$206k); no frozen days.
+
 ### Review sprint — fair hiring, true numbers, new-player protection (PR #32)
 
 From the independent build-14 playtest. Save-compatible; no build bump.

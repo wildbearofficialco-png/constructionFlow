@@ -112,6 +112,13 @@ export function describeFactor(f) {
           ? { label: "Repair machine", tab: "Equipment" }
           : { label: "Assign plant", tab: "Sites" },
       };
+    case "weather":
+      return {
+        text: f.factor === 0
+          ? `${f.label || "Weather"} — work stopped${Number.isFinite(f.endsDay) ? ` until day ${f.endsDay}` : ""}`
+          : `${f.label || "Weather"} — ${pct}% speed${Number.isFinite(f.endsDay) ? ` until day ${f.endsDay}` : ""}`,
+        action: null,
+      };
     case "site_mode":
       return {
         text: `${f.mode === "quality" ? "Quality" : "Budget"} mode — ${pct}% speed by your choice`,

@@ -49,6 +49,9 @@ async function mountWith(mutate = () => {}) {
   g.setupDone = true;
   g.tutorialDone = true;
   g.lastRealTimestamp = Date.now();
+  // Render every Home section. A new company's Home is deliberately short (homeLayout.js, tested
+  // in homeLayout.test.js); this file's job is that every surface renders without throwing.
+  g.homeShowAll = true;
   mutate(g);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(g));
 
