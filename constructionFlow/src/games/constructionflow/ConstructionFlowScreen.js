@@ -41,7 +41,7 @@ import { quoteMaterialUnitPrice, quoteMaterialCost } from "../../systems/materia
 import { registerSession } from "../../systems/sessionStreak.js";
 import { homeSectionVisibility } from "../../systems/homeLayout.js";
 import { offerChoice, resolveChoice, crewDayCost, weatherFactor, overtimeFactor, forecastLateBy, rollMidJobChoice } from "../../systems/siteChoices.js";
-import { rivalWinsContract, settleRivalDay, ensureJobBook } from "../../systems/rivalEconomy.js";
+import { rivalWinsContract, settleRivalDay, ensureJobBook, applyMarketCorrection, MARKET_CORRECTION_FLAG } from "../../systems/rivalEconomy.js";
 import { poachingAllowed, approachCrew, matchOffer, expiredOffers, POACH_RESPONSE_DAYS, POACH_GRACE_DAYS_AFTER_FIRST_JOB } from "../../systems/crewPoaching.js";
 import { BACKUP_STORAGE_KEY, QUARANTINE_STORAGE_KEY, chooseSaveToLoad, runOfflineCatchUp } from "../../systems/saveRecovery.js";
 import {
@@ -217,6 +217,7 @@ import {
   describeEntrantArrival,
   planAcquisition,
   acquisitionBlockReason,
+  rivalValuation,
 } from "../../systems/rivalMarket.js";
 import {
   describeWorkerAssignment,
@@ -895,7 +896,7 @@ export const MILESTONE_DEFS = [
     check: (g) => (g.completedJobs || 0) >= 1000,
     reward: (g) => { g.reputation = (g.reputation||0) + 20; addLog(g, "🏗️ 1,000 projects complete! Rep +20"); } },
   { id: "domination", key: "domination", label: "Market Domination", desc: "Outvalue every rival by 10×",  tier: 4,
-    check: (g) => (g.rivals||[]).length > 0 && (g.rivals||[]).every(r => r.status==="Bankrupt" || (g.companyValuation||0) > ((r.cash||0)+(r.rep||0)*50000)*10),
+    check: (g) => (g.rivals||[]).length > 0 && (g.rivals||[]).every(r => r.status==="Bankrupt" || (g.companyValuation||0) > rivalValuation(r)*10),
     reward: (g) => { g.cash += 500000; addLog(g, "👑 Market Domination achieved! $500k bonus!"); } },
 ];
 
@@ -1020,7 +1021,7 @@ function computeNationalRank(g) {
 // share is now the company's slice of the whole industry's value — the Rankings definition —
 // and every "Market Share" tile reads it from here.
 function rivalIndustryValue(r) {
-  return (r.cash || 0) + (r.rep || 0) * 50000 + ((r.cityPresence || ["salem"]).length) * 100000 + (r.jobsCompleted || 0) * 15000;
+  return Math.max(0, rivalValuation(r));
 }
 
 export function computeMarketShare(g, valuation = computeValuation(g)) {
@@ -1164,9 +1165,7 @@ function buildContractorRankings(g) {
   const rivalRows = (g.rivals || []).map((r) => ({
     id: r.id, name: r.name, isPlayer: false,
     rep: r.rep || 0,
-    value: (r.cash || 0) + (r.rep || 0) * 50000 +
-           (r.cityPresence || ["salem"]).length * 100000 +
-           (r.jobsCompleted || 0) * 15000,
+    value: rivalValuation(r),
     cities: (r.cityPresence || ["salem"]).length,
     status: r.status || null,
     acquired: (g.acquiredRivals || []).includes(r.id),
@@ -3793,7 +3792,7 @@ export function enhancedRivalDailyLogic(g) {
     // ── Rival War: Employee poaching (Feature 7) ────────────────────────────
     // A bigger rival makes one of your idle people an offer (systems/crewPoaching.js). It used to
     // take them on the spot — on day 2 of a new company, in the build-14 playtest.
-    if ((rival.valuation || rival.cash || 0) > (g.companyValuation||0) * 1.8 && Math.random() < 0.03) {
+    if (rivalValuation(rival) > (g.companyValuation||0) * 1.8 && Math.random() < 0.03) {
       const _idleCrew = (g.crew||[]).filter(w => w.status === "Idle");
       if (_idleCrew.length > 1) rivalCourtsCrew(g, rival, _idleCrew);
     }
@@ -3814,7 +3813,7 @@ export function enhancedRivalDailyLogic(g) {
         r.id !== rival.id &&
         r.status !== "Bankrupt" &&
         !(g.acquiredRivals||[]).includes(r.id) &&
-        ((rival.cash||0) + (rival.rep||0)*50000) >= ((r.cash||0) + (r.rep||0)*50000) * 5
+        rivalValuation(rival) >= Math.max(1, rivalValuation(r)) * 5
       );
       if (_weakerRival) {
         ensureJobBook(rival); ensureJobBook(_weakerRival);
@@ -4071,6 +4070,12 @@ function cleanStaleState(g) {
 
 // ─── Initial State ────────────────────────────────────────────────────────────
 
+// Opening balance. Was $75,000. First-hour simulations (32 seeds each) at $75k / $50k / $40k / $30k
+// all finished both opening jobs with no forced borrowing; at $50k the first machine is
+// affordable on day 1 and the first office upgrade on days 2–4 instead of day 1, so the early
+// spending order is a choice rather than a formality. See the sprint report for the full table.
+export const STARTING_CASH = 50000;
+
 export function freshState() {
   const startEquip = createEquipment(EQUIPMENT_SHOP[0]); // Basic Pickup Truck
   const startWorker1 = createWorker("Labourer");
@@ -4081,13 +4086,13 @@ export function freshState() {
   // Installation job, whose 20-lumber requirement matches the starting inventory exactly.
   // Leaving this to random draw meant the referenced contract was often missing entirely.
   const baseContracts = [
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }, "fence"),
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
-    createContract({ cash: 75000, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }, "fence"),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
+    createContract({ cash: STARTING_CASH, day: 1, creditScore: 600, marketState: "Normal", equipment: [startEquip], contracts: [], _milestones: {}, cityOffices:[], properties:[] }),
   ];
 
   return {
-    cash: 75000, day: 1, gameMinutes: 480,
+    cash: STARTING_CASH, day: 1, gameMinutes: 480,
     reputation: 0, creditScore: 600,
     companyName: "New Build Co.",
     ownerName: "Owner",
@@ -4101,7 +4106,8 @@ export function freshState() {
     // entries are measured against the opening balance. Without it the first entry took its
     // baseline from a balance other deductions had already hit, and the reconciler reported a
     // phantom $160 "balance transfer" on day one of every new company.
-    _ledgerSnapshot: { cash: 75000, revenue: 0, expenses: 0, day: 1 },
+    _ledgerSnapshot: { cash: STARTING_CASH, revenue: 0, expenses: 0, day: 1 },
+    _rivalMarketCorrectedV1: true, // a new company starts in the new economy
     weeklyStats: { revenue: 0, expenses: 0, jobsCompleted: 0, unexpectedCosts: 0, savingsInterest: 0 },
     savings: 0,
     creditLine: null,
@@ -4163,7 +4169,7 @@ export function freshState() {
     legacyStats: initLegacyStats(),
     contractBidStyles: {},
 
-    logs: ["🏗️ Welcome to ConstructionFlow. You have $75,000, one truck, and three crew. Start with the Fence job in Bids."],
+    logs: [`🏗️ Welcome to ConstructionFlow. You have ${money(STARTING_CASH)}, one truck, and three crew. Start with the Fence job in Bids.`],
     opsFeed: [],
     eventLog: [],
     _milestones: {},
@@ -4302,6 +4308,15 @@ export function migrateState(saved) {
     }
   }
   if (!Array.isArray(g.marketNews)) g.marketNews = [];
+  // Saves from the old rival economy: bring overgrown rivals back to the new limits, once.
+  // Read the flag from the SAVE: `g` already carries freshState's default (true) for new games.
+  if (!saved?.[MARKET_CORRECTION_FLAG]) {
+    g[MARKET_CORRECTION_FLAG] = false;
+    const _corrected = applyMarketCorrection(g, { playerValue: computeValuation(g), valueOf: rivalValuation });
+    if (_corrected.length) {
+      pushMarketNews(g, { text: `📉 Market correction: a construction slowdown has revalued ${_corrected.length === 1 ? _corrected[0] : `${_corrected.length} overextended firms`} — the field is closer than it looked.`, tone: "info" });
+    }
+  }
   if (!Number.isFinite(g.lastEntrantDay)) g.lastEntrantDay = 0;
   if (g.activeMarketEvent === undefined)    g.activeMarketEvent = null;
   if (g.marketEventDaysLeft === undefined)  g.marketEventDaysLeft = 0;
@@ -7973,7 +7988,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           )}
 
           <Text style={{ color: T.sub, fontSize: 11, textAlign: "center", marginTop: 24, lineHeight: 17 }}>
-            You start with $75,000 · 1 truck · 3 crew members{"\n"}
+            You start with {money(STARTING_CASH)} · 1 truck · 3 crew members{"\n"}
             You make money by winning bids, putting crew and machines on site, and finishing the job before the deadline.
           </Text>
         </ScrollView>
@@ -10764,7 +10779,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           // Revenue rank: count rivals with higher weeklyRevenue estimate (val × 0.1)
           const weeklyRev = (game.weeklyStats?.revenue||0);
           const revenueRank = 1 + activeRivals.filter(r => {
-            const est = ((r.cash||0)+(r.rep||0)*50000+((r.cityPresence||["salem"]).length)*100000) * 0.1;
+            const est = rivalValuation(r) * 0.1;
             return est > weeklyRev;
           }).length;
 
@@ -10773,7 +10788,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
 
           // Company value rank
           const valRank = 1 + activeRivals.filter(r=>{
-            const rv=(r.cash||0)+(r.rep||0)*50000+((r.cityPresence||["salem"]).length)*100000+(r.jobsCompleted||0)*15000;
+            const rv=rivalValuation(r);
             return rv > valuation;
           }).length;
 
@@ -10973,7 +10988,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
           const activeRivals = (game.rivals || []).filter(r => !((game.acquiredRivals||[]).includes(r.id)) && r.status !== "Bankrupt");
           if (activeRivals.length === 0) return null;
           const closestRival = activeRivals.reduce((closest, r) => {
-            const rVal = (r.cash||0) + (r.rep||0)*50000 + (r.cityPresence||["salem"]).length*100000 + (r.jobsCompleted||0)*15000;
+            const rVal = rivalValuation(r);
             const closestVal = (closest.cash||0) + (closest.rep||0)*50000 + (closest.cityPresence||["salem"]).length*100000 + (closest.jobsCompleted||0)*15000;
             return Math.abs(rVal - valuation) < Math.abs(closestVal - valuation) ? r : closest;
           });
@@ -11169,7 +11184,7 @@ export default function ConstructionFlowScreen({ onBackToHub }) {
                   else if (m.key === "jobs1000") { const v = game.completedJobs||0; progressPct = Math.min(100,(v/1000)*100); progressLabel = `${v}/1,000 jobs`; }
                   else if (m.key === "domination") {
                     const activeRivals = (game.rivals||[]).filter(r=>r.status!=="Bankrupt");
-                    const outvalued = activeRivals.filter(r=>(game.companyValuation||0)>((r.cash||0)+(r.rep||0)*50000)*10).length;
+                    const outvalued = activeRivals.filter(r=>(game.companyValuation||0)>rivalValuation(r)*10).length;
                     progressPct = activeRivals.length > 0 ? Math.min(100,(outvalued/activeRivals.length)*100) : 100;
                     progressLabel = `${outvalued}/${activeRivals.length} rivals outvalued 10×`;
                   }

@@ -51,12 +51,24 @@ export const DAYS_TO_RESTRUCTURE = 90;
 
 // One valuation formula. It was computed inline, identically, in two different places — which
 // is how the two bankruptcy systems came to disagree about when a company was in trouble.
+// What a rival firm is worth, on the same basis as the player's own valuation (computeValuation):
+// cash, machines, offices, work in hand, and reputation at $1,500 a point. It used to count
+// reputation at $50,000 a point — 33x the player's rate — so a rep-40 newcomer read as a $2M firm
+// and every comparison built on it (market share, rankings, acquisitions, poaching) was skewed.
+export const RIVAL_MACHINE_VALUE = 12000;   // a depreciated working machine
+export const RIVAL_OFFICE_VALUE = 35000;    // per city beyond its home market
+export const RIVAL_REP_VALUE = 1500;        // the player's rate (computeValuation)
+export const RIVAL_PIPELINE_SHARE = 0.4;    // the player's rate for work in progress
+
 export function rivalValuation(rivalRecord) {
   const rival = rivalRecord || {};
   const cash = Number.isFinite(rival.cash) ? rival.cash : 0;
   const rep = Number.isFinite(rival.rep) ? rival.rep : 0;
+  const machines = Number.isFinite(rival.equipment) ? Math.max(0, rival.equipment) : 1;
   const cities = Array.isArray(rival.cityPresence) ? rival.cityPresence.length : 1;
-  return cash + rep * 50000 + Math.max(1, cities) * 100000;
+  const pipeline = Array.isArray(rival.jobBook) ? rival.jobBook.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0) : 0;
+  return Math.round(cash + machines * RIVAL_MACHINE_VALUE + Math.max(0, cities - 1) * RIVAL_OFFICE_VALUE
+    + pipeline * RIVAL_PIPELINE_SHARE + rep * RIVAL_REP_VALUE);
 }
 
 export const FAILING_VALUATION = 10000;

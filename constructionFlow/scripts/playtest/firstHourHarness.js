@@ -195,9 +195,14 @@ function respond(g, run) {
 
 // ─── One run ─────────────────────────────────────────────────────────────────
 
-export function playFirstHour(seed, { maxDays = 45, jobs = 2, trace = null } = {}) {
+// `startCash` overrides the opening balance, for comparing starting-cash options.
+export function playFirstHour(seed, { maxDays = 45, jobs = 2, trace = null, startCash = null } = {}) {
   return withSeed(seed, () => {
     let g = { ...freshState(), setupDone: true, tutorialDone: false };
+    if (Number.isFinite(startCash)) {
+      g.cash = startCash;
+      g._ledgerSnapshot = { ...(g._ledgerSnapshot || {}), cash: startCash };
+    }
     const run = {
       seed, startCash: g.cash, minCash: g.cash, finalCash: null,
       bids: [], startBlocks: [], materialOrders: 0, unaffordableOrders: 0, taxPaid: 0,

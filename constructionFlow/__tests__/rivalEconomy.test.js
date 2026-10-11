@@ -50,3 +50,61 @@ test("a save from before job books gets one entry per open job", () => {
   ensureJobBook(r, 99);
   expect(r.jobBook).toEqual([20000, 20000, 20000]); // never rebuilt once present
 });
+
+describe("one-time market correction for old saves", () => {
+  const { freshState, migrateState } = require("../src/games/constructionflow/ConstructionFlowScreen.js");
+  const { rivalValuation } = require("../src/systems/rivalMarket.js");
+  const { rivalValueLimit, MARKET_CORRECTION_FLAG } = require("../src/systems/rivalEconomy.js");
+
+  function oldSave() {
+    const g = freshState();
+    delete g[MARKET_CORRECTION_FLAG];          // written before the correction existed
+    g.day = 60; g.setupDone = true; g.cash = 340000; g.completedJobs = 14; g.reputation = 55;
+    g.rivals = g.rivals.map((r, i) => ({ ...r, cash: (50 - i * 6) * 1_000_000, rep: 80, activeJobs: 18, equipment: 6, jobBook: undefined }));
+    return JSON.parse(JSON.stringify(g));
+  }
+  const playerView = (g) => JSON.stringify({ cash: g.cash, crew: g.crew, equipment: g.equipment, contracts: g.contracts, completedJobs: g.completedJobs, reputation: g.reputation, activeSites: g.activeSites, materials: g.materials, day: g.day, loans: g.loans });
+
+  test("rivals over the limit are brought back to it, in order, and nothing of the player's changes", () => {
+    const saved = oldSave();
+    const g = migrateState(JSON.parse(JSON.stringify(saved)));
+    // The player is worth cash + machines + reputation (55 x $1,500) — under $450k here.
+    const limit = rivalValueLimit(60, 450000);
+    const values = g.rivals.map(rivalValuation);
+    expect(Math.max(...values)).toBeLessThanOrEqual(limit);
+    const before = saved.rivals.map((r) => r.cash);
+    const order = (arr) => arr.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+    expect(order(values)).toEqual(order(before));
+    expect(g.rivals.every((r) => r.jobBook.length <= 8)).toBe(true);
+    expect(playerView(g)).toBe(playerView(migrateState(JSON.parse(JSON.stringify(saved)))));
+    expect(g.cash).toBe(340000); expect(g.completedJobs).toBe(14); expect(g.reputation).toBe(55);
+  });
+
+  test("it says so once, in one news line, and never runs again", () => {
+    const g = migrateState(oldSave());
+    const lines = (g.marketNews || []).filter((n) => /Market correction/.test(n.text));
+    expect(lines).toHaveLength(1);
+    expect(g[MARKET_CORRECTION_FLAG]).toBe(true);
+    // Loaded again (and again), and with rivals grown huge again in play: no second correction.
+    g.rivals[0].cash = 90_000_000;
+    const again = migrateState(JSON.parse(JSON.stringify(g)));
+    const again2 = migrateState(JSON.parse(JSON.stringify(again)));
+    expect(again2.rivals[0].cash).toBe(90_000_000);
+    expect((again2.marketNews || []).filter((n) => /Market correction/.test(n.text))).toHaveLength(1);
+  });
+
+  test("a save whose rivals are within the limits is left alone, silently", () => {
+    const g0 = freshState();
+    delete g0[MARKET_CORRECTION_FLAG];
+    const before = JSON.stringify(g0.rivals);
+    const g = migrateState(JSON.parse(JSON.stringify(g0)));
+    expect((g.marketNews || []).some((n) => /Market correction/.test(n.text))).toBe(false);
+    expect(g[MARKET_CORRECTION_FLAG]).toBe(true);
+    expect(g.rivals.map((r) => r.cash)).toEqual(JSON.parse(before).map((r) => r.cash));
+  });
+
+  test("a new game never sees it", () => {
+    const g = migrateState(JSON.parse(JSON.stringify(freshState())));
+    expect((g.marketNews || []).some((n) => /Market correction/.test(n.text))).toBe(false);
+  });
+});

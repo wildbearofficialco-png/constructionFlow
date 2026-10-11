@@ -15,6 +15,7 @@ import {
   TABS,
   normalizeTabName,
   freshState,
+  STARTING_CASH,
   migrateState,
   getNextBestAction,
   getPredictiveWarnings,
@@ -198,7 +199,9 @@ describe("design system adoption", () => {
 describe("gameplay is unchanged by the presentation pass", () => {
   test("a fresh company still starts with the documented opening position", () => {
     const g = freshState();
-    expect(g.cash).toBe(75000);
+    // $50,000 since the starting-cash review (STARTING_CASH); was $75,000.
+    expect(g.cash).toBe(STARTING_CASH);
+    expect(STARTING_CASH).toBe(50000);
     expect(g.day).toBe(1);
     expect(g.creditScore).toBe(600);
     expect(g.equipment).toHaveLength(1);
